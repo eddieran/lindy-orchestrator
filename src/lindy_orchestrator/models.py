@@ -158,3 +158,67 @@ class DispatchResult:
     duration_seconds: float = 0.0
     truncated: bool = False
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Project discovery / onboarding structures
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ModuleProfile:
+    """Deep profile of a project module gathered by static analysis."""
+
+    name: str
+    path: str
+    tech_stack: list[str] = field(default_factory=list)
+    dependencies: dict[str, str] = field(default_factory=dict)
+    dir_tree: str = ""
+    entry_points: list[str] = field(default_factory=list)
+    test_commands: list[str] = field(default_factory=list)
+    build_commands: list[str] = field(default_factory=list)
+    lint_commands: list[str] = field(default_factory=list)
+    ci_config: str = ""
+    existing_docs: str = ""
+    detected_patterns: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CrossModuleDep:
+    """A dependency between two modules."""
+
+    from_module: str
+    to_module: str
+    interface_type: str = ""  # "api", "file", "database", "env_var", "message_queue"
+    description: str = ""
+
+
+@dataclass
+class ProjectProfile:
+    """Auto-detected project structure from static analysis."""
+
+    name: str
+    root: str
+    modules: list[ModuleProfile] = field(default_factory=list)
+    cross_module_files: list[str] = field(default_factory=list)
+    git_remote: str = ""
+    default_branch: str = "main"
+    detected_ci: str = ""
+    monorepo: bool = False
+
+
+@dataclass
+class DiscoveryContext:
+    """Complete project understanding: auto-analysis + user answers."""
+
+    project_name: str
+    project_description: str
+    root: str
+    modules: list[ModuleProfile] = field(default_factory=list)
+    cross_deps: list[CrossModuleDep] = field(default_factory=list)
+    coordination_complexity: int = 1  # 1=loose, 2=moderate, 3=tight
+    branch_prefix: str = "af"
+    sensitive_paths: list[str] = field(default_factory=list)
+    qa_requirements: dict[str, list[str]] = field(default_factory=dict)
+    git_remote: str = ""
+    monorepo: bool = False

@@ -195,6 +195,59 @@ def _generate_config(project_name: str, modules: list[tuple[str, str]]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# onboard
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def onboard(
+    depth: int = typer.Option(1, "--depth", help="Directory scan depth"),
+    non_interactive: bool = typer.Option(
+        False, "--non-interactive", "-y", help="Skip all questions, use defaults"
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing files"),
+):
+    """Deep project onboarding: analyze, interview, generate artifacts.
+
+    Scans the project, asks targeted questions about structure and conventions,
+    then generates CLAUDE.md (root + per-module), CONTRACTS.md, STATUS.md,
+    and orchestrator.yaml with full context.
+    """
+    from .discovery.analyzer import analyze_project
+    from .discovery.generator import generate_artifacts
+    from .discovery.interview import run_interview
+
+    cwd = Path.cwd()
+    console.print(f"[bold]lindy-orchestrate v{__version__}[/] — Project Onboarding\n")
+
+    # Phase 1: Static analysis
+    console.print("[bold cyan][1/3][/] Analyzing project structure...")
+    profile = analyze_project(cwd, max_depth=depth)
+
+    if not profile.modules:
+        console.print("[yellow]No modules detected.[/] Use `init --modules` instead.")
+        raise typer.Exit(1)
+
+    # Phase 2: Interactive discovery
+    console.print("[bold cyan][2/3][/] Project discovery...")
+    context = run_interview(profile, non_interactive=non_interactive)
+
+    # Phase 3: Generate artifacts
+    console.print("[bold cyan][3/3][/] Generating artifacts...\n")
+    written = generate_artifacts(context, output_dir=cwd, force=force)
+
+    console.print(f"\n[bold green]Onboarding complete![/] {len(written)} files generated.")
+    console.print("\nNext steps:")
+    console.print("  1. Review generated CLAUDE.md files and refine conventions")
+    if context.coordination_complexity >= 2:
+        console.print("  2. Fill in CONTRACTS.md with specific interface definitions")
+    console.print(
+        f"  {'3' if context.coordination_complexity >= 2 else '2'}. "
+        f'Run: lindy-orchestrate plan "Your goal here"'
+    )
+
+
+# ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
 
