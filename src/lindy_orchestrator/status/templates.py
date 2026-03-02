@@ -17,6 +17,7 @@ def generate_status_md(module_name: str) -> str:
 | module | {module_name} |
 | last_updated | {now} |
 | overall_health | GREEN |
+| agent_session | — |
 
 ## Active Work
 | ID | Task | Status | BlockedBy | Started | Notes |
@@ -25,6 +26,17 @@ def generate_status_md(module_name: str) -> str:
 ## Completed (Recent)
 | ID | Task | Completed | Outcome |
 |----|------|-----------|---------|
+
+## Backlog
+- (none)
+
+## Cross-Module Requests
+| ID | From | To | Request | Priority | Status |
+|----|------|----|---------|----------|--------|
+
+## Cross-Module Deliverables
+| ID | From | To | Deliverable | Status | Path |
+|----|------|----|-------------|--------|------|
 
 ## Key Metrics
 | Metric | Value |

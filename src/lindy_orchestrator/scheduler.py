@@ -219,7 +219,11 @@ def _execute_single_task(
             f"{task.prompt}\n\n"
             f"## IMPORTANT: Previous attempt failed QA verification\n"
             f"The following quality checks failed:\n{failure_detail}\n\n"
-            f"Fix these issues and try again.\n"
+            f"Fix these issues. Specific instructions:\n"
+            f"- Actually RUN all scripts and commands (do not just create them)\n"
+            f"- Ensure output files are generated before declaring success\n"
+            f"- Verify your changes by running the relevant test/build commands\n"
+            f"- If a CI check failed, check the branch was pushed and CI triggered\n"
         )
         task.qa_results = []
         progress(

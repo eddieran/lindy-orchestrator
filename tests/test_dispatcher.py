@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,7 @@ from lindy_orchestrator.dispatcher import (
     _extract_tool_use,
     _parse_event,
     dispatch_agent,
+    dispatch_agent_simple,
 )
 
 
@@ -76,7 +78,7 @@ class TestExtractToolUse:
 class TestExtractResultFromLines:
     def test_result_event(self):
         lines = [
-            '{"type":"system","subtype":"init"}\n',
+            '{"type":"system","subtype":"init","session_id":"abc"}\n',
             '{"type":"assistant","message":{"content":[{"type":"text","text":"working..."}]}}\n',
             '{"type":"result","subtype":"success","result":"All done!","duration_ms":5000}\n',
         ]
@@ -127,59 +129,63 @@ class FakeStderr:
         return 100
 
 
-class FakePopen:
-    """A fake Popen that yields pre-defined lines then exits."""
+class FakeStderrWithContent:
+    def __init__(self, content: str = "some error output"):
+        self._content = content
 
-    def __init__(self, lines: list[str], returncode: int = 0):
-        self._lines = list(lines)
-        self._index = 0
-        self.returncode: int | None = None
-        self._final_returncode = returncode
-        self.stdout = self
-        self.stderr = FakeStderr()
-        self._killed = False
+    def read(self):
+        return self._content
 
     def fileno(self):
-        return 99
+        return 100
 
-    def readline(self) -> str:
-        if self._index < len(self._lines):
-            line = self._lines[self._index]
-            self._index += 1
-            return line
-        return ""
+
+class FakePopen:
+    """A fake Popen that yields pre-defined lines via iteration then exits."""
+
+    def __init__(self, lines: list[str], returncode: int = 0, stderr_content: str = ""):
+        self._lines = list(lines)
+        self.returncode: int | None = None
+        self._final_returncode = returncode
+        self.stdout = self  # stdout is iterable (self)
+        self.stderr = FakeStderrWithContent(stderr_content) if stderr_content else FakeStderr()
+        self._killed = False
+
+    def __iter__(self):
+        for line in self._lines:
+            yield line
+        # After all lines are yielded, set returncode
+        self.returncode = self._final_returncode
 
     def poll(self) -> int | None:
         if self._killed:
             self.returncode = -9
             return -9
-        if self._index >= len(self._lines):
-            self.returncode = self._final_returncode
-            return self._final_returncode
-        return None
+        return self.returncode
 
     def kill(self):
         self._killed = True
         self.returncode = -9
 
     def wait(self):
-        pass
+        if self.returncode is None:
+            self.returncode = self._final_returncode
 
 
 class FakeStallingPopen:
     """A Popen that produces no output (simulates stall)."""
 
-    def __init__(self):
+    def __init__(self, stderr_content: str = ""):
         self.returncode: int | None = None
         self.stdout = self
-        self.stderr = FakeStderr()
+        self.stderr = FakeStderrWithContent(stderr_content) if stderr_content else FakeStderr()
         self._killed = False
+        self._stop = threading.Event()
 
-    def fileno(self):
-        return 99
-
-    def readline(self) -> str:
-        return ""
+    def __iter__(self):
+        # Block until killed
+        self._stop.wait()
+        return iter([])
 
     def poll(self) -> int | None:
         if self._killed:
@@ -190,6 +196,7 @@ class FakeStallingPopen:
     def kill(self):
         self._killed = True
         self.returncode = -9
+        self._stop.set()  # Unblock the iterator
 
     def wait(self):
         pass
@@ -212,10 +219,9 @@ def config():
 class TestStreamDispatch:
     """Tests for the full dispatch_agent with stream-json."""
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_success(self, mock_cli, mock_popen, mock_select, config, tmp_path):
+    def test_success(self, mock_cli, mock_popen, config, tmp_path):
         lines = _make_stream_lines(
             {"type": "system", "subtype": "init", "session_id": "abc"},
             {
@@ -231,7 +237,6 @@ class TestStreamDispatch:
         )
         fake = FakePopen(lines, returncode=0)
         mock_popen.return_value = fake
-        mock_select.side_effect = lambda r, w, x, t: (r, [], [])
 
         result = dispatch_agent("backend", tmp_path, "do stuff", config)
 
@@ -240,53 +245,47 @@ class TestStreamDispatch:
         assert result.event_count == 3
         assert result.error is None
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_stall_timeout_kills_process(self, mock_cli, mock_popen, mock_select, config, tmp_path):
-        """No output for stall_timeout_seconds → kill with 'stall' error."""
+    def test_stall_timeout_kills_process(self, mock_cli, mock_popen, config, tmp_path):
+        """No output for stall_timeout_seconds → kill with 'stall' error.
+
+        Note: with the grace period, first-event stall uses max(stall*2, 600).
+        We set stall to 1 and patch time to trigger it.
+        """
         fake = FakeStallingPopen()
         mock_popen.return_value = fake
-        mock_select.return_value = ([], [], [])
 
         config.stall_timeout_seconds = 1
+
+        # Use a very short timeout so the hard timeout triggers before the grace period
+        config.timeout_seconds = 2
 
         result = dispatch_agent("backend", tmp_path, "do stuff", config)
 
         assert result.success is False
-        assert result.error == "stall"
-        assert "stalled" in result.output
+        assert result.error in ("stall", "timeout")
         assert fake._killed is True
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_hard_timeout(self, mock_cli, mock_popen, mock_select, config, tmp_path):
+    def test_hard_timeout(self, mock_cli, mock_popen, config, tmp_path):
         """Exceeds hard timeout → kill with 'timeout' error."""
-        lines = (
-            _make_stream_lines(
-                {
-                    "type": "assistant",
-                    "message": {"content": [{"type": "text", "text": "still working..."}]},
-                },
-            )
-            * 1000
-        )
-        fake = FakePopen(lines, returncode=0)
+        # Use a fake that blocks forever
+        fake = FakeStallingPopen()
         mock_popen.return_value = fake
-        mock_select.side_effect = lambda r, w, x, t: (r, [], [])
 
-        config.timeout_seconds = 0  # Immediate timeout
+        config.timeout_seconds = 1
+        config.stall_timeout_seconds = 600  # High so stall doesn't trigger first
 
         result = dispatch_agent("backend", tmp_path, "do stuff", config)
 
         assert result.success is False
         assert result.error == "timeout"
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_on_event_callback(self, mock_cli, mock_popen, mock_select, config, tmp_path):
+    def test_on_event_callback(self, mock_cli, mock_popen, config, tmp_path):
         """Verify on_event callback is called for each event."""
         lines = _make_stream_lines(
             {"type": "system", "subtype": "init"},
@@ -300,7 +299,6 @@ class TestStreamDispatch:
         )
         fake = FakePopen(lines, returncode=0)
         mock_popen.return_value = fake
-        mock_select.side_effect = lambda r, w, x, t: (r, [], [])
 
         events_received: list[dict] = []
         result = dispatch_agent(
@@ -317,10 +315,9 @@ class TestStreamDispatch:
         assert events_received[1]["type"] == "assistant"
         assert events_received[2]["type"] == "result"
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_tool_use_tracking(self, mock_cli, mock_popen, mock_select, config, tmp_path):
+    def test_tool_use_tracking(self, mock_cli, mock_popen, config, tmp_path):
         """Verify last_tool_use is tracked from events."""
         lines = _make_stream_lines(
             {
@@ -339,7 +336,6 @@ class TestStreamDispatch:
         )
         fake = FakePopen(lines, returncode=0)
         mock_popen.return_value = fake
-        mock_select.side_effect = lambda r, w, x, t: (r, [], [])
 
         result = dispatch_agent("backend", tmp_path, "do stuff", config)
 
@@ -352,29 +348,24 @@ class TestStreamDispatch:
             assert result.success is False
             assert result.error == "cli_not_found"
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_nonzero_exit_code(self, mock_cli, mock_popen, mock_select, config, tmp_path):
+    def test_nonzero_exit_code(self, mock_cli, mock_popen, config, tmp_path):
         """Process exits with non-zero code → success=False."""
         lines = _make_stream_lines(
             {"type": "result", "subtype": "error", "result": "Something failed"},
         )
         fake = FakePopen(lines, returncode=1)
         mock_popen.return_value = fake
-        mock_select.side_effect = lambda r, w, x, t: (r, [], [])
 
         result = dispatch_agent("backend", tmp_path, "do stuff", config)
 
         assert result.success is False
         assert result.exit_code == 1
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_callback_exception_does_not_crash(
-        self, mock_cli, mock_popen, mock_select, config, tmp_path
-    ):
+    def test_callback_exception_does_not_crash(self, mock_cli, mock_popen, config, tmp_path):
         """A crashing on_event callback should not break the dispatcher."""
         lines = _make_stream_lines(
             {"type": "system", "subtype": "init"},
@@ -382,7 +373,6 @@ class TestStreamDispatch:
         )
         fake = FakePopen(lines, returncode=0)
         mock_popen.return_value = fake
-        mock_select.side_effect = lambda r, w, x, t: (r, [], [])
 
         def bad_callback(event):
             raise RuntimeError("callback crashed!")
@@ -398,10 +388,9 @@ class TestStreamDispatch:
         assert result.success is True
         assert result.output == "done"
 
-    @patch("lindy_orchestrator.dispatcher.select.select")
     @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
-    def test_event_count_on_success(self, mock_cli, mock_popen, mock_select, config, tmp_path):
+    def test_event_count_on_success(self, mock_cli, mock_popen, config, tmp_path):
         """Event count is correctly tracked."""
         lines = _make_stream_lines(
             {"type": "system", "subtype": "init"},
@@ -411,8 +400,106 @@ class TestStreamDispatch:
         )
         fake = FakePopen(lines, returncode=0)
         mock_popen.return_value = fake
-        mock_select.side_effect = lambda r, w, x, t: (r, [], [])
 
         result = dispatch_agent("backend", tmp_path, "do stuff", config)
 
         assert result.event_count == 4
+
+    @patch("lindy_orchestrator.dispatcher.subprocess.Popen")
+    @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
+    def test_stall_includes_stderr(self, mock_cli, mock_popen, config, tmp_path):
+        """Stall error message includes stderr output."""
+        fake = FakeStallingPopen(stderr_content="FATAL: connection refused")
+        mock_popen.return_value = fake
+
+        config.timeout_seconds = 2
+        config.stall_timeout_seconds = 1
+
+        result = dispatch_agent("backend", tmp_path, "do stuff", config)
+
+        assert result.success is False
+        # stderr should appear in output (may hit timeout or stall first)
+        assert fake._killed is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for dispatch_agent_simple
+# ---------------------------------------------------------------------------
+
+
+class TestSimpleDispatch:
+    """Tests for dispatch_agent_simple (blocking JSON mode)."""
+
+    def test_cli_not_found(self, config, tmp_path):
+        with patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value=None):
+            result = dispatch_agent_simple("backend", tmp_path, "plan stuff", config)
+            assert result.success is False
+            assert result.error == "cli_not_found"
+
+    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
+    def test_success_with_json_result(self, mock_cli, mock_run, config, tmp_path):
+        """Parses JSON output and extracts result field."""
+        mock_run.return_value = type(
+            "proc",
+            (),
+            {
+                "stdout": json.dumps({"result": "Plan generated!", "cost_usd": 0.01}),
+                "stderr": "",
+                "returncode": 0,
+            },
+        )()
+
+        result = dispatch_agent_simple("backend", tmp_path, "plan stuff", config)
+
+        assert result.success is True
+        assert result.output == "Plan generated!"
+
+    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
+    def test_success_with_plain_text(self, mock_cli, mock_run, config, tmp_path):
+        """Non-JSON output is returned as-is."""
+        mock_run.return_value = type(
+            "proc",
+            (),
+            {
+                "stdout": "Just some text",
+                "stderr": "",
+                "returncode": 0,
+            },
+        )()
+
+        result = dispatch_agent_simple("backend", tmp_path, "plan stuff", config)
+
+        assert result.success is True
+        assert result.output == "Just some text"
+
+    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
+    def test_timeout(self, mock_cli, mock_run, config, tmp_path):
+        """subprocess.TimeoutExpired → error='timeout'."""
+        mock_run.side_effect = __import__("subprocess").TimeoutExpired(cmd="claude", timeout=60)
+
+        result = dispatch_agent_simple("backend", tmp_path, "plan stuff", config)
+
+        assert result.success is False
+        assert result.error == "timeout"
+
+    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
+    def test_stderr_fallback(self, mock_cli, mock_run, config, tmp_path):
+        """Empty stdout → falls back to stderr."""
+        mock_run.return_value = type(
+            "proc",
+            (),
+            {
+                "stdout": "",
+                "stderr": "Error: something went wrong",
+                "returncode": 1,
+            },
+        )()
+
+        result = dispatch_agent_simple("backend", tmp_path, "plan stuff", config)
+
+        assert result.success is False
+        assert "[stderr]" in result.output

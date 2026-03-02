@@ -1,17 +1,18 @@
 """Agent dispatcher via Claude Code CLI.
 
-Runs `claude -p "<prompt>"` as a subprocess in the target module directory.
-Uses `--output-format stream-json --verbose` for real-time heartbeat monitoring
-with stall detection.
+Two dispatch modes:
+- dispatch_agent(): Streaming (stream-json) with heartbeat/stall detection for long tasks
+- dispatch_agent_simple(): Classic subprocess.run with json output for quick calls (plan, report)
 """
 
 from __future__ import annotations
 
 import json
 import os
-import select
+import queue
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -23,6 +24,110 @@ from .models import DispatchResult
 def find_claude_cli() -> str | None:
     """Find the claude CLI binary path."""
     return shutil.which("claude")
+
+
+# ---------------------------------------------------------------------------
+# Simple dispatch (plan generation, reports — no heartbeat needed)
+# ---------------------------------------------------------------------------
+
+
+def dispatch_agent_simple(
+    module: str,
+    working_dir: Path,
+    prompt: str,
+    config: DispatcherConfig,
+) -> DispatchResult:
+    """Run claude -p with --output-format json (blocking, no heartbeat).
+
+    Best for short-lived calls like plan generation and report formatting.
+    """
+    claude_path = find_claude_cli()
+    if not claude_path:
+        return DispatchResult(
+            module=module,
+            success=False,
+            output="Claude CLI not found in PATH",
+            error="cli_not_found",
+        )
+
+    cmd = [
+        claude_path,
+        "-p",
+        prompt,
+        "--permission-mode",
+        config.permission_mode,
+        "--output-format",
+        "json",
+    ]
+
+    env = os.environ.copy()
+    env.pop("CLAUDECODE", None)
+
+    start = time.monotonic()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(working_dir),
+            capture_output=True,
+            text=True,
+            timeout=config.timeout_seconds,
+            env=env,
+        )
+        duration = time.monotonic() - start
+
+        output = proc.stdout
+        truncated = False
+        max_chars = config.max_output_chars
+        if len(output) > max_chars:
+            half = max_chars // 2
+            output = output[:half] + "\n\n... [TRUNCATED] ...\n\n" + output[-half:]
+            truncated = True
+
+        # Parse JSON output to extract result text
+        agent_output = output
+        try:
+            parsed = json.loads(output)
+            if isinstance(parsed, dict) and "result" in parsed:
+                agent_output = parsed["result"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        if not agent_output.strip() and proc.stderr:
+            agent_output = f"[stderr] {proc.stderr[:5000]}"
+
+        return DispatchResult(
+            module=module,
+            success=proc.returncode == 0,
+            output=agent_output,
+            exit_code=proc.returncode,
+            duration_seconds=round(duration, 1),
+            truncated=truncated,
+        )
+
+    except subprocess.TimeoutExpired:
+        duration = time.monotonic() - start
+        return DispatchResult(
+            module=module,
+            success=False,
+            output=f"Agent timed out after {config.timeout_seconds}s",
+            exit_code=-1,
+            duration_seconds=round(duration, 1),
+            error="timeout",
+        )
+
+    except FileNotFoundError:
+        return DispatchResult(
+            module=module,
+            success=False,
+            output=f"Claude CLI not found at {claude_path}",
+            exit_code=-1,
+            error="cli_not_found",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Streaming dispatch (task execution — heartbeat + stall detection)
+# ---------------------------------------------------------------------------
 
 
 def dispatch_agent(
@@ -97,6 +202,17 @@ def dispatch_agent(
 
     last_activity = time.monotonic()
     all_lines: list[str] = []
+    line_queue: queue.Queue[str | None] = queue.Queue()
+
+    # Background thread reads stdout lines into queue
+    def _reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line_queue.put(line)
+        line_queue.put(None)  # Sentinel: EOF
+
+    reader_thread = threading.Thread(target=_reader, daemon=True)
+    reader_thread.start()
 
     try:
         while True:
@@ -107,11 +223,15 @@ def dispatch_agent(
             if elapsed >= config.timeout_seconds:
                 proc.kill()
                 proc.wait()
+                stderr = _read_stderr(proc)
                 duration = time.monotonic() - start
+                msg = f"Agent hard timeout after {int(elapsed)}s ({event_count} events received)"
+                if stderr:
+                    msg += f"\n[stderr] {stderr[:2000]}"
                 return DispatchResult(
                     module=module,
                     success=False,
-                    output=f"Agent hard timeout after {int(elapsed)}s ({event_count} events received)",
+                    output=msg,
                     exit_code=-1,
                     duration_seconds=round(duration, 1),
                     error="timeout",
@@ -119,19 +239,29 @@ def dispatch_agent(
                     last_tool_use=last_tool_use,
                 )
 
-            # Stall detection
-            if stall_elapsed >= config.stall_timeout_seconds:
+            # Stall detection with grace period for first event
+            if event_count == 0:
+                effective_stall = max(config.stall_timeout_seconds * 2, 600)
+            else:
+                effective_stall = config.stall_timeout_seconds
+
+            if stall_elapsed >= effective_stall:
                 proc.kill()
                 proc.wait()
+                stderr = _read_stderr(proc)
                 duration = time.monotonic() - start
+                msg = (
+                    f"Agent stalled: no output for {int(stall_elapsed)}s "
+                    f"(stall limit: {int(effective_stall)}s, "
+                    f"last tool: {last_tool_use or 'none'}, "
+                    f"{event_count} events total, {int(elapsed)}s elapsed)"
+                )
+                if stderr:
+                    msg += f"\n[stderr] {stderr[:2000]}"
                 return DispatchResult(
                     module=module,
                     success=False,
-                    output=(
-                        f"Agent stalled: no output for {int(stall_elapsed)}s "
-                        f"(last tool: {last_tool_use or 'none'}, "
-                        f"{event_count} events total, {int(elapsed)}s elapsed)"
-                    ),
+                    output=msg,
                     exit_code=-1,
                     duration_seconds=round(duration, 1),
                     error="stall",
@@ -139,45 +269,40 @@ def dispatch_agent(
                     last_tool_use=last_tool_use,
                 )
 
-            # Check if process has ended
-            retcode = proc.poll()
-
-            # Use select to read with a 5-second poll interval
-            if proc.stdout is not None:
-                ready, _, _ = select.select([proc.stdout], [], [], 5.0)
-                if ready:
-                    line = proc.stdout.readline()
-                    if line:
-                        last_activity = time.monotonic()
-                        all_lines.append(line)
-                        event_count += 1
-
-                        # Parse JSONL event
-                        event = _parse_event(line)
-                        if event:
-                            # Extract tool use info
-                            tool = _extract_tool_use(event)
-                            if tool:
-                                last_tool_use = tool
-
-                            # Check for result event
-                            if event.get("type") == "result":
-                                result_text = event.get("result", "")
-
-                            # Fire callback
-                            if on_event:
-                                try:
-                                    on_event(event)
-                                except Exception:
-                                    pass  # Never let callback crash the dispatcher
-                    elif retcode is not None:
-                        # EOF + process done
-                        break
-                elif retcode is not None:
-                    # No data ready + process done
+            # Read from queue with 5-second poll interval
+            try:
+                line = line_queue.get(timeout=5.0)
+            except queue.Empty:
+                if proc.poll() is not None:
                     break
-            elif retcode is not None:
+                continue
+
+            if line is None:
+                # EOF sentinel
                 break
+
+            last_activity = time.monotonic()
+            all_lines.append(line)
+            event_count += 1
+
+            # Parse JSONL event
+            event = _parse_event(line)
+            if event:
+                # Extract tool use info
+                tool = _extract_tool_use(event)
+                if tool:
+                    last_tool_use = tool
+
+                # Check for result event
+                if event.get("type") == "result":
+                    result_text = event.get("result", "")
+
+                # Fire callback
+                if on_event:
+                    try:
+                        on_event(event)
+                    except Exception:
+                        pass  # Never let callback crash the dispatcher
 
     except Exception as e:
         # Ensure process is cleaned up
@@ -198,6 +323,7 @@ def dispatch_agent(
             last_tool_use=last_tool_use,
         )
 
+    proc.wait()
     duration = time.monotonic() - start
     retcode = proc.returncode or 0
 
@@ -207,12 +333,7 @@ def dispatch_agent(
 
     # If output is empty, check stderr
     if not result_text.strip():
-        stderr = ""
-        if proc.stderr:
-            try:
-                stderr = proc.stderr.read() or ""
-            except Exception:
-                pass
+        stderr = _read_stderr(proc)
         if stderr:
             result_text = f"[stderr] {stderr[:5000]}"
 
@@ -234,6 +355,21 @@ def dispatch_agent(
         event_count=event_count,
         last_tool_use=last_tool_use,
     )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _read_stderr(proc: subprocess.Popen) -> str:
+    """Read stderr from a completed process, safely."""
+    if proc.stderr:
+        try:
+            return (proc.stderr.read() or "").strip()
+        except Exception:
+            pass
+    return ""
 
 
 # ---------------------------------------------------------------------------

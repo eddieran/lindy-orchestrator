@@ -17,7 +17,8 @@ planner:
   timeout_seconds: 60
 
 dispatcher:
-  timeout_seconds: 300
+  timeout_seconds: 1800
+  stall_timeout_seconds: 300
   permission_mode: bypassPermissions
 
 safety:

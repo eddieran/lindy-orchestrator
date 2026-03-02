@@ -46,6 +46,10 @@ def render_contracts_md(ctx: DiscoveryContext) -> str:
     if len(sections) == 1:
         sections.append(_generic_section(ctx))
 
+    # Governance sections (always included)
+    sections.append(_task_id_conventions(ctx))
+    sections.append(_ci_delivery_protocol(ctx))
+    sections.append(_status_md_schema())
     sections.append(_footer())
 
     return "\n".join(sections)
@@ -147,6 +151,86 @@ Modules: {mod_names}
      - File format specifications
      - Environment variable agreements
 -->
+"""
+
+
+def _task_id_conventions(ctx: DiscoveryContext) -> str:
+    rows = []
+    for m in ctx.modules:
+        prefix = m.name[:2].upper()
+        rows.append(f"| {m.name} | `{prefix}-` | e.g. `{prefix}-001` |")
+    table = "\n".join(rows)
+    return f"""\
+## Task ID Conventions
+
+Each module uses a unique prefix for task IDs to ensure traceability across STATUS.md files.
+
+| Module | Prefix | Example |
+|--------|--------|---------|
+{table}
+
+Cross-module tasks use prefix `X-`.
+"""
+
+
+def _ci_delivery_protocol(ctx: DiscoveryContext) -> str:
+    branch_prefix = ctx.branch_prefix or "af"
+    return f"""\
+## CI Delivery Protocol
+
+### Branch Naming
+All task branches follow: `{branch_prefix}/<task-id>` (e.g. `{branch_prefix}/BE-001`)
+
+### Workflow
+1. Agent creates branch from `main`
+2. Agent commits changes and pushes to remote
+3. CI triggers automatically on push
+4. Orchestrator polls CI status via `gh run list`
+5. On CI pass → task marked COMPLETED
+6. On CI fail → feedback appended to prompt, agent retries
+"""
+
+
+def _status_md_schema() -> str:
+    return """\
+## STATUS.md Schema
+
+All module STATUS.md files MUST follow this normative schema:
+
+```markdown
+## Meta
+| Key | Value |
+|-----|-------|
+| module | <module_name> |
+| last_updated | <YYYY-MM-DD HH:MM UTC> |
+| overall_health | GREEN / YELLOW / RED |
+| agent_session | <session_id or —> |
+
+## Active Work
+| ID | Task | Status | BlockedBy | Started | Notes |
+
+## Completed (Recent)
+| ID | Task | Completed | Outcome |
+
+## Backlog
+- [ ] Item description
+
+## Cross-Module Requests
+| ID | From | To | Request | Priority | Status |
+
+## Cross-Module Deliverables
+| ID | From | To | Deliverable | Status | Path |
+
+## Key Metrics
+| Metric | Value |
+
+## Blockers
+- Description
+```
+
+Status values: `IN_PROGRESS`, `BLOCKED`, `REVIEW`, `DONE`
+Priority values: `P0` (critical), `P1` (high), `P2` (normal)
+Health values: `GREEN` (on track), `YELLOW` (at risk), `RED` (blocked)
 """
 
 

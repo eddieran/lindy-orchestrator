@@ -110,6 +110,7 @@ class CICheckGate:
                         "branch": branch,
                         "conclusion": run.get("conclusion", ""),
                         "run_url": run_url,
+                        "run_id": run.get("databaseId", 0),
                     },
                 )
 
