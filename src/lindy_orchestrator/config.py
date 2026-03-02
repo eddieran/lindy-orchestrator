@@ -37,6 +37,7 @@ class PlannerConfig(BaseModel):
 
 class DispatcherConfig(BaseModel):
     timeout_seconds: int = 1800
+    stall_timeout_seconds: int = 300
     permission_mode: str = "bypassPermissions"
     max_output_chars: int = 50_000
 

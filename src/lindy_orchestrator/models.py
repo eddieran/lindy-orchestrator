@@ -158,6 +158,8 @@ class DispatchResult:
     duration_seconds: float = 0.0
     truncated: bool = False
     error: str | None = None
+    event_count: int = 0
+    last_tool_use: str = ""
 
 
 # ---------------------------------------------------------------------------

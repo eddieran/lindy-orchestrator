@@ -112,11 +112,20 @@ def _execute_single_task(
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
         working_dir = config.module_path(task.module)
 
+        def _on_event(event: dict) -> None:
+            """Log tool use events in verbose mode."""
+            tool = event.get("message", {}).get("content", [{}])
+            if isinstance(tool, list):
+                for block in tool:
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        detail(f"      [dim]tool: {block.get('name', '?')}[/]")
+
         result = dispatch_agent(
             module=task.module,
             working_dir=working_dir,
             prompt=task.prompt,
             config=config.dispatcher,
+            on_event=_on_event,
         )
         dispatches += 1
         task.result = result.output
@@ -128,15 +137,23 @@ def _execute_single_task(
                 "success": result.success,
                 "duration": result.duration_seconds,
                 "exit_code": result.exit_code,
+                "event_count": result.event_count,
+                "last_tool_use": result.last_tool_use,
             },
         )
 
         if not result.success:
-            progress(f"    [red]DISPATCH FAILED[/]: {result.output[:200]}")
+            error_info = result.output[:200]
+            if result.error == "stall":
+                error_info = f"Agent stalled (last tool: {result.last_tool_use or 'none'})"
+            progress(f"    [red]DISPATCH FAILED[/] ({result.error or 'error'}): {error_info}")
             task.status = TaskStatus.FAILED
             return dispatches
 
-        progress(f"    [green]Dispatch completed[/] ({result.duration_seconds}s)")
+        progress(
+            f"    [green]Dispatch completed[/] "
+            f"({result.duration_seconds}s, {result.event_count} events)"
+        )
         detail(f"    Output preview: {result.output[:500]}")
 
         # Run QA gates (sequentially per task)
