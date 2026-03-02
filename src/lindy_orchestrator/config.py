@@ -101,12 +101,18 @@ class OrchestratorConfig(BaseModel):
         return self._config_dir
 
     def get_module(self, name: str) -> ModuleConfig:
+        # "root" or "*" is a virtual fullstack module (project root)
+        if name in ("root", "*"):
+            return ModuleConfig(name="root", path=".")
         for m in self.modules:
             if m.name == name:
                 return m
         raise ValueError(f"Unknown module: {name!r}. Available: {[m.name for m in self.modules]}")
 
     def module_path(self, name: str) -> Path:
+        # "root" or "*" means the project root (fullstack tasks)
+        if name in ("root", "*"):
+            return self._config_dir.resolve()
         mod = self.get_module(name)
         return (self._config_dir / mod.path).resolve()
 

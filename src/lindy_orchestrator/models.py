@@ -129,8 +129,26 @@ class TaskPlan:
     tasks: list[TaskItem] = field(default_factory=list)
 
     def next_ready(self) -> list[TaskItem]:
-        """Return all tasks whose dependencies are completed (for parallel dispatch)."""
+        """Return all tasks whose dependencies are satisfied.
+
+        A dependency is satisfied if it is COMPLETED.  If a dependency is
+        FAILED or SKIPPED, the dependent task is automatically marked SKIPPED
+        (it can never run).  Only truly ready (all deps completed) tasks are
+        returned.
+        """
         completed_ids = {t.id for t in self.tasks if t.status == TaskStatus.COMPLETED}
+        failed_ids = {
+            t.id for t in self.tasks if t.status in (TaskStatus.FAILED, TaskStatus.SKIPPED)
+        }
+
+        # First pass: skip tasks whose dependencies can never be satisfied
+        for t in self.tasks:
+            if t.status != TaskStatus.PENDING:
+                continue
+            if any(dep in failed_ids for dep in t.depends_on):
+                t.status = TaskStatus.SKIPPED
+                t.result = "Skipped: dependency failed"
+
         return [
             t
             for t in self.tasks
@@ -139,6 +157,11 @@ class TaskPlan:
 
     def is_complete(self) -> bool:
         return all(t.status in (TaskStatus.COMPLETED, TaskStatus.SKIPPED) for t in self.tasks)
+
+    def all_terminal(self) -> bool:
+        """True when every task is in a terminal state (no more work possible)."""
+        terminal = (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.SKIPPED)
+        return all(t.status in terminal for t in self.tasks)
 
     def has_failures(self) -> bool:
         return any(t.status == TaskStatus.FAILED for t in self.tasks)

@@ -54,14 +54,24 @@ Every task MUST instruct the agent to:
 Include this instruction in every task prompt.
 
 ### Task Prompts
+Each task prompt MUST use this layered structure:
+1. **objective**: One sentence describing what to accomplish
+2. **context**: Key constraints, conventions, or gotchas (2-5 bullet points)
+3. **reference_files**: List of file paths the agent should read (the agent can read files itself — do NOT paste code into the prompt)
+
 - Start every prompt with "Read your STATUS.md first." (if the module has one)
 - Agents must EXECUTE, not just plan. If a task requires running tests, say: "Run the tests and verify they pass."
-- Each prompt must be self-contained — include all necessary context
+- Keep prompts concise. The agent has full codebase access — don't repeat file contents
 
 ### Dependencies
 - Use depends_on to enforce ordering. Example: task 2 depends on task 1 → "depends_on": [1]
 - Tasks with no dependencies can run in parallel
 - If no explicit dependencies exist, infer a reasonable sequential order
+
+### Fullstack Tasks
+- For changes that span multiple modules (e.g. backend API + frontend UI), use `"module": "root"` to work from the project root
+- Prefer fullstack tasks over splitting tightly-coupled changes into separate module tasks
+- Only split into per-module tasks when the changes are truly independent
 
 ### QA Checks
 Available gates:

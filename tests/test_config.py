@@ -54,3 +54,24 @@ def test_config_not_found():
 def test_qa_module_none():
     cfg = load_config(FIXTURES / "sample_config.yaml")
     assert cfg.qa_module() is None
+
+
+def test_root_module_path():
+    """module_path('root') returns the project root."""
+    cfg = load_config(FIXTURES / "sample_config.yaml")
+    root_path = cfg.module_path("root")
+    assert root_path == cfg.root.resolve()
+
+
+def test_root_get_module():
+    """get_module('root') returns a virtual ModuleConfig."""
+    cfg = load_config(FIXTURES / "sample_config.yaml")
+    mod = cfg.get_module("root")
+    assert mod.name == "root"
+    assert mod.path == "."
+
+
+def test_star_module_path():
+    """module_path('*') also returns project root."""
+    cfg = load_config(FIXTURES / "sample_config.yaml")
+    assert cfg.module_path("*") == cfg.root.resolve()

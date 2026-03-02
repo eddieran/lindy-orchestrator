@@ -7,12 +7,15 @@ tasks in parallel using concurrent.futures.
 from __future__ import annotations
 
 import concurrent.futures
+import subprocess
+import time
+from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
 from .dispatcher import dispatch_agent
 from .logger import ActionLogger
-from .models import TaskItem, TaskPlan, TaskStatus
+from .models import QACheck, TaskItem, TaskPlan, TaskStatus
 from .qa import run_qa_gate
 
 
@@ -43,9 +46,11 @@ def execute_plan(
             on_progress(msg)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
-        while not plan.is_complete() and not plan.has_failures():
+        while not plan.all_terminal():
             ready = plan.next_ready()
             if not ready:
+                # No tasks ready but not all terminal — shouldn't happen
+                # unless there's a dependency cycle. Break to avoid infinite loop.
                 break
 
             if len(ready) > 1:
@@ -60,7 +65,15 @@ def execute_plan(
                 if config.safety.dry_run:
                     task.status = TaskStatus.COMPLETED
                     task.result = "[DRY RUN] Skipped"
+                    wd = config.module_path(task.module)
+                    qa_list = ", ".join(q.gate for q in task.qa_checks) or "none"
+                    deps = f" (after: {task.depends_on})" if task.depends_on else ""
                     progress(f"    [yellow]DRY RUN[/] — would dispatch to {task.module}")
+                    progress(f"      Working dir: {wd}")
+                    progress(f"      QA gates: {qa_list}")
+                    progress(f"      Dependencies: {deps or 'none'}")
+                    if task.prompt:
+                        progress(f"      Prompt preview: {task.prompt[:150]}...")
                     continue
 
                 future = pool.submit(
@@ -105,6 +118,17 @@ def _execute_single_task(
 
     Returns the number of dispatches made.
     """
+    # Auto-inject QA gate if task has none and config has custom gates
+    if not task.qa_checks and config.qa_gates.custom:
+        for gate in config.qa_gates.custom:
+            task.qa_checks.append(
+                QACheck(
+                    gate="command_check",
+                    params={"command": gate.command, "cwd": gate.cwd},
+                )
+            )
+            progress(f"    [dim]Auto-injected QA: command_check ({gate.command})[/]")
+
     dispatches = 0
 
     while True:
@@ -112,13 +136,34 @@ def _execute_single_task(
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
         working_dir = config.module_path(task.module)
 
+        # Heartbeat state for progress feedback
+        _hb_count = 0
+        _hb_last_tool = ""
+        _hb_start = time.monotonic()
+        _hb_last_print = _hb_start
+
         def _on_event(event: dict) -> None:
-            """Log tool use events in verbose mode."""
-            tool = event.get("message", {}).get("content", [{}])
-            if isinstance(tool, list):
-                for block in tool:
+            """Track events and emit periodic heartbeat."""
+            nonlocal _hb_count, _hb_last_tool, _hb_last_print
+            _hb_count += 1
+
+            tool_name = ""
+            content = event.get("message", {}).get("content", [{}])
+            if isinstance(content, list):
+                for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
-                        detail(f"      [dim]tool: {block.get('name', '?')}[/]")
+                        tool_name = block.get("name", "?")
+                        _hb_last_tool = tool_name
+                        detail(f"      [dim]tool: {tool_name}[/]")
+
+            # Heartbeat: every 30 seconds
+            now = time.monotonic()
+            if now - _hb_last_print >= 30:
+                elapsed = int(now - _hb_start)
+                mins, secs = divmod(elapsed, 60)
+                tool_hint = f", last tool: {_hb_last_tool}" if _hb_last_tool else ""
+                progress(f"    [dim]⋯ {_hb_count} events, {mins}m{secs:02d}s{tool_hint}[/]")
+                _hb_last_print = now
 
         result = dispatch_agent(
             module=task.module,
@@ -155,6 +200,20 @@ def _execute_single_task(
             f"({result.duration_seconds}s, {result.event_count} events)"
         )
         detail(f"    Output preview: {result.output[:500]}")
+
+        # Delivery check: verify branch has commits
+        branch_name = f"{config.project.branch_prefix}/task-{task.id}"
+        delivery_ok, delivery_msg = _check_delivery(config.root, branch_name)
+        if delivery_ok:
+            progress(f"    [green]Delivery check[/]: {delivery_msg}")
+        else:
+            progress(f"    [yellow]Delivery check[/]: {delivery_msg}")
+            logger.log_action(
+                "delivery_check",
+                details={"task_id": task.id, "branch": branch_name},
+                result="warning",
+                output=delivery_msg,
+            )
 
         # Run QA gates (sequentially per task)
         all_qa_passed = True
@@ -229,3 +288,47 @@ def _execute_single_task(
         progress(
             f"    [yellow]QA failed, retrying with feedback[/] ({task.retries}/{max_retries})..."
         )
+
+
+def _check_delivery(project_root: Path, branch_name: str) -> tuple[bool, str]:
+    """Check if a branch exists and has new commits vs the default branch.
+
+    Returns (ok, message). ok is True if branch has commits; False is a warning
+    (not a hard failure — the agent may have committed to a different branch).
+    """
+    try:
+        # Check branch exists
+        result = subprocess.run(
+            ["git", "branch", "--list", branch_name],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if not result.stdout.strip():
+            # Also check remote branches
+            result = subprocess.run(
+                ["git", "branch", "-r", "--list", f"*/{branch_name}"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if not result.stdout.strip():
+                return False, f"Branch {branch_name} not found (local or remote)"
+
+        # Check for commits on branch
+        result = subprocess.run(
+            ["git", "log", f"HEAD..{branch_name}", "--oneline"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        commits = result.stdout.strip().splitlines()
+        if not commits:
+            return False, f"Branch {branch_name} exists but has no new commits"
+
+        return True, f"Branch {branch_name}: {len(commits)} new commit(s)"
+    except Exception as e:
+        return False, f"Delivery check error: {e}"

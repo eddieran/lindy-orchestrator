@@ -14,6 +14,7 @@ from . import __version__
 from .config import CONFIG_FILENAME, load_config
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
+from .models import QACheck, TaskItem, TaskPlan, TaskStatus
 from .reporter import print_goal_report, print_status_table
 from .session import SessionManager
 from .status.parser import parse_status_md
@@ -344,6 +345,13 @@ def run(
         sessions.save(session)
         raise typer.Exit(1)
 
+    # Persist plan to session for resume capability
+    session.plan_json = _plan_to_dict(plan)
+    sessions.save(session)
+
+    # Auto-persist plan to .orchestrator/plans/
+    _persist_plan(cfg.root, plan)
+
     console.print(f"\n  [bold]{len(plan.tasks)} tasks planned:[/]")
     for t in plan.tasks:
         deps = f" [dim](depends on: {t.depends_on})[/]" if t.depends_on else ""
@@ -371,11 +379,16 @@ def run(
 
     print_goal_report(report, dispatches=len(plan.tasks), duration=duration)
 
-    # Update session
+    # Update session with final plan state
+    session.plan_json = _plan_to_dict(plan)
     session.completed_tasks = [
         {"id": t.id, "module": t.module, "description": t.description} for t in completed
     ]
-    sessions.complete(session)
+    if failed:
+        session.status = "paused"
+        sessions.save(session)
+    else:
+        sessions.complete(session)
 
     logger.log_action(
         "session_end",
@@ -420,15 +433,14 @@ def plan(
         if t.prompt:
             console.print(f"     Prompt: {t.prompt[:100]}...")
 
-    if output_file:
-        import dataclasses
+    # Auto-persist plan
+    _persist_plan(cfg.root, plan_result)
+    console.print("\n[green]Plan saved to .orchestrator/plans/[/]")
 
-        data = {
-            "goal": plan_result.goal,
-            "tasks": [dataclasses.asdict(t) for t in plan_result.tasks],
-        }
+    if output_file:
+        data = _plan_to_dict(plan_result)
         Path(output_file).write_text(json.dumps(data, indent=2, default=str))
-        console.print(f"\n[green]Plan saved to {output_file}[/]")
+        console.print(f"[green]Also saved to {output_file}[/]")
 
 
 # ---------------------------------------------------------------------------
@@ -535,8 +547,14 @@ def logs(
 def resume(
     session_id: Optional[str] = typer.Argument(None, help="Session ID to resume"),
     config: Optional[str] = typer.Option(None, "-c", "--config"),
+    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed output"),
 ):
-    """Resume a previous session."""
+    """Resume a previous session from its last checkpoint.
+
+    Skips already-completed tasks and re-executes failed/pending ones.
+    """
+    from .scheduler import execute_plan
+
     cfg = _load_cfg(config)
     sessions = SessionManager(cfg.sessions_path)
 
@@ -549,16 +567,73 @@ def resume(
         console.print("[red]No session found to resume.[/]")
         raise typer.Exit(1)
 
-    console.print(f"Resuming session [bold]{session.session_id}[/]")
+    console.print(f"[bold]lindy-orchestrate v{__version__}[/] — Resume")
+    console.print(f"Session: [bold]{session.session_id}[/]")
     console.print(f"Goal: {session.goal}")
     console.print(f"Status: {session.status}")
 
     if session.status == "completed":
-        console.print("[yellow]Session already completed.[/]")
+        console.print("[yellow]Session already completed. Nothing to resume.[/]")
         return
 
-    # Re-run with the same goal
-    run(goal=session.goal, config=config, dry_run=False, verbose=False)
+    if not session.plan_json:
+        console.print("[yellow]No saved plan found. Re-running from scratch...[/]")
+        run(goal=session.goal, config=config, dry_run=False, verbose=verbose)
+        return
+
+    # Restore plan from checkpoint
+    plan = _plan_from_dict(session.plan_json)
+    completed_count = sum(1 for t in plan.tasks if t.status.value == "completed")
+    remaining = [t for t in plan.tasks if t.status.value not in ("completed", "skipped")]
+
+    console.print(
+        f"\n  [bold]{completed_count}[/] tasks already completed, "
+        f"[bold]{len(remaining)}[/] remaining"
+    )
+
+    # Reset FAILED tasks to PENDING for retry
+    for t in plan.tasks:
+        if t.status == TaskStatus.FAILED:
+            t.status = TaskStatus.PENDING
+            t.retries = 0
+            t.qa_results = []
+            console.print(f"    {t.id}. [bold][{t.module}][/] {t.description} [yellow]→ retry[/]")
+
+    for t in plan.tasks:
+        if t.status == TaskStatus.PENDING:
+            console.print(f"    {t.id}. [bold][{t.module}][/] {t.description} [dim]pending[/]")
+
+    # Execute remaining
+    logger = ActionLogger(cfg.log_path)
+    start = time.monotonic()
+
+    def on_progress(msg: str):
+        console.print(msg)
+
+    console.print("\n[bold cyan]Resuming execution...[/]")
+    plan = execute_plan(plan, cfg, logger, on_progress=on_progress, verbose=verbose)
+
+    duration = round(time.monotonic() - start, 1)
+    completed = [t for t in plan.tasks if t.status.value == "completed"]
+    failed = [t for t in plan.tasks if t.status.value == "failed"]
+
+    print_goal_report(
+        f"{'GOAL COMPLETED' if not failed else 'GOAL PAUSED'}: {session.goal}\n\n"
+        f"Completed: {len(completed)}/{len(plan.tasks)} tasks",
+        dispatches=len(plan.tasks),
+        duration=duration,
+    )
+
+    # Update session
+    session.plan_json = _plan_to_dict(plan)
+    session.completed_tasks = [
+        {"id": t.id, "module": t.module, "description": t.description} for t in completed
+    ]
+    if failed:
+        session.status = "paused"
+        sessions.save(session)
+    else:
+        sessions.complete(session)
 
 
 # ---------------------------------------------------------------------------
@@ -627,3 +702,80 @@ def _load_cfg(config_path: str | None):
     except Exception as e:
         console.print(f"[red]Config error: {e}[/]")
         raise typer.Exit(1)
+
+
+def _plan_to_dict(plan: TaskPlan) -> dict:
+    """Serialize a TaskPlan to a JSON-safe dict."""
+    import dataclasses
+
+    return {
+        "goal": plan.goal,
+        "tasks": [
+            {
+                **dataclasses.asdict(t),
+                "status": t.status.value,
+                "qa_checks": [{"gate": q.gate, "params": q.params} for q in t.qa_checks],
+                "qa_results": [
+                    {"gate": r.gate, "passed": r.passed, "output": r.output[:500]}
+                    for r in t.qa_results
+                ],
+            }
+            for t in plan.tasks
+        ],
+    }
+
+
+def _plan_from_dict(data: dict) -> TaskPlan:
+    """Deserialize a TaskPlan from a dict."""
+    tasks = []
+    for t in data.get("tasks", []):
+        qa_checks = [
+            QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
+        ]
+        tasks.append(
+            TaskItem(
+                id=t["id"],
+                module=t["module"],
+                description=t["description"],
+                prompt=t.get("prompt", ""),
+                depends_on=t.get("depends_on", []),
+                qa_checks=qa_checks,
+                status=TaskStatus(t.get("status", "pending")),
+                result=t.get("result", ""),
+                retries=t.get("retries", 0),
+            )
+        )
+    return TaskPlan(goal=data["goal"], tasks=tasks)
+
+
+def _persist_plan(root: Path, plan: TaskPlan) -> None:
+    """Auto-save plan to .orchestrator/plans/."""
+    import re
+    from datetime import datetime, timezone
+
+    plans_dir = root / ".orchestrator" / "plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate slug from goal
+    slug = re.sub(r"[^a-z0-9]+", "-", plan.goal.lower().strip())[:50].strip("-")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"{ts}-{slug}" if slug else ts
+
+    # Save JSON
+    json_path = plans_dir / f"{filename}.json"
+    json_path.write_text(json.dumps(_plan_to_dict(plan), indent=2, default=str))
+
+    # Save human-readable latest.md
+    md_lines = [f"# Plan: {plan.goal}\n"]
+    for t in plan.tasks:
+        deps = f" (depends on: {t.depends_on})" if t.depends_on else ""
+        qa = ", ".join(q.gate for q in t.qa_checks) or "none"
+        md_lines.append(f"## Task {t.id}: [{t.module}] {t.description}{deps}")
+        md_lines.append(f"- **Status**: {t.status.value}")
+        md_lines.append(f"- **QA**: {qa}")
+        if t.prompt:
+            preview = t.prompt[:200].replace("\n", " ")
+            md_lines.append(f"- **Prompt**: {preview}...")
+        md_lines.append("")
+
+    (plans_dir / "latest.md").write_text("\n".join(md_lines))

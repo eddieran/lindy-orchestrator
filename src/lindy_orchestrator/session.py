@@ -22,6 +22,7 @@ class SessionState:
     actions_taken: list[dict[str, Any]] = field(default_factory=list)
     pending_tasks: list[dict[str, Any]] = field(default_factory=list)
     completed_tasks: list[dict[str, Any]] = field(default_factory=list)
+    plan_json: dict[str, Any] | None = None  # Full TaskPlan snapshot for resume
 
 
 class SessionManager:
