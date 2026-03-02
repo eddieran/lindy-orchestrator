@@ -1,0 +1,44 @@
+[project]
+name = "lindy-orchestrator"
+version = "0.1.0"
+description = "Lightweight, git-native multi-agent orchestration framework for autonomous project execution"
+requires-python = ">=3.11"
+license = "MIT"
+readme = "README.md"
+authors = [{ name = "Eddie Ran" }]
+keywords = ["orchestration", "ai", "agent", "automation", "claude"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+    "pydantic>=2.6",
+    "typer>=0.12",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+api = ["anthropic>=0.40"]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "ruff>=0.4",
+]
+
+[project.scripts]
+lindy-orchestrate = "lindy_orchestrator.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lindy_orchestrator"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

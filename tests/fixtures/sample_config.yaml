@@ -1,0 +1,26 @@
+project:
+  name: "test-project"
+  branch_prefix: "test"
+
+modules:
+  - name: backend
+    path: backend/
+    repo: testorg/test-backend
+    ci_workflow: ci.yml
+
+  - name: frontend
+    path: frontend/
+    repo: testorg/test-frontend
+
+planner:
+  mode: cli
+  timeout_seconds: 60
+
+dispatcher:
+  timeout_seconds: 300
+  permission_mode: bypassPermissions
+
+safety:
+  dry_run: false
+  max_retries_per_task: 1
+  max_parallel: 2
