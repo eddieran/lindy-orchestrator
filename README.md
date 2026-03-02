@@ -2,33 +2,43 @@
 
 Lightweight, git-native multi-agent orchestration framework for autonomous project execution.
 
-## What it does
-
-`lindy-orchestrator` decomposes natural-language goals into dependency-ordered tasks, dispatches them to LLM-powered agents working in isolated module directories, validates results through pluggable QA gates, and coordinates everything through markdown files and git.
+Decomposes natural-language goals into dependency-ordered tasks, dispatches them to LLM-powered agents working in isolated module directories, validates results through pluggable QA gates, and coordinates everything through markdown files and git.
 
 **No database, no shared memory, no infrastructure — just git, markdown, and your existing project.**
+
+## Install
+
+```bash
+# From GitHub
+pip install git+https://github.com/eddieran/lindy-orchestrator.git
+
+# From source
+git clone https://github.com/eddieran/lindy-orchestrator.git
+cd lindy-orchestrator
+pip install -e ".[dev]"
+```
+
+Requires Python 3.11+ and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) in PATH.
 
 ## Quick Start
 
 ```bash
-# Install
-pip install lindy-orchestrator
-
-# Initialize in your project
 cd my-project
+
+# Option A: quick scaffold (auto-detects modules)
 lindy-orchestrate init
 
-# Review the generated config
-cat orchestrator.yaml
+# Option B: deep onboard (generates CLAUDE.md, CONTRACTS.md, STATUS.md)
+lindy-orchestrate onboard
 
-# Dry-run a goal (no dispatches)
+# Dry-run a goal
 lindy-orchestrate plan "Add user authentication"
 
-# Execute a goal
+# Execute
 lindy-orchestrate run "Add user authentication"
 ```
 
-## How it works
+## How It Works
 
 ```
 User provides goal (natural language)
@@ -41,8 +51,23 @@ Each task: Agent works in module dir → commits to branch → pushes
     ↓
 QA gates validate each task (CI check, command check, agent check)
     ↓
+On failure: retry with QA feedback appended to prompt
+    ↓
 Report generated with results
 ```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `lindy-orchestrate init` | Quick scaffold — detect modules, generate `orchestrator.yaml` + `STATUS.md` |
+| `lindy-orchestrate onboard` | Deep onboard — static analysis + interview → full artifact generation |
+| `lindy-orchestrate run <goal>` | Execute a goal with parallel dispatch + QA gates |
+| `lindy-orchestrate plan <goal>` | Generate task plan without executing (`-o plan.json` to save) |
+| `lindy-orchestrate status` | Show all module health/blockers (`--json` for JSON output) |
+| `lindy-orchestrate logs` | Show recent action logs (`-n 50` for last 50) |
+| `lindy-orchestrate resume` | Resume a previous session |
+| `lindy-orchestrate validate` | Validate config, module paths, STATUS.md, Claude CLI |
 
 ## Configuration
 
@@ -56,39 +81,137 @@ project:
 modules:
   - name: backend
     path: backend/
-    repo: myorg/my-backend
+    repo: myorg/my-backend     # for CI check gate
     ci_workflow: ci.yml
-
   - name: frontend
     path: frontend/
+    repo: myorg/my-frontend
 
 planner:
-  mode: cli    # cli (claude -p) or api (Anthropic SDK)
+  mode: cli                    # cli (claude -p) or api (Anthropic SDK)
+  # model: claude-sonnet-4-20250514  # for api mode
+
+dispatcher:
+  timeout_seconds: 1800        # hard timeout per task
+  stall_timeout_seconds: 300   # no-output stall detection
+  permission_mode: bypassPermissions
+
+qa_gates:
+  custom:
+    - name: pytest
+      command: "pytest --tb=short -q"
+      cwd: "{module_path}"
 
 safety:
+  dry_run: false
   max_retries_per_task: 2
   max_parallel: 3
 ```
 
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `lindy-orchestrate init` | Scaffold onto existing project |
-| `lindy-orchestrate run <goal>` | Execute a goal |
-| `lindy-orchestrate plan <goal>` | Generate plan without executing |
-| `lindy-orchestrate status` | Show module statuses |
-| `lindy-orchestrate logs` | Show action logs |
-| `lindy-orchestrate resume` | Resume previous session |
-| `lindy-orchestrate validate` | Validate config and STATUS.md |
-
 ## Key Concepts
 
-- **Modules**: Independent directories in your project (services, packages, etc.)
-- **STATUS.md**: Markdown file tracking each module's state — human-readable, git-diffable
-- **QA Gates**: Pluggable validation (CI polling, command checks, agent-based validation)
-- **Sessions**: Persistent execution state for pause/resume
-- **Branch-based delivery**: Each task creates a reviewable, CI-gated branch
+### Modules
+
+Independent directories in your project (services, packages, microservices). Each module gets its own `STATUS.md`, `CLAUDE.md`, and isolated agent workspace. Auto-detected by marker files (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, etc.).
+
+### STATUS.md
+
+Human-readable, git-diffable state file for each module. Tracks active work, completed tasks, backlogs, cross-module requests/deliverables, key metrics, and blockers. The orchestrator reads these programmatically while agents and humans read/write them in natural language.
+
+```markdown
+## Meta
+| Key | Value |
+|-----|-------|
+| module | backend |
+| overall_health | GREEN |
+| agent_session | abc123 |
+
+## Active Work
+| ID | Task | Status | BlockedBy | Started | Notes |
+...
+
+## Cross-Module Requests
+| ID | From | To | Request | Priority | Status |
+...
+```
+
+### CONTRACTS.md
+
+Single source of truth for cross-module interfaces. Generated by `onboard`, includes:
+- Interface definitions (API, file, database, env var, message queue)
+- Task ID conventions (per-module prefixes)
+- CI delivery protocol (branch naming, workflow)
+- STATUS.md schema specification
+
+### QA Gates
+
+Pluggable validation after each task dispatch:
+
+| Gate | Description |
+|------|-------------|
+| `ci_check` | Polls GitHub Actions CI status via `gh` CLI |
+| `command_check` | Runs arbitrary shell commands |
+| `agent_check` | Dispatches a QA agent for validation |
+| Custom (YAML) | User-defined command gates in `orchestrator.yaml` |
+
+On failure, the orchestrator augments the prompt with QA feedback and retries (up to `max_retries_per_task`).
+
+### Two Dispatch Modes
+
+| Mode | Function | Use Case |
+|------|----------|----------|
+| Streaming | `dispatch_agent()` | Long tasks — heartbeat monitoring, stall detection, event callbacks |
+| Blocking | `dispatch_agent_simple()` | Short tasks — plan generation, report formatting, no thread overhead |
+
+The streaming dispatcher uses a background reader thread with queue-based I/O. Stall detection includes a grace period for the first event (`max(stall_timeout * 2, 600s)`) to handle slow agent startup.
+
+### Sessions
+
+Persistent execution state (JSON files in `.orchestrator/sessions/`). Supports pause/resume across sessions via `lindy-orchestrate resume`.
+
+## Architecture
+
+```
+src/lindy_orchestrator/
+├── cli.py                  # Typer CLI (9 commands)
+├── config.py               # YAML config + Pydantic validation
+├── models.py               # Core dataclasses (TaskPlan, QACheck, ModuleStatus, ...)
+├── dispatcher.py           # Claude CLI subprocess (streaming + blocking modes)
+├── planner.py              # Goal → TaskPlan decomposition via LLM
+├── scheduler.py            # DAG-based parallel execution with retry
+├── prompts.py              # LLM prompt templates
+├── session.py              # Session state persistence
+├── logger.py               # Append-only JSONL audit trail
+├── reporter.py             # Rich console output
+├── qa/
+│   ├── __init__.py         # Gate registry + custom YAML gate runner
+│   ├── ci_check.py         # GitHub Actions CI polling
+│   ├── command_check.py    # Shell command gates
+│   └── agent_check.py      # Agent-based validation
+├── status/
+│   ├── parser.py           # STATUS.md → structured data (lenient)
+│   ├── templates.py        # STATUS.md generation
+│   └── writer.py           # Surgical markdown table writes
+└── discovery/
+    ├── analyzer.py         # Static project analysis
+    ├── interview.py        # Interactive / non-interactive Q&A
+    ├── generator.py        # Artifact generation (CLAUDE.md, CONTRACTS.md, ...)
+    └── templates/          # Template renderers
+```
+
+## Development
+
+```bash
+# Install with dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest tests/ -v
+
+# Lint
+ruff check src/ tests/
+ruff format src/ tests/
+```
 
 ## License
 
