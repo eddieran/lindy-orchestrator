@@ -125,9 +125,12 @@ def _ask_project_description(profile: ProjectProfile, non_interactive: bool) -> 
 
     if non_interactive:
         if existing_hint:
+            console.print(f'  [dim]→ Q1: Found description in docs: "{existing_hint}"[/]')
             return existing_hint
         tech_summary = ", ".join(t for m in profile.modules for t in m.tech_stack[:2])
-        return f"A {tech_summary} project" if tech_summary else f"Project: {profile.name}"
+        desc = f"A {tech_summary} project" if tech_summary else f"Project: {profile.name}"
+        console.print(f'  [dim]→ Q1: No description in docs, using tech summary: "{desc}"[/]')
+        return desc
 
     if existing_hint:
         console.print(f"[dim]Detected description: {existing_hint}[/]")
@@ -145,6 +148,12 @@ def _ask_module_roles(profile: ProjectProfile, non_interactive: bool) -> list[Mo
     modules = list(profile.modules)
 
     if non_interactive:
+        for mod in modules:
+            tech = ", ".join(mod.tech_stack) or "unknown"
+            patterns = ", ".join(mod.detected_patterns) if mod.detected_patterns else "none"
+            console.print(
+                f"  [dim]→ Q2: Module [bold]{mod.name}[/dim][dim] — tech: {tech}, patterns: {patterns}[/]"
+            )
         return modules
 
     console.print("[bold]Q2.[/] Module roles:")
@@ -168,6 +177,9 @@ def _ask_module_roles(profile: ProjectProfile, non_interactive: bool) -> list[Mo
 def _ask_cross_deps(modules: list[ModuleProfile], non_interactive: bool) -> list[CrossModuleDep]:
     """Ask about cross-module dependencies."""
     if non_interactive:
+        console.print(
+            "  [dim]→ Q3: No cross-module deps in non-interactive mode (specify manually in orchestrator.yaml if needed)[/]"
+        )
         return []
 
     console.print("\n[bold]Q3.[/] Cross-module dependencies")
@@ -245,7 +257,12 @@ def _ask_qa_requirements(
         all_cmds = mod.test_commands + mod.lint_commands
         if all_cmds:
             qa_reqs[mod.name] = all_cmds
-            if not non_interactive:
+            if non_interactive:
+                cmd_list = ", ".join(all_cmds)
+                console.print(
+                    f"  [dim]→ Q4: QA for [bold]{mod.name}[/dim][dim]: using detected commands [{cmd_list}][/]"
+                )
+            else:
                 cmd_list = ", ".join(all_cmds)
                 console.print(f"\n[bold]Q4.[/] QA for [bold]{mod.name}[/]: detected [{cmd_list}]")
                 if not Confirm.ask("  Use these?", default=True):
@@ -254,14 +271,19 @@ def _ask_qa_requirements(
                         default=cmd_list,
                     )
                     qa_reqs[mod.name] = [c.strip() for c in custom.split(",") if c.strip()]
-        elif not non_interactive:
-            console.print(f"\n[bold]Q4.[/] QA for [bold]{mod.name}[/]: none detected")
-            custom = Prompt.ask(
-                "  Enter QA commands (comma-separated, or empty to skip)",
-                default="",
-            )
-            if custom:
-                qa_reqs[mod.name] = [c.strip() for c in custom.split(",") if c.strip()]
+        else:
+            if non_interactive:
+                console.print(
+                    f"  [dim]→ Q4: QA for [bold]{mod.name}[/dim][dim]: no test/lint commands detected[/]"
+                )
+            else:
+                console.print(f"\n[bold]Q4.[/] QA for [bold]{mod.name}[/]: none detected")
+                custom = Prompt.ask(
+                    "  Enter QA commands (comma-separated, or empty to skip)",
+                    default="",
+                )
+                if custom:
+                    qa_reqs[mod.name] = [c.strip() for c in custom.split(",") if c.strip()]
 
     return qa_reqs
 
@@ -271,6 +293,7 @@ def _ask_sensitive_paths(non_interactive: bool) -> list[str]:
     defaults = [".env", ".env.*", "*.key", "*.pem"]
 
     if non_interactive:
+        console.print(f"  [dim]→ Q5: Using default sensitive paths: {', '.join(defaults)}[/]")
         return defaults
 
     console.print("\n[bold]Q5.[/] Sensitive paths (agents should NEVER modify)")
@@ -285,6 +308,7 @@ def _ask_sensitive_paths(non_interactive: bool) -> list[str]:
 def _ask_coordination_complexity(non_interactive: bool) -> int:
     """Ask about how tightly coupled the modules are."""
     if non_interactive:
+        console.print("  [dim]→ Q6: Using moderate coupling (level 2) as default[/]")
         return 2  # moderate default
 
     console.print("\n[bold]Q6.[/] How tightly coupled are the modules?")
@@ -298,6 +322,7 @@ def _ask_coordination_complexity(non_interactive: bool) -> int:
 def _ask_branch_prefix(non_interactive: bool) -> str:
     """Ask about the branch naming prefix."""
     if non_interactive:
+        console.print('  [dim]→ Q7: Using default branch prefix: "af"[/]')
         return "af"
 
     return Prompt.ask(

@@ -46,6 +46,7 @@ _MODULE_MARKERS: dict[str, str] = {
     "pyproject.toml": "Python",
     "setup.py": "Python",
     "setup.cfg": "Python",
+    "requirements.txt": "Python",
     "package.json": "Node.js",
     "Cargo.toml": "Rust",
     "go.mod": "Go",
@@ -100,7 +101,7 @@ def _detect_modules(root: Path, max_depth: int) -> list[ModuleProfile]:
     """Detect project modules by scanning for marker files."""
     modules = []
     for item in sorted(root.iterdir()):
-        if not item.is_dir() or item.name.startswith("."):
+        if not item.is_dir() or item.name.startswith(".") or item.name in _IGNORED_DIRS:
             continue
         tech = _detect_tech(item, max_depth)
         if tech:
@@ -442,10 +443,18 @@ def _detect_commands(path: Path) -> tuple[list[str], list[str], list[str]]:
     lint_cmds: list[str] = []
 
     # Python
-    if (path / "pyproject.toml").exists() or (path / "setup.py").exists():
+    has_python = (
+        (path / "pyproject.toml").exists()
+        or (path / "setup.py").exists()
+        or (path / "requirements.txt").exists()
+    )
+    if has_python:
         if _has_pytest_config(path):
             test_cmds.append("pytest")
-        build_cmds.append("pip install -e .")
+        if (path / "pyproject.toml").exists() or (path / "setup.py").exists():
+            build_cmds.append("pip install -e .")
+        else:
+            build_cmds.append("pip install -r requirements.txt")
         if _file_mentions(path / "pyproject.toml", "ruff"):
             lint_cmds.append("ruff check .")
         if _file_mentions(path / "pyproject.toml", "mypy"):
@@ -474,6 +483,10 @@ def _detect_commands(path: Path) -> tuple[list[str], list[str], list[str]]:
         build_cmds.append("go build ./...")
         lint_cmds.append("go vet ./...")
 
+    # Playwright
+    if (path / "playwright.config.ts").exists() or (path / "playwright.config.js").exists():
+        test_cmds.append("npx playwright test")
+
     # Makefile targets
     makefile = path / "Makefile"
     if makefile.exists():
@@ -494,7 +507,11 @@ def _has_pytest_config(path: Path) -> bool:
         return True
     if (path / "tests").is_dir():
         return True
-    return _file_mentions(path / "pyproject.toml", "[tool.pytest")
+    if _file_mentions(path / "pyproject.toml", "[tool.pytest"):
+        return True
+    if _file_mentions(path / "requirements.txt", "pytest"):
+        return True
+    return False
 
 
 def _parse_npm_scripts(path: Path) -> dict[str, str]:

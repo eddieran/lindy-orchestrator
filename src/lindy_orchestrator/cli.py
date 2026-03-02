@@ -35,6 +35,7 @@ console = Console()
 _MODULE_MARKERS = {
     "pyproject.toml": "Python",
     "setup.py": "Python",
+    "requirements.txt": "Python",
     "package.json": "Node.js",
     "Cargo.toml": "Rust",
     "go.mod": "Go",
@@ -122,11 +123,34 @@ def init(
     console.print('  3. Run: lindy-orchestrate plan "Your goal here"')
 
 
+_IGNORED_DIRS = {
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".eggs",
+    "target",
+    ".next",
+    ".nuxt",
+    ".output",
+    "vendor",
+    "coverage",
+    "htmlcov",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".terraform",
+}
+
+
 def _detect_modules(root: Path, max_depth: int) -> list[tuple[str, str]]:
     """Auto-detect project modules by scanning for marker files."""
     modules = []
     for item in sorted(root.iterdir()):
-        if not item.is_dir() or item.name.startswith("."):
+        if not item.is_dir() or item.name.startswith(".") or item.name in _IGNORED_DIRS:
             continue
         tech = _detect_tech(item, max_depth)
         if tech:
@@ -227,6 +251,28 @@ def onboard(
     if not profile.modules:
         console.print("[yellow]No modules detected.[/] Use `init --modules` instead.")
         raise typer.Exit(1)
+
+    if non_interactive:
+        console.print(f"  [dim]Detected {len(profile.modules)} module(s):[/]")
+        for mod in profile.modules:
+            tech = ", ".join(mod.tech_stack) or "unknown"
+            markers = (
+                [
+                    f.name
+                    for f in Path(cwd / mod.path).iterdir()
+                    if f.name in _MODULE_MARKERS and f.is_file()
+                ]
+                if (cwd / mod.path).is_dir()
+                else []
+            )
+            marker_hint = f" (markers: {', '.join(markers)})" if markers else ""
+            console.print(f"    [dim]• {mod.name} — {tech}{marker_hint}[/]")
+        if profile.detected_ci:
+            console.print(f"  [dim]CI detected: {profile.detected_ci}[/]")
+        if profile.monorepo:
+            console.print(f"  [dim]Structure: monorepo ({len(profile.modules)} modules)[/]")
+        else:
+            console.print("  [dim]Structure: single module[/]")
 
     # Phase 2: Interactive discovery
     console.print("[bold cyan][2/3][/] Project discovery...")
