@@ -9,7 +9,10 @@
 
 ```bash
 # 安装
-pip install git+https://github.com/eddieran/lindy-orchestrator.git
+pip install lindy-orchestrator
+
+# 如需 Anthropic API 模式
+pip install lindy-orchestrator[api]
 
 # 验证
 lindy-orchestrate --version
