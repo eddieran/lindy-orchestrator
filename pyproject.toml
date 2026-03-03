@@ -18,18 +18,18 @@ classifiers = [
     "Intended Audience :: Developers",
     "Typing :: Typed",
 ]
-
-[project.urls]
-Homepage = "https://github.com/eddieran/lindy-orchestrator"
-Repository = "https://github.com/eddieran/lindy-orchestrator"
-Issues = "https://github.com/eddieran/lindy-orchestrator/issues"
-Documentation = "https://github.com/eddieran/lindy-orchestrator/blob/main/docs/USAGE.md"
 dependencies = [
     "pydantic>=2.6",
     "typer>=0.12",
     "rich>=13.0",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/eddieran/lindy-orchestrator"
+Repository = "https://github.com/eddieran/lindy-orchestrator"
+Issues = "https://github.com/eddieran/lindy-orchestrator/issues"
+Documentation = "https://github.com/eddieran/lindy-orchestrator/blob/main/docs/USAGE.md"
 
 [project.optional-dependencies]
 api = ["anthropic>=0.40"]
