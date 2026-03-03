@@ -37,7 +37,7 @@ class PlannerConfig(BaseModel):
 
 class DispatcherConfig(BaseModel):
     timeout_seconds: int = 1800
-    stall_timeout_seconds: int = 300
+    stall_timeout_seconds: int = 600
     permission_mode: str = "bypassPermissions"
     max_output_chars: int = 50_000
 
@@ -51,7 +51,7 @@ class CustomGateConfig(BaseModel):
     name: str
     command: str
     cwd: str = "{module_path}"
-    timeout: int = 300
+    timeout: int = 600
 
 
 class QAGatesConfig(BaseModel):

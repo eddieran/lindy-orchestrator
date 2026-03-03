@@ -240,10 +240,11 @@ def dispatch_agent(
                 )
 
             # Stall detection with grace period for first event
+            # Floor: never stall-kill before 10 min of silence (long tool runs like pytest)
             if event_count == 0:
                 effective_stall = max(config.stall_timeout_seconds * 2, 600)
             else:
-                effective_stall = config.stall_timeout_seconds
+                effective_stall = max(config.stall_timeout_seconds, 600)
 
             if stall_elapsed >= effective_stall:
                 proc.kill()

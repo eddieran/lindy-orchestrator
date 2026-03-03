@@ -11,6 +11,8 @@ import json
 import re
 from typing import Callable
 
+import time
+
 from .config import OrchestratorConfig
 from .dispatcher import dispatch_agent
 from .models import PlannerMode, QACheck, TaskItem, TaskPlan, TaskStatus
@@ -70,7 +72,7 @@ def generate_plan(
     if mode == PlannerMode.API:
         output = _plan_via_api(prompt, config)
     else:
-        output = _plan_via_cli(prompt, config)
+        output = _plan_via_cli(prompt, config, on_progress=on_progress)
 
     # Step 4: Parse JSON output into TaskPlan
     return _parse_task_plan(goal, output)
@@ -105,16 +107,44 @@ def _read_all_statuses(config: OrchestratorConfig) -> dict[str, str]:
     return statuses
 
 
-def _plan_via_cli(prompt: str, config: OrchestratorConfig) -> str:
-    """Call claude -p for planning."""
+def _plan_via_cli(
+    prompt: str,
+    config: OrchestratorConfig,
+    on_progress: Callable[[str], None] | None = None,
+) -> str:
+    """Call claude -p for planning with heartbeat feedback."""
+
+    def progress(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+
+    # Heartbeat state
+    _hb_count = 0
+    _hb_start = time.monotonic()
+    _hb_last_print = _hb_start
+
+    def _on_event(event: dict) -> None:
+        nonlocal _hb_count, _hb_last_print
+        _hb_count += 1
+        now = time.monotonic()
+        if now - _hb_last_print >= 30:
+            elapsed = int(now - _hb_start)
+            mins, secs = divmod(elapsed, 60)
+            progress(f"  [dim]⋯ planning: {_hb_count} events, {mins}m{secs:02d}s[/]")
+            _hb_last_print = now
+
+    progress("  [dim]Generating plan...[/]")
     result = dispatch_agent(
         module="planner",
         working_dir=config.root,
         prompt=prompt,
         config=config.dispatcher,
+        on_event=_on_event,
     )
     if not result.success:
         raise RuntimeError(f"Planning failed: {result.output[:500]}")
+
+    progress(f"  [dim]Plan generated ({result.duration_seconds}s, {result.event_count} events)[/]")
     return result.output
 
 

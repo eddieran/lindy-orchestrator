@@ -38,7 +38,11 @@ class SessionManager:
         return state
 
     def load_latest(self) -> SessionState | None:
-        files = sorted(self.sessions_dir.glob("*.json"), reverse=True)
+        files = sorted(
+            self.sessions_dir.glob("*.json"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
         if not files:
             return None
         return self._load(files[0])
@@ -58,7 +62,11 @@ class SessionManager:
         self._save(state)
 
     def list_sessions(self, limit: int = 10) -> list[SessionState]:
-        files = sorted(self.sessions_dir.glob("*.json"), reverse=True)[:limit]
+        files = sorted(
+            self.sessions_dir.glob("*.json"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )[:limit]
         sessions = []
         for f in files:
             try:
