@@ -122,7 +122,7 @@ planner:
 
 dispatcher:
   timeout_seconds: 1800       # 单任务硬超时（30 分钟）
-  stall_timeout_seconds: 300  # 无输出判定停滞（5 分钟）
+  stall_timeout_seconds: 600  # 无输出判定停滞（10 分钟）
   permission_mode: bypassPermissions
   # max_output_chars: 50000   # 输出截断阈值
 
@@ -320,7 +320,7 @@ qa_gates:
     - name: backend-pytest
       command: "pytest --tb=short -q"
       cwd: "{module_path}"
-      timeout: 300
+      timeout: 600
 ```
 
 ### 3. Agent Check
@@ -370,6 +370,7 @@ QA 失败后，编排器会：
 **Stall 检测机制：**
 - Agent 每产生一行输出就重置 stall 计时器
 - 首次事件有宽限期：`max(stall_timeout * 2, 600s)`（处理模型启动慢的情况）
+- 后续事件最低保障：`max(stall_timeout, 600s)`（保护长时间运行的 pytest 等工具）
 - 超过 stall 时间 → kill 进程，错误信息包含 stderr 和最后使用的工具名
 - 硬超时 `timeout_seconds` 是最终安全网
 
@@ -484,8 +485,8 @@ lindy-orchestrate validate
 
 ```yaml
 dispatcher:
-  timeout_seconds: 3600       # 延长硬超时
-  stall_timeout_seconds: 600  # 延长 stall 检测
+  timeout_seconds: 3600       # 延长硬超时到 1 小时
+  stall_timeout_seconds: 900  # 延长 stall 检测到 15 分钟
 ```
 
 ### 想跳过 QA 快速迭代

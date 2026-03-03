@@ -27,6 +27,19 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
 # lindy-orchestrator runtime
 .orchestrator/logs/
 .orchestrator/sessions/
+.orchestrator/plans/
+
+# Caches
+.ruff_cache/
+.mypy_cache/
