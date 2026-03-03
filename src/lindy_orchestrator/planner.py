@@ -40,6 +40,10 @@ def generate_plan(
     # Step 2: Build prompt
     modules_info = [{"name": m.name, "path": m.path} for m in config.modules]
 
+    # Read ARCHITECTURE.md if it exists
+    arch_path = config.root / "ARCHITECTURE.md"
+    architecture = arch_path.read_text(encoding="utf-8") if arch_path.exists() else None
+
     # Collect available gates
     gate_names = ["ci_check", "command_check", "agent_check"]
     for cg in config.qa_gates.custom:
@@ -52,6 +56,7 @@ def generate_plan(
         branch_prefix=config.project.branch_prefix,
         modules=modules_info,
         available_gates=gate_names,
+        architecture=architecture,
     )
 
     # Step 3: Call LLM
@@ -194,12 +199,14 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
             QACheck(gate=c.get("gate", c.get("check_type", "")), params=c.get("params", {}))
             for c in t.get("qa_checks", [])
         ]
+        raw_prompt = t.get("prompt", "")
+        prompt = _format_prompt(raw_prompt) if isinstance(raw_prompt, dict) else raw_prompt
         tasks.append(
             TaskItem(
                 id=t["id"],
                 module=t.get("module", t.get("department", "unknown")),
                 description=t["description"],
-                prompt=t.get("prompt", ""),
+                prompt=prompt,
                 depends_on=t.get("depends_on", []),
                 qa_checks=qa_checks,
             )
@@ -212,3 +219,38 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
             tasks[i].depends_on = [tasks[i - 1].id]
 
     return TaskPlan(goal=goal, tasks=tasks)
+
+
+def _format_prompt(prompt_dict: dict) -> str:
+    """Format a structured prompt dict into instruction text.
+
+    Structured format:
+    {
+      "objective": "What to achieve",
+      "context_files": ["file1.py", "file2.py"],
+      "constraints": ["do not change X", "use library Y"],
+      "verification": ["run pytest", "expected: all pass"]
+    }
+    """
+    parts: list[str] = []
+
+    objective = prompt_dict.get("objective", "")
+    if objective:
+        parts.append(f"## Objective\n{objective}")
+
+    context_files = prompt_dict.get("context_files", [])
+    if context_files:
+        file_list = "\n".join(f"- `{f}`" for f in context_files)
+        parts.append(f"## Context Files (read these first)\n{file_list}")
+
+    constraints = prompt_dict.get("constraints", [])
+    if constraints:
+        constraint_list = "\n".join(f"- {c}" for c in constraints)
+        parts.append(f"## Constraints\n{constraint_list}")
+
+    verification = prompt_dict.get("verification", [])
+    if verification:
+        verify_list = "\n".join(f"- {v}" for v in verification)
+        parts.append(f"## Before committing, verify\n{verify_list}")
+
+    return "\n\n".join(parts)

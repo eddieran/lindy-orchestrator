@@ -17,7 +17,7 @@ You coordinate the following modules:
 
 ## Current Module Status
 {module_statuses}
-
+{architecture_section}
 ## Goal
 {goal}
 
@@ -54,14 +54,23 @@ Every task MUST instruct the agent to:
 Include this instruction in every task prompt.
 
 ### Task Prompts
-Each task prompt MUST use this layered structure:
-1. **objective**: One sentence describing what to accomplish
-2. **context**: Key constraints, conventions, or gotchas (2-5 bullet points)
-3. **reference_files**: List of file paths the agent should read (the agent can read files itself — do NOT paste code into the prompt)
+Each task prompt SHOULD be a structured JSON object (preferred) or a plain string:
 
+**Structured format (preferred):**
+```json
+{{
+  "objective": "What to achieve (1-2 sentences)",
+  "context_files": ["files the agent should read first"],
+  "constraints": ["what NOT to change", "which libraries to use"],
+  "verification": ["command to run", "expected outcome"]
+}}
+```
+
+**Rules for prompts:**
 - Start every prompt with "Read your STATUS.md first." (if the module has one)
 - Agents must EXECUTE, not just plan. If a task requires running tests, say: "Run the tests and verify they pass."
 - Keep prompts concise. The agent has full codebase access — don't repeat file contents
+- Include at least one verification step so the agent can self-check before committing
 
 ### Dependencies
 - Use depends_on to enforce ordering. Example: task 2 depends on task 1 → "depends_on": [1]
@@ -128,6 +137,7 @@ def render_plan_prompt(
     branch_prefix: str = "af",
     modules: list[dict[str, Any]] | None = None,
     available_gates: list[str] | None = None,
+    architecture: str | None = None,
 ) -> str:
     """Render the planning prompt with current context."""
     # Build module list
@@ -162,10 +172,19 @@ def render_plan_prompt(
         ]
     gates_text = "\n".join(gate_lines)
 
+    # Build architecture section if provided
+    if architecture:
+        architecture_section = (
+            "\n## Architecture (respect these boundaries)\n\n" + architecture + "\n\n"
+        )
+    else:
+        architecture_section = ""
+
     return PLAN_PROMPT_TEMPLATE.format(
         project_name=project_name,
         module_list=module_list,
         module_statuses=module_statuses,
+        architecture_section=architecture_section,
         goal=goal,
         branch_prefix=branch_prefix,
         available_gates=gates_text,

@@ -62,6 +62,8 @@ def render_root_claude_md(ctx: DiscoveryContext) -> str:
    Agents commit and push to their branch.
 4. **QA gates** — Every task is verified by quality checks before marking complete.
 {"5. **CONTRACTS.md** — Shared interface definitions live in CONTRACTS.md at project root." if ctx.coordination_complexity >= 2 else ""}
+5. **ARCHITECTURE.md** — Structural map with module boundaries. Read before planning.
+   Defines what does and does NOT belong in each module.
 
 ## Sensitive Paths (DO NOT modify)
 

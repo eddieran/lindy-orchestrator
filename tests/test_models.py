@@ -1,10 +1,13 @@
-"""Tests for core data models."""
+"""Tests for core data models and prompt parsing."""
+
+import json
 
 from lindy_orchestrator.models import (
     TaskItem,
     TaskPlan,
     TaskStatus,
 )
+from lindy_orchestrator.planner import _format_prompt, _parse_task_plan
 
 
 def test_task_plan_next_ready_no_deps():
@@ -161,6 +164,95 @@ def test_not_all_terminal():
         ],
     )
     assert not plan.all_terminal()
+
+
+# ---------------------------------------------------------------------------
+# Structured prompt parsing (Change 4)
+# ---------------------------------------------------------------------------
+
+
+def test_format_prompt_full():
+    """A structured prompt dict produces formatted instruction text."""
+    prompt = {
+        "objective": "Add user authentication endpoint",
+        "context_files": ["backend/routes/auth.py", "backend/models/user.py"],
+        "constraints": ["Do not modify existing endpoints", "Use JWT tokens"],
+        "verification": ["Run pytest tests/test_auth.py", "Expected: all pass"],
+    }
+    result = _format_prompt(prompt)
+
+    assert "## Objective" in result
+    assert "Add user authentication endpoint" in result
+    assert "## Context Files" in result
+    assert "`backend/routes/auth.py`" in result
+    assert "## Constraints" in result
+    assert "Do not modify existing endpoints" in result
+    assert "## Before committing, verify" in result
+    assert "Run pytest tests/test_auth.py" in result
+
+
+def test_format_prompt_partial():
+    """A prompt dict with only some fields still works."""
+    prompt = {"objective": "Fix the bug"}
+    result = _format_prompt(prompt)
+
+    assert "## Objective" in result
+    assert "Fix the bug" in result
+    assert "## Constraints" not in result
+
+
+def test_format_prompt_empty():
+    """An empty dict produces empty output."""
+    result = _format_prompt({})
+    assert result == ""
+
+
+def test_parse_task_plan_with_dict_prompt():
+    """_parse_task_plan handles dict prompts (structured format)."""
+    plan_json = json.dumps(
+        {
+            "tasks": [
+                {
+                    "id": 1,
+                    "module": "backend",
+                    "description": "Add auth",
+                    "prompt": {
+                        "objective": "Implement JWT auth",
+                        "context_files": ["auth.py"],
+                        "constraints": ["Use PyJWT"],
+                        "verification": ["pytest"],
+                    },
+                    "depends_on": [],
+                    "qa_checks": [],
+                }
+            ]
+        }
+    )
+    plan = _parse_task_plan("test goal", plan_json)
+    assert len(plan.tasks) == 1
+    assert "## Objective" in plan.tasks[0].prompt
+    assert "Implement JWT auth" in plan.tasks[0].prompt
+    assert "## Before committing, verify" in plan.tasks[0].prompt
+
+
+def test_parse_task_plan_with_string_prompt():
+    """_parse_task_plan handles string prompts (legacy format)."""
+    plan_json = json.dumps(
+        {
+            "tasks": [
+                {
+                    "id": 1,
+                    "module": "backend",
+                    "description": "Fix bug",
+                    "prompt": "Fix the login bug in auth.py",
+                    "depends_on": [],
+                    "qa_checks": [],
+                }
+            ]
+        }
+    )
+    plan = _parse_task_plan("test goal", plan_json)
+    assert plan.tasks[0].prompt == "Fix the login bug in auth.py"
 
 
 def test_chain_continues_after_partial_failure():

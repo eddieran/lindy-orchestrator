@@ -637,6 +637,51 @@ def resume(
 
 
 # ---------------------------------------------------------------------------
+# gc (garbage collection)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def gc(
+    config: Optional[str] = typer.Option(None, "-c", "--config"),
+    apply: bool = typer.Option(
+        False, "--apply", help="Actually perform cleanup (default: dry run)"
+    ),
+    branch_age: int = typer.Option(14, "--branch-age", help="Max age for task branches (days)"),
+    session_age: int = typer.Option(30, "--session-age", help="Max age for sessions (days)"),
+    log_size: int = typer.Option(10, "--log-size", help="Max log file size (MB)"),
+    status_stale: int = typer.Option(7, "--status-stale", help="STATUS.md stale threshold (days)"),
+):
+    """Clean up stale branches, old sessions, oversized logs, and orphan plans.
+
+    Runs in dry-run mode by default. Use --apply to execute cleanup.
+    """
+    from .gc import format_gc_report, run_gc
+
+    cfg = _load_cfg(config)
+    mode = "[red]APPLY[/]" if apply else "[yellow]DRY RUN[/]"
+    console.print(f"[bold]lindy-orchestrate gc[/] — {mode}\n")
+
+    report = run_gc(
+        cfg,
+        apply=apply,
+        max_branch_age_days=branch_age,
+        max_session_age_days=session_age,
+        max_log_size_mb=log_size,
+        status_stale_days=status_stale,
+    )
+
+    console.print(format_gc_report(report))
+
+    if not report.actions:
+        console.print("[bold green]Workspace is clean.[/]")
+    elif not apply:
+        console.print(
+            f"\n[yellow]{report.action_count} action(s) found.[/] Run with --apply to execute."
+        )
+
+
+# ---------------------------------------------------------------------------
 # validate
 # ---------------------------------------------------------------------------
 

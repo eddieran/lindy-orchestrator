@@ -115,3 +115,4 @@ def _run_custom_command_gate(
 from . import ci_check as _ci_check_mod  # noqa: E402, F401
 from . import command_check as _cmd_check_mod  # noqa: E402, F401
 from . import agent_check as _agent_check_mod  # noqa: E402, F401
+from . import structural_check as _struct_check_mod  # noqa: E402, F401

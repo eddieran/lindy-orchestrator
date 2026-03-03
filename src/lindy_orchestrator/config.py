@@ -54,8 +54,15 @@ class CustomGateConfig(BaseModel):
     timeout: int = 600
 
 
+class StructuralCheckConfig(BaseModel):
+    max_file_lines: int = 500
+    enforce_module_boundary: bool = True
+    sensitive_patterns: list[str] = Field(default_factory=lambda: [".env", "*.key", "*.pem"])
+
+
 class QAGatesConfig(BaseModel):
     ci_check: CICheckConfig = Field(default_factory=CICheckConfig)
+    structural: StructuralCheckConfig = Field(default_factory=StructuralCheckConfig)
     custom: list[CustomGateConfig] = Field(default_factory=list)
 
 

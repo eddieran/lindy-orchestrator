@@ -17,6 +17,7 @@ from .dispatcher import dispatch_agent
 from .logger import ActionLogger
 from .models import QACheck, TaskItem, TaskPlan, TaskStatus
 from .qa import run_qa_gate
+from .qa.feedback import format_qa_feedback
 
 
 def execute_plan(
@@ -118,8 +119,25 @@ def _execute_single_task(
 
     Returns the number of dispatches made.
     """
-    # Auto-inject QA gate if task has none and config has custom gates
-    if not task.qa_checks and config.qa_gates.custom:
+    # Auto-inject structural check gate
+    has_structural = any(q.gate == "structural_check" for q in task.qa_checks)
+    if not has_structural:
+        sc = config.qa_gates.structural
+        task.qa_checks.append(
+            QACheck(
+                gate="structural_check",
+                params={
+                    "max_file_lines": sc.max_file_lines,
+                    "enforce_module_boundary": sc.enforce_module_boundary,
+                    "sensitive_patterns": sc.sensitive_patterns,
+                },
+            )
+        )
+        progress("    [dim]Auto-injected QA: structural_check[/]")
+
+    # Auto-inject custom command gates if task has no command_check gates
+    has_command = any(q.gate == "command_check" for q in task.qa_checks)
+    if not has_command and config.qa_gates.custom:
         for gate in config.qa_gates.custom:
             task.qa_checks.append(
                 QACheck(
@@ -271,13 +289,17 @@ def _execute_single_task(
             )
             return dispatches
 
-        # Augment prompt with failure feedback
+        # Augment prompt with structured remediation feedback
         failed_checks = [r for r in task.qa_results if not r.passed]
-        failure_detail = "\n".join(f"- {r.gate}: {r.output[:300]}" for r in failed_checks)
+        feedback_parts = []
+        for r in failed_checks:
+            structured = format_qa_feedback(r.gate, r.output)
+            feedback_parts.append(f"### {r.gate}\n{structured}")
+        failure_detail = "\n\n".join(feedback_parts)
         task.prompt = (
             f"{task.prompt}\n\n"
-            f"## IMPORTANT: Previous attempt failed QA verification\n"
-            f"The following quality checks failed:\n{failure_detail}\n\n"
+            f"## IMPORTANT: Previous attempt failed QA verification\n\n"
+            f"{failure_detail}\n\n"
             f"Fix these issues. Specific instructions:\n"
             f"- Actually RUN all scripts and commands (do not just create them)\n"
             f"- Ensure output files are generated before declaring success\n"

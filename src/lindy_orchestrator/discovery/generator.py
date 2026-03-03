@@ -11,6 +11,7 @@ from rich.console import Console
 
 from ..models import DiscoveryContext
 from ..status.templates import generate_status_md
+from .templates.architecture_md import render_architecture_md
 from .templates.contracts_md import render_contracts_md
 from .templates.module_claude_md import render_module_claude_md
 from .templates.root_claude_md import render_root_claude_md
@@ -50,7 +51,11 @@ def generate_artifacts(
         contracts = render_contracts_md(ctx)
         written.extend(_write_file(output_dir / "CONTRACTS.md", contracts, force))
 
-    # 5. Per-module STATUS.md
+    # 5. ARCHITECTURE.md — structural map with boundaries
+    architecture = render_architecture_md(ctx)
+    written.extend(_write_file(output_dir / "ARCHITECTURE.md", architecture, force))
+
+    # 6. Per-module STATUS.md
     for mod in ctx.modules:
         status_path = output_dir / mod.path / "STATUS.md"
         if not status_path.exists() or force:
@@ -58,12 +63,12 @@ def generate_artifacts(
             content = generate_status_md(mod.name)
             written.extend(_write_file(status_path, content, force))
 
-    # 6. .orchestrator/ directory
+    # 7. .orchestrator/ directory
     orch_dir = output_dir / ".orchestrator"
     (orch_dir / "logs").mkdir(parents=True, exist_ok=True)
     (orch_dir / "sessions").mkdir(parents=True, exist_ok=True)
 
-    # 7. Update .gitignore
+    # 8. Update .gitignore
     _update_gitignore(output_dir)
 
     return written
