@@ -3,10 +3,8 @@
 import os
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 from lindy_orchestrator.config import (
-    DispatcherConfig,
     ModuleConfig,
     OrchestratorConfig,
     ProjectConfig,

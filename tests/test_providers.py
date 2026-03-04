@@ -141,7 +141,8 @@ class TestProviderCallChain:
         mock_dispatch.return_value = DispatchResult(
             module="backend", success=True, output="ok", exit_code=0,
         )
-        callback = lambda event: None
+        def callback(event):
+            pass
         config = DispatcherConfig()
         provider = create_provider(config)
         provider.dispatch(

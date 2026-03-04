@@ -697,7 +697,7 @@ def scan(
 
     cfg = _load_cfg(config)
 
-    console.print(f"[bold]lindy-orchestrate scan[/] — Entropy Scanner\n")
+    console.print("[bold]lindy-orchestrate scan[/] — Entropy Scanner\n")
 
     report = run_scan(cfg, module_filter=module)
 

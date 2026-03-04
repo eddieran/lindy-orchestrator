@@ -3,7 +3,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from lindy_orchestrator.config import LayerCheckConfig
 from lindy_orchestrator.qa.layer_check import (
     LayerDef,
     LayerCheckGate,

@@ -34,7 +34,7 @@ def render_root_claude_md(ctx: DiscoveryContext) -> str:
 
     # Quick rules
     contracts_rule = (
-        f"\n3. **CONTRACTS.md** — shared types and interfaces. Never duplicate across modules."
+        "\n3. **CONTRACTS.md** — shared types and interfaces. Never duplicate across modules."
         if ctx.coordination_complexity >= 2
         else ""
     )
