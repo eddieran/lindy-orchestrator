@@ -24,8 +24,7 @@ class TestParseArchitectureLayers:
     def test_fastapi_layers(self, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **backend/**: models → schemas → services → routes → main\n"
+            "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
         result = _parse_architecture_layers(tmp_path, "backend")
         assert result is not None
@@ -35,8 +34,7 @@ class TestParseArchitectureLayers:
     def test_react_layers(self, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **frontend/**: types → hooks → components → pages → app\n"
+            "## Layer Structure\n\n- **frontend/**: types → hooks → components → pages → app\n"
         )
         result = _parse_architecture_layers(tmp_path, "frontend")
         assert result is not None
@@ -45,8 +43,7 @@ class TestParseArchitectureLayers:
     def test_django_layers(self, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **api/**: models → serializers → views → urls → wsgi\n"
+            "## Layer Structure\n\n- **api/**: models → serializers → views → urls → wsgi\n"
         )
         result = _parse_architecture_layers(tmp_path, "api")
         assert result is not None
@@ -59,8 +56,7 @@ class TestParseArchitectureLayers:
     def test_no_matching_module(self, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **frontend/**: types → hooks → components → pages → app\n"
+            "## Layer Structure\n\n- **frontend/**: types → hooks → components → pages → app\n"
         )
         result = _parse_architecture_layers(tmp_path, "backend")
         assert result is None
@@ -132,9 +128,7 @@ class TestExtractIntraImports:
     def test_python_imports(self, tmp_path: Path):
         f = tmp_path / "service.py"
         f.write_text(
-            "from backend.models import User\n"
-            "from backend.schemas import UserSchema\n"
-            "import os\n"
+            "from backend.models import User\nfrom backend.schemas import UserSchema\nimport os\n"
         )
         imports = _extract_intra_imports(f, "backend/")
         assert len(imports) == 2
@@ -205,7 +199,10 @@ class TestCheckLayerViolations:
         assert violations[0].rule == "layer_violation"
         assert "models" in violations[0].message
         assert "routes" in violations[0].message
-        assert "remediation" in violations[0].remediation.lower() or "Move" in violations[0].remediation
+        assert (
+            "remediation" in violations[0].remediation.lower()
+            or "Move" in violations[0].remediation
+        )
 
     def test_same_layer_import(self, tmp_path: Path):
         """services → services is valid (same layer)."""
@@ -284,9 +281,7 @@ class TestCheckLayerViolations:
             module="backend",
             layers=["models", "schemas", "services", "routes", "main"],
         )
-        violations = _check_layer_violations(
-            tmp_path, "backend", layer_def, ["backend/main.py"]
-        )
+        violations = _check_layer_violations(tmp_path, "backend", layer_def, ["backend/main.py"])
         assert violations == []
 
     def test_tsx_upward_violation(self, tmp_path: Path):
@@ -331,10 +326,7 @@ class TestCheckLayerViolations:
         models_dir = mod / "models"
         models_dir.mkdir(parents=True)
         f = models_dir / "base.py"
-        f.write_text(
-            "from backend.routes import router\n"
-            "from backend.services import auth\n"
-        )
+        f.write_text("from backend.routes import router\nfrom backend.services import auth\n")
 
         layer_def = LayerDef(
             module="backend",
@@ -407,8 +399,7 @@ class TestLayerCheckGate:
         # Create ARCHITECTURE.md
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **backend/**: models → schemas → services → routes → main\n"
+            "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
 
         # Create valid module structure
@@ -432,8 +423,7 @@ class TestLayerCheckGate:
         # Create ARCHITECTURE.md
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **backend/**: models → schemas → services → routes → main\n"
+            "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
 
         # Create invalid module structure
@@ -457,8 +447,7 @@ class TestLayerCheckGate:
     def test_qa_result_has_layers_detail(self, mock_staged, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **backend/**: models → schemas → services → routes → main\n"
+            "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
         mod = tmp_path / "backend" / "models"
         mod.mkdir(parents=True)

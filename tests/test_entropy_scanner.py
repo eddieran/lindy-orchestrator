@@ -104,16 +104,14 @@ class TestArchitectureDrift:
         (tmp_path / "frontend").mkdir()
         cfg = _make_config(tmp_path)
         findings = _check_architecture_drift(cfg)
-        undeclared = [f for f in findings if "frontend" in f.description and "not declared" in f.description]
+        undeclared = [
+            f for f in findings if "frontend" in f.description and "not declared" in f.description
+        ]
         assert len(undeclared) == 1
 
     def test_clean_architecture(self, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
-        arch.write_text(
-            "## Module Topology\n\n"
-            "- **backend/** → Python\n"
-            "- **frontend/** → React\n"
-        )
+        arch.write_text("## Module Topology\n\n- **backend/** → Python\n- **frontend/** → React\n")
         (tmp_path / "backend").mkdir()
         (tmp_path / "frontend").mkdir()
         cfg = _make_config(tmp_path)
@@ -124,8 +122,7 @@ class TestArchitectureDrift:
     def test_missing_layer_directory(self, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
         arch.write_text(
-            "## Layer Structure\n\n"
-            "- **backend/**: models → schemas → services → routes → main\n"
+            "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
         be = tmp_path / "backend"
         be.mkdir()
@@ -184,7 +181,9 @@ class TestContractCompliance:
         )
         cfg = _make_config(tmp_path)
         findings = _check_contract_compliance(cfg)
-        missing_mod = [f for f in findings if "frontend" in f.description and "not referenced" in f.description]
+        missing_mod = [
+            f for f in findings if "frontend" in f.description and "not referenced" in f.description
+        ]
         assert len(missing_mod) == 1
 
 
@@ -333,7 +332,9 @@ class TestGrading:
     def test_multiple_penalties(self, tmp_path: Path):
         cfg = _make_config(tmp_path, modules=[ModuleConfig(name="backend", path="backend")])
         findings = [
-            ScanFinding(category="architecture_drift", severity="error", description="backend missing"),
+            ScanFinding(
+                category="architecture_drift", severity="error", description="backend missing"
+            ),
             ScanFinding(category="quality", severity="warning", description="backend large files"),
             ScanFinding(category="status_drift", severity="warning", description="backend stale"),
         ]
@@ -414,11 +415,7 @@ class TestRunScan:
 
     def test_scan_with_architecture(self, tmp_path: Path):
         arch = tmp_path / "ARCHITECTURE.md"
-        arch.write_text(
-            "## Module Topology\n\n"
-            "- **backend/** → Python\n"
-            "- **frontend/** → React\n"
-        )
+        arch.write_text("## Module Topology\n\n- **backend/** → Python\n- **frontend/** → React\n")
         (tmp_path / "backend").mkdir()
         (tmp_path / "frontend").mkdir()
         cfg = _make_config(tmp_path)

@@ -99,8 +99,12 @@ class TestProviderCallChain:
         from lindy_orchestrator.models import DispatchResult
 
         mock_dispatch.return_value = DispatchResult(
-            module="backend", success=True, output="done", exit_code=0,
-            duration_seconds=1.0, event_count=5,
+            module="backend",
+            success=True,
+            output="done",
+            exit_code=0,
+            duration_seconds=1.0,
+            event_count=5,
         )
         config = DispatcherConfig()
         provider = create_provider(config)
@@ -121,7 +125,10 @@ class TestProviderCallChain:
         from lindy_orchestrator.models import DispatchResult
 
         mock_simple.return_value = DispatchResult(
-            module="planner", success=True, output="plan", exit_code=0,
+            module="planner",
+            success=True,
+            output="plan",
+            exit_code=0,
         )
         config = DispatcherConfig()
         provider = create_provider(config)
@@ -139,10 +146,15 @@ class TestProviderCallChain:
         from lindy_orchestrator.models import DispatchResult
 
         mock_dispatch.return_value = DispatchResult(
-            module="backend", success=True, output="ok", exit_code=0,
+            module="backend",
+            success=True,
+            output="ok",
+            exit_code=0,
         )
+
         def callback(event):
             pass
+
         config = DispatcherConfig()
         provider = create_provider(config)
         provider.dispatch(

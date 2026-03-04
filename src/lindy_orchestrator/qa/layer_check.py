@@ -52,9 +52,7 @@ def _parse_architecture_layers(project_root: Path, module_name: str) -> LayerDef
     # Match: - **module_name/**: layer1 → layer2 → layer3
     # Also handle unicode arrow and ASCII arrow
     pattern = re.compile(
-        r"-\s+\*\*"
-        + re.escape(module_name)
-        + r"/?\*\*:?\s*(.+)",
+        r"-\s+\*\*" + re.escape(module_name) + r"/?\*\*:?\s*(.+)",
         re.IGNORECASE,
     )
 
@@ -64,9 +62,7 @@ def _parse_architecture_layers(project_root: Path, module_name: str) -> LayerDef
             layer_str = m.group(1).strip()
             # Split on → or -> or ,
             layers = [
-                s.strip().lower()
-                for s in re.split(r"\s*(?:→|->|,)\s*", layer_str)
-                if s.strip()
+                s.strip().lower() for s in re.split(r"\s*(?:→|->|,)\s*", layer_str) if s.strip()
             ]
             if len(layers) >= 2:
                 return LayerDef(module=module_name, layers=layers)
@@ -163,7 +159,7 @@ def _check_layer_violations(
             continue
 
         # Skip test files
-        rel_in_module = filepath[len(module_prefix):]
+        rel_in_module = filepath[len(module_prefix) :]
         parts = Path(rel_in_module).parts
         if any(p in ("tests", "test", "__tests__", "spec") for p in parts):
             continue
@@ -184,13 +180,13 @@ def _check_layer_violations(
             # Resolve the import target's layer
             if imp.startswith("./") or imp.startswith("../"):
                 # JS/TS relative import: strip leading ./ or ../
-                imp_path = re.sub(r"^(\.\./|\./)+" , "", imp)
+                imp_path = re.sub(r"^(\.\./|\./)+", "", imp)
             else:
                 # Python dotted import: convert dots to slashes
                 imp_path = imp.replace(".", "/")
                 # Remove module prefix if present
                 if imp_path.startswith(module_name + "/"):
-                    imp_path = imp_path[len(module_name) + 1:]
+                    imp_path = imp_path[len(module_name) + 1 :]
 
             target_layer = _resolve_layer(imp_path, layer_def.layers)
             if target_layer is None:
@@ -202,9 +198,7 @@ def _check_layer_violations(
 
             # Violation: importing from a higher layer
             if target_layer > source_layer:
-                source_name = (
-                    layer_def.layers[source_layer] if source_layer >= 0 else "shared"
-                )
+                source_name = layer_def.layers[source_layer] if source_layer >= 0 else "shared"
                 target_name = layer_def.layers[target_layer]
                 violations.append(
                     Violation(
@@ -344,8 +338,7 @@ class LayerCheckGate:
             details={
                 "violation_count": len(violations),
                 "violations": [
-                    {"rule": v.rule, "file": v.file, "message": v.message}
-                    for v in violations
+                    {"rule": v.rule, "file": v.file, "message": v.message} for v in violations
                 ],
                 "layers": layer_def.layers,
             },

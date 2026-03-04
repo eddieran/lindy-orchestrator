@@ -74,7 +74,8 @@ def run_scan(config: OrchestratorConfig, module_filter: str | None = None) -> Sc
 
     if module_filter:
         report.findings = [
-            f for f in report.findings
+            f
+            for f in report.findings
             if module_filter in f.file_path or module_filter in f.description
         ]
         report.grades = [g for g in report.grades if g.module == module_filter]
@@ -147,17 +148,11 @@ def _check_architecture_drift(config: OrchestratorConfig) -> list[ScanFinding]:
                 )
 
     # Check layer directories exist
-    layer_pattern = re.compile(
-        r"-\s+\*\*(\w+)/?\*\*:?\s*(.+)"
-    )
+    layer_pattern = re.compile(r"-\s+\*\*(\w+)/?\*\*:?\s*(.+)")
     for m in layer_pattern.finditer(content):
         mod_name = m.group(1)
         layer_str = m.group(2).strip()
-        layers = [
-            s.strip().lower()
-            for s in re.split(r"\s*(?:→|->|,)\s*", layer_str)
-            if s.strip()
-        ]
+        layers = [s.strip().lower() for s in re.split(r"\s*(?:→|->|,)\s*", layer_str) if s.strip()]
         mod_path = config.root / mod_name
         if mod_path.exists():
             for layer in layers:
@@ -281,9 +276,7 @@ def _check_status_consistency(config: OrchestratorConfig) -> list[ScanFinding]:
                     ScanFinding(
                         category="status_drift",
                         severity="warning",
-                        description=(
-                            f"`{mod.name}/STATUS.md` has invalid health value: {health}"
-                        ),
+                        description=(f"`{mod.name}/STATUS.md` has invalid health value: {health}"),
                         file_path=str(status_path),
                         remediation="Health must be GREEN, YELLOW, or RED",
                     )
@@ -298,9 +291,7 @@ def _check_status_consistency(config: OrchestratorConfig) -> list[ScanFinding]:
                     ScanFinding(
                         category="status_drift",
                         severity="warning",
-                        description=(
-                            f"`{mod.name}/STATUS.md` last modified {age_days} days ago"
-                        ),
+                        description=(f"`{mod.name}/STATUS.md` last modified {age_days} days ago"),
                         file_path=str(status_path),
                         remediation="Update STATUS.md with current module state",
                     )
@@ -326,9 +317,7 @@ def _check_status_consistency(config: OrchestratorConfig) -> list[ScanFinding]:
                             f"but branch `{branch}` not found"
                         ),
                         file_path=str(status_path),
-                        remediation=(
-                            f"Update task {task_id} status or create branch `{branch}`"
-                        ),
+                        remediation=(f"Update task {task_id} status or create branch `{branch}`"),
                     )
                 )
 
@@ -377,8 +366,14 @@ def _check_quality_metrics(config: OrchestratorConfig) -> list[ScanFinding]:
             if any(
                 p in f.parts
                 for p in (
-                    "node_modules", "__pycache__", ".venv", "venv",
-                    "dist", "build", ".eggs", "target",
+                    "node_modules",
+                    "__pycache__",
+                    ".venv",
+                    "venv",
+                    "dist",
+                    "build",
+                    ".eggs",
+                    "target",
                 )
             ):
                 continue
@@ -407,10 +402,7 @@ def _check_quality_metrics(config: OrchestratorConfig) -> list[ScanFinding]:
             )
 
         # Check test directory exists
-        has_tests = any(
-            (mod_path / d).exists()
-            for d in ("tests", "test", "__tests__", "spec")
-        )
+        has_tests = any((mod_path / d).exists() for d in ("tests", "test", "__tests__", "spec"))
         if not has_tests and total_files > 0:
             findings.append(
                 ScanFinding(
@@ -551,9 +543,7 @@ def format_scan_report(report: ScanReport, grade_only: bool = False) -> str:
         lines.append("## Module Grades")
         lines.append("")
         for g in report.grades:
-            detail_str = ", ".join(
-                f"{k}=-{v}" for k, v in g.details.items() if v > 0
-            )
+            detail_str = ", ".join(f"{k}=-{v}" for k, v in g.details.items() if v > 0)
             detail_suffix = f" ({detail_str})" if detail_str else ""
             lines.append(f"  {g.module}: {g.grade} ({g.score}/100){detail_suffix}")
 

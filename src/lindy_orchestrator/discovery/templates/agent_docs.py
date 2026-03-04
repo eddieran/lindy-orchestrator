@@ -175,9 +175,7 @@ def _render_boundaries(ctx: DiscoveryContext) -> str:
             other_names = [m.name for m in ctx.modules if m.name != mod.name]
             if other_names:
                 others = ", ".join(f"`{n}/`" for n in other_names)
-                sections.append(
-                    f"- `{mod.name}/` does NOT import from {others}"
-                )
+                sections.append(f"- `{mod.name}/` does NOT import from {others}")
     else:
         sections.append("- Single module project — no cross-module concerns")
     sections.append("")
@@ -207,9 +205,7 @@ def _render_boundaries(ctx: DiscoveryContext) -> str:
             for dep in ctx.cross_deps:
                 desc = f": {dep.description}" if dep.description else ""
                 iface = dep.interface_type or "unspecified"
-                sections.append(
-                    f"- {dep.from_module} → {dep.to_module} ({iface}){desc}"
-                )
+                sections.append(f"- {dep.from_module} → {dep.to_module} ({iface}){desc}")
             sections.append("")
 
     # Exceptions

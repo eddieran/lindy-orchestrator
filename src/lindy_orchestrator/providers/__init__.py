@@ -25,6 +25,4 @@ def create_provider(config: DispatcherConfig) -> DispatchProvider:
 
         return ClaudeCLIProvider(config)
 
-    raise ValueError(
-        f"Unknown provider: {provider_name!r}. Available: ['claude_cli']"
-    )
+    raise ValueError(f"Unknown provider: {provider_name!r}. Available: ['claude_cli']")
