@@ -11,6 +11,7 @@ from rich.console import Console
 
 from ..models import DiscoveryContext
 from ..status.templates import generate_status_md
+from .templates.agent_docs import render_agent_docs
 from .templates.architecture_md import render_architecture_md
 from .templates.contracts_md import render_contracts_md
 from .templates.module_claude_md import render_module_claude_md
@@ -55,7 +56,14 @@ def generate_artifacts(
     architecture = render_architecture_md(ctx)
     written.extend(_write_file(output_dir / "ARCHITECTURE.md", architecture, force))
 
-    # 6. Per-module STATUS.md
+    # 6. docs/agents/ — detailed agent reference documents
+    agent_docs = render_agent_docs(ctx)
+    agents_dir = output_dir / "docs" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    for filename, content in agent_docs.items():
+        written.extend(_write_file(agents_dir / filename, content, force))
+
+    # 7. Per-module STATUS.md
     for mod in ctx.modules:
         status_path = output_dir / mod.path / "STATUS.md"
         if not status_path.exists() or force:

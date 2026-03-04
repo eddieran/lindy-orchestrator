@@ -682,6 +682,40 @@ def gc(
 
 
 # ---------------------------------------------------------------------------
+# scan
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def scan(
+    config: Optional[str] = typer.Option(None, "-c", "--config"),
+    module: Optional[str] = typer.Option(None, "--module", help="Scan specific module"),
+    grade_only: bool = typer.Option(False, "--grade-only", help="Only show grades"),
+):
+    """Scan for entropy: architecture drift, contract violations, quality decay."""
+    from .entropy.scanner import format_scan_report, run_scan
+
+    cfg = _load_cfg(config)
+
+    console.print(f"[bold]lindy-orchestrate scan[/] — Entropy Scanner\n")
+
+    report = run_scan(cfg, module_filter=module)
+
+    output = format_scan_report(report, grade_only=grade_only)
+    console.print(output)
+
+    error_count = len([f for f in report.findings if f.severity == "error"])
+    warning_count = len([f for f in report.findings if f.severity == "warning"])
+
+    if error_count:
+        console.print(f"\n[red]{error_count} error(s), {warning_count} warning(s)[/]")
+    elif warning_count:
+        console.print(f"\n[yellow]{warning_count} warning(s)[/]")
+    else:
+        console.print("\n[bold green]No issues found.[/]")
+
+
+# ---------------------------------------------------------------------------
 # validate
 # ---------------------------------------------------------------------------
 

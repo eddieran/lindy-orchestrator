@@ -14,8 +14,8 @@ from typing import Callable
 import time
 
 from .config import OrchestratorConfig
-from .dispatcher import dispatch_agent
 from .models import PlannerMode, QACheck, TaskItem, TaskPlan, TaskStatus
+from .providers import create_provider
 from .prompts import render_plan_prompt
 from .status.parser import parse_status_md
 
@@ -139,11 +139,11 @@ def _plan_via_cli(
             _hb_last_print = now
 
     progress("  [dim]Generating plan...[/]")
-    result = dispatch_agent(
+    provider = create_provider(config.dispatcher)
+    result = provider.dispatch(
         module="planner",
         working_dir=config.root,
         prompt=prompt,
-        config=config.dispatcher,
         on_event=_on_event,
     )
     if not result.success:

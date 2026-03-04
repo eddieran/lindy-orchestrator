@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
-from .dispatcher import dispatch_agent
 from .logger import ActionLogger
 from .models import QACheck, TaskItem, TaskPlan, TaskStatus
+from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import format_qa_feedback
 
@@ -135,6 +135,21 @@ def _execute_single_task(
         )
         progress("    [dim]Auto-injected QA: structural_check[/]")
 
+    # Auto-inject layer_check gate
+    has_layer = any(q.gate == "layer_check" for q in task.qa_checks)
+    arch_path = config.root / "ARCHITECTURE.md"
+    if not has_layer and config.qa_gates.layer_check.enabled and arch_path.exists():
+        task.qa_checks.append(
+            QACheck(
+                gate="layer_check",
+                params={
+                    "enabled": config.qa_gates.layer_check.enabled,
+                    "unknown_file_policy": config.qa_gates.layer_check.unknown_file_policy,
+                },
+            )
+        )
+        progress("    [dim]Auto-injected QA: layer_check[/]")
+
     # Auto-inject custom command gates if task has no command_check gates
     has_command = any(q.gate == "command_check" for q in task.qa_checks)
     if not has_command and config.qa_gates.custom:
@@ -183,11 +198,11 @@ def _execute_single_task(
                 progress(f"    [dim]⋯ {_hb_count} events, {mins}m{secs:02d}s{tool_hint}[/]")
                 _hb_last_print = now
 
-        result = dispatch_agent(
+        provider = create_provider(config.dispatcher)
+        result = provider.dispatch(
             module=task.module,
             working_dir=working_dir,
             prompt=task.prompt,
-            config=config.dispatcher,
             on_event=_on_event,
         )
         dispatches += 1

@@ -36,6 +36,7 @@ class PlannerConfig(BaseModel):
 
 
 class DispatcherConfig(BaseModel):
+    provider: str = "claude_cli"
     timeout_seconds: int = 1800
     stall_timeout_seconds: int = 600
     permission_mode: str = "bypassPermissions"
@@ -60,9 +61,15 @@ class StructuralCheckConfig(BaseModel):
     sensitive_patterns: list[str] = Field(default_factory=lambda: [".env", "*.key", "*.pem"])
 
 
+class LayerCheckConfig(BaseModel):
+    enabled: bool = True
+    unknown_file_policy: str = "skip"  # skip | warn
+
+
 class QAGatesConfig(BaseModel):
     ci_check: CICheckConfig = Field(default_factory=CICheckConfig)
     structural: StructuralCheckConfig = Field(default_factory=StructuralCheckConfig)
+    layer_check: LayerCheckConfig = Field(default_factory=LayerCheckConfig)
     custom: list[CustomGateConfig] = Field(default_factory=list)
 
 

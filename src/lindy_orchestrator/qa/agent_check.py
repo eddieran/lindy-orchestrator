@@ -62,15 +62,15 @@ class AgentCheckGate:
             prompt += f"\n## Agent Output (for reference)\n```\n{preview}\n```\n"
 
         # Dispatch to QA module
-        from ..dispatcher import dispatch_agent
+        from ..providers import create_provider
 
         qa_path = (project_root / qa_module.path).resolve()
         try:
-            result = dispatch_agent(
+            provider = create_provider(dispatcher_config)
+            result = provider.dispatch(
                 module=qa_module.name,
                 working_dir=qa_path,
                 prompt=prompt,
-                config=dispatcher_config,
             )
         except Exception as e:
             return QAResult(
