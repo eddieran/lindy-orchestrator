@@ -14,7 +14,7 @@ from . import __version__
 from .config import CONFIG_FILENAME, load_config
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
-from .models import QACheck, TaskItem, TaskPlan, TaskStatus
+from .models import TaskPlan, TaskStatus
 from .reporter import print_goal_report, print_status_table
 from .session import SessionManager
 from .status.parser import parse_status_md
@@ -766,6 +766,292 @@ def validate(
 
 
 # ---------------------------------------------------------------------------
+# issues
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def issues(
+    config: Optional[str] = typer.Option(None, "-c", "--config"),
+    label: Optional[str] = typer.Option(None, "--label", help="Filter by label"),
+    status: str = typer.Option("open", "--status", help="Issue status filter"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max issues to fetch"),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """List issues from the configured tracker."""
+    from .trackers import create_tracker
+
+    cfg = _load_cfg(config)
+
+    if not cfg.tracker.enabled:
+        console.print("[yellow]Tracker is disabled.[/] Set tracker.enabled: true in config.")
+        return
+
+    tracker = create_tracker(cfg.tracker.provider, repo=cfg.tracker.repo)
+    labels = [label] if label else (cfg.tracker.labels or None)
+
+    try:
+        issue_list = tracker.fetch_issues(
+            project=cfg.project.name,
+            labels=labels,
+            status=status,
+            limit=limit,
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to fetch issues: {e}[/]")
+        raise typer.Exit(1)
+
+    if as_json:
+        from dataclasses import asdict
+
+        console.print_json(json.dumps([asdict(i) for i in issue_list], indent=2))
+        return
+
+    if not issue_list:
+        console.print("[dim]No issues found.[/]")
+        return
+
+    console.print(f"[bold]{len(issue_list)} issue(s):[/]\n")
+    for issue in issue_list:
+        labels_str = f" [{', '.join(issue.labels)}]" if issue.labels else ""
+        console.print(f"  [bold]#{issue.id}[/]{labels_str} {issue.title}")
+        if issue.url:
+            console.print(f"    [dim]{issue.url}[/]")
+
+
+@app.command(name="run-issue")
+def run_issue(
+    issue_id: str = typer.Argument(..., help="Issue ID to execute"),
+    config: Optional[str] = typer.Option(None, "-c", "--config"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan only, don't execute"),
+    verbose: bool = typer.Option(False, "-v", "--verbose"),
+):
+    """Fetch an issue from the tracker and execute it as a goal.
+
+    Fetches the issue, uses its title + body as the goal, generates a plan,
+    executes it, and syncs status back to the tracker.
+    """
+    from .planner import generate_plan
+    from .scheduler import execute_plan
+    from .trackers import create_tracker
+
+    cfg = _load_cfg(config)
+
+    if not cfg.tracker.enabled:
+        console.print("[yellow]Tracker is disabled.[/] Set tracker.enabled: true in config.")
+        raise typer.Exit(1)
+
+    tracker = create_tracker(cfg.tracker.provider, repo=cfg.tracker.repo)
+
+    # Fetch the specific issue
+    try:
+        all_issues = tracker.fetch_issues(
+            project=cfg.project.name,
+            status="open",
+            limit=100,
+        )
+    except Exception as e:
+        console.print(f"[red]Failed to fetch issues: {e}[/]")
+        raise typer.Exit(1)
+
+    issue = next((i for i in all_issues if i.id == issue_id), None)
+    if not issue:
+        console.print(f"[red]Issue #{issue_id} not found or not open.[/]")
+        raise typer.Exit(1)
+
+    goal = f"{issue.title}\n\n{issue.body}" if issue.body else issue.title
+    console.print(f"[bold]Issue #{issue.id}:[/] {issue.title}")
+    console.print(f"[dim]{issue.url}[/]\n")
+
+    if dry_run:
+        cfg.safety.dry_run = True
+
+    # Verify claude CLI
+    if not find_claude_cli():
+        console.print("[red]Error: Claude CLI not found in PATH.[/]")
+        raise typer.Exit(1)
+
+    logger = ActionLogger(cfg.log_path)
+    sessions = SessionManager(cfg.sessions_path)
+    session = sessions.create(goal=f"[Issue #{issue.id}] {issue.title}")
+
+    console.print(f"Session: {session.session_id}\n")
+
+    start = time.monotonic()
+
+    def on_progress(msg: str):
+        console.print(msg)
+
+    # Plan
+    logger.log_action(
+        "session_start",
+        details={"goal": goal, "issue_id": issue.id, "dry_run": cfg.safety.dry_run},
+    )
+    console.print("[bold cyan][1/3][/] Generating task plan from issue...")
+
+    try:
+        plan_result = generate_plan(goal, cfg, on_progress=on_progress)
+    except Exception as e:
+        console.print(f"[red]Planning failed: {e}[/]")
+        session.status = "failed"
+        sessions.save(session)
+        raise typer.Exit(1)
+
+    session.plan_json = _plan_to_dict(plan_result)
+    sessions.save(session)
+    _persist_plan(cfg.root, plan_result)
+
+    console.print(f"\n  [bold]{len(plan_result.tasks)} tasks planned:[/]")
+    for t in plan_result.tasks:
+        deps = f" [dim](depends on: {t.depends_on})[/]" if t.depends_on else ""
+        console.print(f"    {t.id}. [bold][{t.module}][/] {t.description}{deps}")
+
+    # Execute
+    console.print("\n[bold cyan][2/3][/] Executing tasks...")
+    plan_result = execute_plan(plan_result, cfg, logger, on_progress=on_progress, verbose=verbose)
+
+    # Report
+    console.print("\n[bold cyan][3/3][/] Generating report...")
+    duration = round(time.monotonic() - start, 1)
+
+    completed = [t for t in plan_result.tasks if t.status.value == "completed"]
+    failed = [t for t in plan_result.tasks if t.status.value == "failed"]
+
+    print_goal_report(
+        f"{'GOAL COMPLETED' if not failed else 'GOAL PAUSED'}: {issue.title}\n\n"
+        f"Completed: {len(completed)}/{len(plan_result.tasks)} tasks",
+        dispatches=len(plan_result.tasks),
+        duration=duration,
+    )
+
+    # Sync back to tracker
+    if cfg.tracker.sync_on_complete and not cfg.safety.dry_run:
+        task_summary = "\n".join(
+            f"- [{t.module}] {t.description}: {t.status.value}" for t in plan_result.tasks
+        )
+        comment = (
+            f"**lindy-orchestrator** completed execution.\n\n"
+            f"**Result:** {'All tasks completed' if not failed else f'{len(failed)} task(s) failed'}\n"
+            f"**Duration:** {duration}s\n\n"
+            f"### Tasks\n{task_summary}"
+        )
+        try:
+            tracker.add_comment(issue.id, comment)
+            if not failed:
+                tracker.update_status(issue.id, "closed")
+                console.print(f"[green]Issue #{issue.id} closed with summary.[/]")
+            else:
+                console.print(f"[yellow]Comment added to issue #{issue.id}.[/]")
+        except Exception as e:
+            console.print(f"[yellow]Failed to sync to tracker: {e}[/]")
+
+    # Update session
+    session.plan_json = _plan_to_dict(plan_result)
+    session.completed_tasks = [
+        {"id": t.id, "module": t.module, "description": t.description} for t in completed
+    ]
+    if failed:
+        session.status = "paused"
+        sessions.save(session)
+    else:
+        sessions.complete(session)
+
+    logger.log_action(
+        "session_end",
+        details={
+            "duration_seconds": duration,
+            "completed": len(completed),
+            "failed": len(failed),
+            "issue_id": issue.id,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# mailbox
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def mailbox(
+    module: Optional[str] = typer.Argument(None, help="Module name to view messages for"),
+    send_to: Optional[str] = typer.Option(None, "--send-to", help="Send a message to a module"),
+    send_from: Optional[str] = typer.Option(None, "--send-from", help="Sender module name"),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="Message content"),
+    priority: str = typer.Option("normal", "--priority", "-p", help="Message priority"),
+    config: Optional[str] = typer.Option(None, "-c", "--config"),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """View or send inter-agent mailbox messages.
+
+    Examples:
+      lindy-orchestrate mailbox frontend          # View pending messages for frontend
+      lindy-orchestrate mailbox --send-to backend --send-from frontend -m "Need API endpoint"
+    """
+    from .mailbox import Mailbox, Message
+
+    cfg = _load_cfg(config)
+
+    if not cfg.mailbox.enabled:
+        console.print("[yellow]Mailbox is disabled.[/] Set mailbox.enabled: true in config.")
+        return
+
+    mb = Mailbox(cfg.root / cfg.mailbox.dir)
+
+    # Send mode
+    if send_to and message:
+        from_mod = send_from or "cli"
+        msg = Message(
+            from_module=from_mod,
+            to_module=send_to,
+            content=message,
+            priority=priority,
+        )
+        mb.send(msg)
+        console.print(
+            f"[green]Sent[/] message to [bold]{send_to}[/] from [bold]{from_mod}[/]: {message}"
+        )
+        return
+
+    if send_to and not message:
+        console.print("[red]--message is required when using --send-to[/]")
+        raise typer.Exit(1)
+
+    # View mode
+    if not module:
+        # Show summary for all modules
+        console.print("[bold]Mailbox Summary[/]\n")
+        for mod in cfg.modules:
+            count = mb.pending_count(mod.name)
+            if count > 0:
+                console.print(f"  [bold]{mod.name}[/]: {count} pending message(s)")
+            else:
+                console.print(f"  [dim]{mod.name}[/]: no pending messages")
+        return
+
+    # Show messages for specific module
+    messages = mb.receive(module, unread_only=True)
+    if as_json:
+        import json as _json
+        from dataclasses import asdict
+
+        console.print_json(_json.dumps([asdict(m) for m in messages], indent=2, default=str))
+        return
+
+    if not messages:
+        console.print(f"[dim]No pending messages for {module}.[/]")
+        return
+
+    console.print(f"[bold]Pending messages for {module}[/] ({len(messages)}):\n")
+    for msg in messages:
+        priority_tag = f" [{msg.priority.upper()}]" if msg.priority != "normal" else ""
+        console.print(
+            f"  [bold]{msg.from_module}[/]{priority_tag} ({msg.message_type}): {msg.content}"
+        )
+        console.print(f"    [dim]id={msg.id} at {msg.created_at}[/]")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -785,46 +1071,16 @@ def _load_cfg(config_path: str | None):
 
 def _plan_to_dict(plan: TaskPlan) -> dict:
     """Serialize a TaskPlan to a JSON-safe dict."""
-    import dataclasses
+    from .models import plan_to_dict
 
-    return {
-        "goal": plan.goal,
-        "tasks": [
-            {
-                **dataclasses.asdict(t),
-                "status": t.status.value,
-                "qa_checks": [{"gate": q.gate, "params": q.params} for q in t.qa_checks],
-                "qa_results": [
-                    {"gate": r.gate, "passed": r.passed, "output": r.output[:500]}
-                    for r in t.qa_results
-                ],
-            }
-            for t in plan.tasks
-        ],
-    }
+    return plan_to_dict(plan)
 
 
 def _plan_from_dict(data: dict) -> TaskPlan:
     """Deserialize a TaskPlan from a dict."""
-    tasks = []
-    for t in data.get("tasks", []):
-        qa_checks = [
-            QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
-        ]
-        tasks.append(
-            TaskItem(
-                id=t["id"],
-                module=t["module"],
-                description=t["description"],
-                prompt=t.get("prompt", ""),
-                depends_on=t.get("depends_on", []),
-                qa_checks=qa_checks,
-                status=TaskStatus(t.get("status", "pending")),
-                result=t.get("result", ""),
-                retries=t.get("retries", 0),
-            )
-        )
-    return TaskPlan(goal=data["goal"], tasks=tasks)
+    from .models import plan_from_dict
+
+    return plan_from_dict(data)
 
 
 def _persist_plan(root: Path, plan: TaskPlan) -> None:

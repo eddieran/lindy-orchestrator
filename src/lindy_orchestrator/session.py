@@ -23,6 +23,8 @@ class SessionState:
     pending_tasks: list[dict[str, Any]] = field(default_factory=list)
     completed_tasks: list[dict[str, Any]] = field(default_factory=list)
     plan_json: dict[str, Any] | None = None  # Full TaskPlan snapshot for resume
+    checkpoint_count: int = 0
+    last_checkpoint_at: str | None = None
 
 
 class SessionManager:
@@ -59,6 +61,13 @@ class SessionManager:
     def complete(self, state: SessionState) -> None:
         state.status = "completed"
         state.completed_at = datetime.now(timezone.utc).isoformat()
+        self._save(state)
+
+    def checkpoint(self, state: SessionState, plan_dict: dict) -> None:
+        """Save a mid-execution checkpoint with current plan state."""
+        state.plan_json = plan_dict
+        state.checkpoint_count += 1
+        state.last_checkpoint_at = datetime.now(timezone.utc).isoformat()
         self._save(state)
 
     def list_sessions(self, limit: int = 10) -> list[SessionState]:
