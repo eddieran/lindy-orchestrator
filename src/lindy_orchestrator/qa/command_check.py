@@ -29,7 +29,12 @@ class CommandCheckGate:
         **kwargs,
     ) -> QAResult:
         command = params.get("command", "")
-        cwd = project_root / params.get("cwd", module_name or ".")
+        raw_cwd = params.get("cwd", module_name or ".")
+        # Resolve {module_path} template if present
+        if "{module_path}" in raw_cwd:
+            module_path = str(project_root / module_name) if module_name else str(project_root)
+            raw_cwd = raw_cwd.format(module_path=module_path)
+        cwd = project_root / raw_cwd
         timeout = params.get("timeout", 300)
 
         if not command:
@@ -56,6 +61,13 @@ class CommandCheckGate:
                 passed=False,
                 output=f"Command timed out after {timeout}s",
                 details={"command": command, "timeout": True},
+            )
+        except OSError as exc:
+            return QAResult(
+                gate="command_check",
+                passed=False,
+                output=f"Failed to run command: {exc}",
+                details={"command": command, "cwd": str(cwd), "error": str(exc)},
             )
 
         passed = proc.returncode == 0

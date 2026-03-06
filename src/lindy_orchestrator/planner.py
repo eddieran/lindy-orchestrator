@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable
-
 import time
+from typing import Callable
 
 from .config import OrchestratorConfig
 from .models import PlannerMode, QACheck, TaskItem, TaskPlan, TaskStatus
 from .providers import create_provider
 from .prompts import render_plan_prompt
+from .reporter import PlanProgress
 from .status.parser import parse_status_md
 
 
@@ -24,11 +24,20 @@ def generate_plan(
     goal: str,
     config: OrchestratorConfig,
     on_progress: Callable[[str], None] | None = None,
+    progress: PlanProgress | None = None,
 ) -> TaskPlan:
     """Generate a task plan from a natural-language goal.
 
     Reads all module statuses, builds context, and calls LLM to decompose.
+
+    Args:
+        progress: Optional PlanProgress for live display. When provided,
+                  phase transitions are shown in the live display.
+                  The on_progress callback is still called for backward compat.
     """
+    if progress:
+        progress.set_phase("Reading statuses...")
+
     # Step 1: Read all module statuses
     statuses = _read_all_statuses(config)
     if on_progress:
@@ -61,6 +70,8 @@ def generate_plan(
 
     # Step 3: Call LLM
     if config.safety.dry_run:
+        if progress:
+            progress.set_phase("Dry run — skipping LLM")
         return TaskPlan(
             goal=goal,
             tasks=[
@@ -73,13 +84,18 @@ def generate_plan(
             ],
         )
 
+    if progress:
+        progress.set_phase("Calling LLM...")
+
     mode = PlannerMode(config.planner.mode)
     if mode == PlannerMode.API:
         output = _plan_via_api(prompt, config)
     else:
-        output = _plan_via_cli(prompt, config, on_progress=on_progress)
+        output = _plan_via_cli(prompt, config, on_progress=on_progress, progress=progress)
 
     # Step 4: Parse JSON output into TaskPlan
+    if progress:
+        progress.set_phase("Parsing plan...")
     return _parse_task_plan(goal, output)
 
 
@@ -116,14 +132,15 @@ def _plan_via_cli(
     prompt: str,
     config: OrchestratorConfig,
     on_progress: Callable[[str], None] | None = None,
+    progress: PlanProgress | None = None,
 ) -> str:
     """Call claude -p for planning with heartbeat feedback."""
 
-    def progress(msg: str) -> None:
+    def _emit(msg: str) -> None:
         if on_progress:
             on_progress(msg)
 
-    # Heartbeat state
+    # Heartbeat state (used as fallback when no PlanProgress)
     _hb_count = 0
     _hb_start = time.monotonic()
     _hb_last_print = _hb_start
@@ -131,14 +148,19 @@ def _plan_via_cli(
     def _on_event(event: dict) -> None:
         nonlocal _hb_count, _hb_last_print
         _hb_count += 1
-        now = time.monotonic()
-        if now - _hb_last_print >= 30:
-            elapsed = int(now - _hb_start)
-            mins, secs = divmod(elapsed, 60)
-            progress(f"  [dim]⋯ planning: {_hb_count} events, {mins}m{secs:02d}s[/]")
-            _hb_last_print = now
+        if progress:
+            progress.tick_event()
+            progress.update()
+        else:
+            now = time.monotonic()
+            if now - _hb_last_print >= 30:
+                elapsed = int(now - _hb_start)
+                mins, secs = divmod(elapsed, 60)
+                _emit(f"  [dim]... planning: {_hb_count} events, {mins}m{secs:02d}s[/]")
+                _hb_last_print = now
 
-    progress("  [dim]Generating plan...[/]")
+    if not progress:
+        _emit("  [dim]Generating plan...[/]")
     provider = create_provider(config.dispatcher)
     result = provider.dispatch(
         module="planner",
@@ -149,7 +171,8 @@ def _plan_via_cli(
     if not result.success:
         raise RuntimeError(f"Planning failed: {result.output[:500]}")
 
-    progress(f"  [dim]Plan generated ({result.duration_seconds}s, {result.event_count} events)[/]")
+    if not progress:
+        _emit(f"  [dim]Plan generated ({result.duration_seconds}s, {result.event_count} events)[/]")
     return result.output
 
 

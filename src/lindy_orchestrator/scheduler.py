@@ -352,6 +352,7 @@ def _execute_single_task(
                 custom_gates=config.qa_gates.custom,
                 dispatcher_config=config.dispatcher,
                 qa_module=config.qa_module(),
+                module_path=working_dir,
             )
             task.qa_results.append(qa_result)
             logger.log_qa(qa.gate, qa_result.passed, qa_result.output)

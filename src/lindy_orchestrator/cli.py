@@ -15,7 +15,7 @@ from .config import CONFIG_FILENAME, load_config
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
 from .models import TaskPlan, TaskStatus
-from .reporter import print_goal_report, print_status_table
+from .reporter import PlanProgress, print_goal_report, print_status_table
 from .session import SessionManager
 from .status.parser import parse_status_md
 from .status.templates import generate_status_md
@@ -364,14 +364,20 @@ def run(
     if not plan_file:
         # Step 1: Plan
         console.print("[bold cyan][1/3][/] Generating task plan...")
+        progress = PlanProgress(console=console)
+        progress.start()
 
         try:
-            plan = generate_plan(goal, cfg, on_progress=on_progress)
+            plan = generate_plan(goal, cfg, on_progress=on_progress, progress=progress)
         except Exception as e:
+            progress.stop(f"Planning failed: {e}")
             console.print(f"[red]Planning failed: {e}[/]")
             session.status = "failed"
             sessions.save(session)
             raise typer.Exit(1)
+        finally:
+            if progress._live is not None:
+                progress.stop()
 
     # Persist plan to session for resume capability
     session.plan_json = _plan_to_dict(plan)
@@ -454,10 +460,17 @@ def plan(
     console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
     console.print(f"Goal: [bold]{goal}[/]\n")
 
+    progress = PlanProgress(console=console)
+
     def on_progress(msg: str):
         console.print(msg)
 
-    plan_result = generate_plan(goal, cfg, on_progress=on_progress)
+    progress.start()
+    try:
+        plan_result = generate_plan(goal, cfg, on_progress=on_progress, progress=progress)
+    finally:
+        if progress._live is not None:
+            progress.stop()
 
     console.print(f"\n[bold]{len(plan_result.tasks)} tasks:[/]\n")
     for t in plan_result.tasks:
@@ -924,14 +937,20 @@ def run_issue(
         details={"goal": goal, "issue_id": issue.id, "dry_run": cfg.safety.dry_run},
     )
     console.print("[bold cyan][1/3][/] Generating task plan from issue...")
+    progress = PlanProgress(console=console)
+    progress.start()
 
     try:
-        plan_result = generate_plan(goal, cfg, on_progress=on_progress)
+        plan_result = generate_plan(goal, cfg, on_progress=on_progress, progress=progress)
     except Exception as e:
+        progress.stop(f"Planning failed: {e}")
         console.print(f"[red]Planning failed: {e}[/]")
         session.status = "failed"
         sessions.save(session)
         raise typer.Exit(1)
+    finally:
+        if progress._live is not None:
+            progress.stop()
 
     session.plan_json = _plan_to_dict(plan_result)
     sessions.save(session)

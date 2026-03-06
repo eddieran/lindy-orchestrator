@@ -35,6 +35,7 @@ def run_qa_gate(
     custom_gates: list[CustomGateConfig] | None = None,
     dispatcher_config: DispatcherConfig | None = None,
     qa_module: ModuleConfig | None = None,
+    module_path: Path | None = None,
 ) -> QAResult:
     """Execute a QA gate check.
 
@@ -42,12 +43,22 @@ def run_qa_gate(
     1. Custom gates from config (command-based)
     2. Built-in registered gates
     3. Unknown → fail
+
+    Args:
+        module_path: Resolved filesystem path for the module. When provided,
+            used instead of ``project_root / module_name`` so that modules
+            whose name differs from their directory (e.g. ``path: ./``) work
+            correctly.
     """
+    resolved = str(module_path) if module_path else None
+
     # 1. Check config-defined custom gates
     if custom_gates:
         for cg in custom_gates:
             if cg.name == check.gate:
-                return _run_custom_command_gate(cg, check.params, project_root, module_name)
+                return _run_custom_command_gate(
+                    cg, check.params, project_root, module_name, resolved
+                )
 
     # 2. Check built-in registry
     gate_cls = _GATES.get(check.gate)
@@ -75,9 +86,13 @@ def _run_custom_command_gate(
     params: dict[str, Any],
     project_root: Path,
     module_name: str,
+    resolved_module_path: str | None = None,
 ) -> QAResult:
     """Run a config-defined command gate."""
-    module_path = str(project_root / module_name) if module_name else str(project_root)
+    if resolved_module_path:
+        module_path = resolved_module_path
+    else:
+        module_path = str(project_root / module_name) if module_name else str(project_root)
     command = gate_def.command.format(module_path=module_path)
     cwd = gate_def.cwd.format(module_path=module_path)
 
@@ -96,6 +111,13 @@ def _run_custom_command_gate(
             passed=False,
             output=f"Command timed out after {gate_def.timeout}s",
             details={"command": command, "timeout": True},
+        )
+    except OSError as exc:
+        return QAResult(
+            gate=gate_def.name,
+            passed=False,
+            output=f"Failed to run command: {exc}",
+            details={"command": command, "cwd": cwd, "error": str(exc)},
         )
 
     passed = proc.returncode == 0
