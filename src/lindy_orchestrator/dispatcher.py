@@ -201,6 +201,7 @@ def dispatch_agent(
         )
 
     last_activity = time.monotonic()
+    stall_warned = False
     all_lines: list[str] = []
     line_queue: queue.Queue[str | None] = queue.Queue()
 
@@ -239,26 +240,57 @@ def dispatch_agent(
                     last_tool_use=last_tool_use,
                 )
 
-            # Stall detection with grace period for first event
-            # Floor: never stall-kill before 10 min of silence (long tool runs like pytest)
-            if event_count == 0:
-                effective_stall = max(config.stall_timeout_seconds * 2, 600)
+            # Stall detection with two-stage escalation: warn → kill
+            escalation = getattr(config, "stall_escalation", None)
+            if escalation:
+                warn_threshold = escalation.warn_after_seconds
+                kill_threshold = escalation.kill_after_seconds
             else:
-                effective_stall = max(config.stall_timeout_seconds, 600)
+                warn_threshold = config.stall_timeout_seconds // 2
+                kill_threshold = config.stall_timeout_seconds
 
-            if stall_elapsed >= effective_stall:
+            # Grace period for first event (double thresholds)
+            if event_count == 0:
+                effective_warn = max(warn_threshold * 2, 300)
+                effective_kill = max(kill_threshold * 2, 600)
+            else:
+                effective_warn = max(warn_threshold, 300)
+                effective_kill = max(kill_threshold, 600)
+
+            # Stage 1: Warning
+            if stall_elapsed >= effective_warn and not stall_warned:
+                stall_warned = True
+                if on_event:
+                    on_event(
+                        {
+                            "type": "stall_warning",
+                            "stall_seconds": int(stall_elapsed),
+                            "last_tool": last_tool_use,
+                        }
+                    )
+
+            # Stage 2: Kill
+            if stall_elapsed >= effective_kill:
                 proc.kill()
                 proc.wait()
                 stderr = _read_stderr(proc)
                 duration = time.monotonic() - start
                 msg = (
                     f"Agent stalled: no output for {int(stall_elapsed)}s "
-                    f"(stall limit: {int(effective_stall)}s, "
+                    f"(kill limit: {int(effective_kill)}s, "
                     f"last tool: {last_tool_use or 'none'}, "
                     f"{event_count} events total, {int(elapsed)}s elapsed)"
                 )
                 if stderr:
                     msg += f"\n[stderr] {stderr[:2000]}"
+                if on_event:
+                    on_event(
+                        {
+                            "type": "stall_killed",
+                            "stall_seconds": int(stall_elapsed),
+                            "last_tool": last_tool_use,
+                        }
+                    )
                 return DispatchResult(
                     module=module,
                     success=False,
@@ -283,6 +315,7 @@ def dispatch_agent(
                 break
 
             last_activity = time.monotonic()
+            stall_warned = False  # reset on new activity
             all_lines.append(line)
             event_count += 1
 

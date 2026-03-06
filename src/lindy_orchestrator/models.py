@@ -114,11 +114,17 @@ class TaskItem:
     description: str
     prompt: str = ""
     depends_on: list[int] = field(default_factory=list)
+    priority: int = 0  # higher = dispatched first within same dep level
     qa_checks: list[QACheck] = field(default_factory=list)
     status: TaskStatus = TaskStatus.PENDING
     result: str = ""
     qa_results: list[QAResult] = field(default_factory=list)
     retries: int = 0
+    feedback_history: list[dict[str, Any]] = field(default_factory=list)
+    started_at: str | None = None
+    completed_at: str | None = None
+    timeout_seconds: int | None = None  # per-task override
+    stall_seconds: int | None = None  # per-task stall override
 
 
 @dataclass
@@ -149,11 +155,14 @@ class TaskPlan:
                 t.status = TaskStatus.SKIPPED
                 t.result = "Skipped: dependency failed"
 
-        return [
+        ready = [
             t
             for t in self.tasks
             if t.status == TaskStatus.PENDING and all(dep in completed_ids for dep in t.depends_on)
         ]
+        # Higher priority tasks dispatched first within the same dep level
+        ready.sort(key=lambda t: t.priority, reverse=True)
+        return ready
 
     def is_complete(self) -> bool:
         return all(t.status in (TaskStatus.COMPLETED, TaskStatus.SKIPPED) for t in self.tasks)
@@ -165,6 +174,61 @@ class TaskPlan:
 
     def has_failures(self) -> bool:
         return any(t.status == TaskStatus.FAILED for t in self.tasks)
+
+
+# ---------------------------------------------------------------------------
+# Plan serialization helpers
+# ---------------------------------------------------------------------------
+
+
+def plan_to_dict(plan: TaskPlan) -> dict:
+    """Serialize a TaskPlan to a JSON-safe dict."""
+    import dataclasses
+
+    return {
+        "goal": plan.goal,
+        "tasks": [
+            {
+                **dataclasses.asdict(t),
+                "status": t.status.value,
+                "qa_checks": [{"gate": q.gate, "params": q.params} for q in t.qa_checks],
+                "qa_results": [
+                    {"gate": r.gate, "passed": r.passed, "output": r.output[:500]}
+                    for r in t.qa_results
+                ],
+            }
+            for t in plan.tasks
+        ],
+    }
+
+
+def plan_from_dict(data: dict) -> TaskPlan:
+    """Deserialize a TaskPlan from a dict."""
+    tasks = []
+    for t in data.get("tasks", []):
+        qa_checks = [
+            QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
+        ]
+        tasks.append(
+            TaskItem(
+                id=t["id"],
+                module=t["module"],
+                description=t["description"],
+                prompt=t.get("prompt", ""),
+                depends_on=t.get("depends_on", []),
+                priority=t.get("priority", 0),
+                qa_checks=qa_checks,
+                status=TaskStatus(t.get("status", "pending")),
+                result=t.get("result", ""),
+                retries=t.get("retries", 0),
+                feedback_history=t.get("feedback_history", []),
+                started_at=t.get("started_at"),
+                completed_at=t.get("completed_at"),
+                timeout_seconds=t.get("timeout_seconds"),
+                stall_seconds=t.get("stall_seconds"),
+            )
+        )
+    return TaskPlan(goal=data["goal"], tasks=tasks)
 
 
 # ---------------------------------------------------------------------------

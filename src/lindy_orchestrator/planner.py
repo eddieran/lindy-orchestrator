@@ -208,6 +208,7 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
                 description=t["description"],
                 prompt=prompt,
                 depends_on=t.get("depends_on", []),
+                priority=t.get("priority", 0),
                 qa_checks=qa_checks,
             )
         )

@@ -9,15 +9,40 @@ from __future__ import annotations
 import concurrent.futures
 import subprocess
 import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
+from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
-from .models import QACheck, TaskItem, TaskPlan, TaskStatus
+from .mailbox import Mailbox, format_mailbox_messages
+from .models import QACheck, TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import format_qa_feedback
+
+
+@dataclass
+class ExecutionProgress:
+    """Tracks overall execution progress."""
+
+    total_tasks: int = 0
+    completed: int = 0
+    failed: int = 0
+    skipped: int = 0
+    in_progress: int = 0
+    total_dispatches: int = 0
+    start_time: float = field(default_factory=time.monotonic)
+
+    @property
+    def pending(self) -> int:
+        return self.total_tasks - self.completed - self.failed - self.skipped - self.in_progress
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return time.monotonic() - self.start_time if self.start_time else 0.0
 
 
 def execute_plan(
@@ -26,6 +51,9 @@ def execute_plan(
     logger: ActionLogger,
     on_progress: Callable[[str], None] | None = None,
     verbose: bool = False,
+    hooks: HookRegistry | None = None,
+    session_mgr: object | None = None,
+    session: object | None = None,
 ) -> TaskPlan:
     """Execute a task plan with parallel dispatch and QA gates.
 
@@ -38,6 +66,12 @@ def execute_plan(
     max_parallel = config.safety.max_parallel
     total_dispatches = 0
 
+    # Initialize hook registry with backward-compat progress adapter
+    if hooks is None:
+        hooks = HookRegistry()
+    if on_progress:
+        hooks.on_any(make_progress_adapter(on_progress))
+
     def progress(msg: str) -> None:
         if on_progress:
             on_progress(msg)
@@ -45,6 +79,8 @@ def execute_plan(
     def detail(msg: str) -> None:
         if on_progress and verbose:
             on_progress(msg)
+
+    hooks.emit(Event(type=EventType.SESSION_START, data={"goal": plan.goal}))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
         while not plan.all_terminal():
@@ -61,6 +97,7 @@ def execute_plan(
             futures: dict[concurrent.futures.Future, TaskItem] = {}
             for task in ready:
                 task.status = TaskStatus.IN_PROGRESS
+                task.started_at = datetime.now(timezone.utc).isoformat()
                 progress(f"\n  [bold]Task {task.id}:[/] [{task.module}] {task.description}")
 
                 if config.safety.dry_run:
@@ -85,6 +122,7 @@ def execute_plan(
                     progress,
                     detail,
                     max_retries,
+                    hooks,
                 )
                 futures[future] = task
 
@@ -104,6 +142,29 @@ def execute_plan(
                         result="error",
                     )
 
+                # Checkpoint after each task resolves
+                if session_mgr and session:
+                    try:
+                        session_mgr.checkpoint(session, plan_to_dict(plan))
+                        hooks.emit(
+                            Event(
+                                type=EventType.CHECKPOINT_SAVED,
+                                data={"checkpoint_count": session.checkpoint_count},
+                            )
+                        )
+                    except Exception:
+                        pass  # checkpoint failure should not stop execution
+
+    hooks.emit(
+        Event(
+            type=EventType.SESSION_END,
+            data={
+                "goal": plan.goal,
+                "total_dispatches": total_dispatches,
+                "has_failures": plan.has_failures(),
+            },
+        )
+    )
     return plan
 
 
@@ -114,6 +175,7 @@ def _execute_single_task(
     progress: Callable[[str], None],
     detail: Callable[[str], None],
     max_retries: int,
+    hooks: HookRegistry | None = None,
 ) -> int:
     """Execute a single task with dispatch, QA gates, and retry logic.
 
@@ -198,6 +260,22 @@ def _execute_single_task(
                 progress(f"    [dim]⋯ {_hb_count} events, {mins}m{secs:02d}s{tool_hint}[/]")
                 _hb_last_print = now
 
+        # Inject pending mailbox messages if enabled
+        if config.mailbox.enabled and config.mailbox.inject_on_dispatch:
+            try:
+                mb = Mailbox(config.root / config.mailbox.dir)
+                pending = mb.receive(task.module, unread_only=True)
+                if pending:
+                    formatted = format_mailbox_messages(pending)
+                    task.prompt = (
+                        f"{task.prompt}\n\n"
+                        f"## Inter-agent messages for {task.module}\n\n"
+                        f"{formatted}\n"
+                    )
+                    progress(f"    [dim]Injected {len(pending)} mailbox message(s)[/]")
+            except Exception:
+                pass  # mailbox injection failure should not block dispatch
+
         provider = create_provider(config.dispatcher)
         result = provider.dispatch(
             module=task.module,
@@ -226,6 +304,19 @@ def _execute_single_task(
                 error_info = f"Agent stalled (last tool: {result.last_tool_use or 'none'})"
             progress(f"    [red]DISPATCH FAILED[/] ({result.error or 'error'}): {error_info}")
             task.status = TaskStatus.FAILED
+            task.completed_at = datetime.now(timezone.utc).isoformat()
+            if hooks:
+                hooks.emit(
+                    Event(
+                        type=EventType.TASK_FAILED,
+                        task_id=task.id,
+                        module=task.module,
+                        data={
+                            "reason": result.error or "dispatch_error",
+                            "description": task.description,
+                        },
+                    )
+                )
             return dispatches
 
         progress(
@@ -267,13 +358,32 @@ def _execute_single_task(
 
             if qa_result.passed:
                 progress(f"      [green]PASS[/]: {qa_result.output[:100]}")
+                if hooks:
+                    hooks.emit(
+                        Event(
+                            type=EventType.QA_PASSED,
+                            task_id=task.id,
+                            module=task.module,
+                            data={"gate": qa.gate, "output": qa_result.output[:200]},
+                        )
+                    )
             else:
                 progress(f"      [red]FAIL[/]: {qa_result.output[:200]}")
                 detail(f"      Full output: {qa_result.output}")
                 all_qa_passed = False
+                if hooks:
+                    hooks.emit(
+                        Event(
+                            type=EventType.QA_FAILED,
+                            task_id=task.id,
+                            module=task.module,
+                            data={"gate": qa.gate, "output": qa_result.output[:200]},
+                        )
+                    )
 
         if all_qa_passed:
             task.status = TaskStatus.COMPLETED
+            task.completed_at = datetime.now(timezone.utc).isoformat()
             progress(f"    [bold green]Task {task.id} COMPLETED[/]")
             logger.log_action(
                 "task_completed",
@@ -283,12 +393,22 @@ def _execute_single_task(
                     "description": task.description,
                 },
             )
+            if hooks:
+                hooks.emit(
+                    Event(
+                        type=EventType.TASK_COMPLETED,
+                        task_id=task.id,
+                        module=task.module,
+                        data={"description": task.description},
+                    )
+                )
             return dispatches
 
         # Retry with QA feedback
         task.retries += 1
         if task.retries > max_retries:
             task.status = TaskStatus.FAILED
+            task.completed_at = datetime.now(timezone.utc).isoformat()
             progress(f"    [bold red]Task {task.id} FAILED[/] after {max_retries} retries")
             logger.log_action(
                 "task_failed",
@@ -302,7 +422,34 @@ def _execute_single_task(
                     ],
                 },
             )
+            if hooks:
+                hooks.emit(
+                    Event(
+                        type=EventType.TASK_FAILED,
+                        task_id=task.id,
+                        module=task.module,
+                        data={
+                            "reason": "max_retries_exceeded",
+                            "retries": task.retries,
+                            "description": task.description,
+                        },
+                    )
+                )
             return dispatches
+
+        if hooks:
+            hooks.emit(
+                Event(
+                    type=EventType.TASK_RETRYING,
+                    task_id=task.id,
+                    module=task.module,
+                    data={
+                        "retry": task.retries,
+                        "max_retries": max_retries,
+                        "description": task.description,
+                    },
+                )
+            )
 
         # Augment prompt with structured remediation feedback
         failed_checks = [r for r in task.qa_results if not r.passed]

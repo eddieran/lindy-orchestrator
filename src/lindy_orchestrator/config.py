@@ -35,10 +35,16 @@ class PlannerConfig(BaseModel):
     prompt_template: str | None = None  # Path to custom Jinja2 template
 
 
+class StallEscalationConfig(BaseModel):
+    warn_after_seconds: int = 300  # emit warning event after 5 min
+    kill_after_seconds: int = 600  # kill process after 10 min
+
+
 class DispatcherConfig(BaseModel):
     provider: str = "claude_cli"
     timeout_seconds: int = 1800
-    stall_timeout_seconds: int = 600
+    stall_timeout_seconds: int = 600  # kept for backward compat
+    stall_escalation: StallEscalationConfig = Field(default_factory=StallEscalationConfig)
     permission_mode: str = "bypassPermissions"
     max_output_chars: int = 50_000
 
@@ -79,6 +85,20 @@ class SafetyConfig(BaseModel):
     max_parallel: int = 3
 
 
+class MailboxConfig(BaseModel):
+    enabled: bool = False  # opt-in
+    dir: str = ".orchestrator/mailbox"
+    inject_on_dispatch: bool = True  # auto-inject pending messages into prompts
+
+
+class TrackerConfig(BaseModel):
+    enabled: bool = False
+    provider: str = "github"  # github | linear
+    repo: str = ""
+    labels: list[str] = Field(default_factory=lambda: ["orchestrator"])
+    sync_on_complete: bool = True  # auto-comment + close on completion
+
+
 class LoggingConfig(BaseModel):
     dir: str = ".orchestrator/logs"
     session_dir: str = ".orchestrator/sessions"
@@ -103,6 +123,8 @@ class OrchestratorConfig(BaseModel):
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    mailbox: MailboxConfig = Field(default_factory=MailboxConfig)
+    tracker: TrackerConfig = Field(default_factory=TrackerConfig)
 
     # Internal: set after loading, not from YAML
     _config_dir: Path = Path(".")
