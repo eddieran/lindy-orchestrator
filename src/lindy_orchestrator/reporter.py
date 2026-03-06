@@ -60,11 +60,15 @@ class PlanProgress:
         parts.append(f"  events: {self._event_count}", style="dim")
         return parts
 
+    def __rich__(self) -> Text:
+        """Rich renderable protocol — called on each Live refresh cycle."""
+        return self._build_display()
+
     def start(self) -> None:
         self._start = time.monotonic()
         if self._interactive:
             self._live = Live(
-                self._build_display(),
+                self,
                 console=self._console,
                 refresh_per_second=4,
                 transient=True,
@@ -75,7 +79,7 @@ class PlanProgress:
 
     def update(self) -> None:
         if self._interactive and self._live is not None:
-            self._live.update(self._build_display())
+            self._live.refresh()
         elif not self._interactive:
             now = time.monotonic()
             if now - self._last_print_time >= 30:

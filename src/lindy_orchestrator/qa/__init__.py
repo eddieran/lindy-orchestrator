@@ -71,6 +71,7 @@ def run_qa_gate(
             task_output=task_output,
             dispatcher_config=dispatcher_config,
             qa_module=qa_module,
+            module_path=resolved,
         )
 
     # 3. Unknown gate

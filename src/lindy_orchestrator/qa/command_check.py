@@ -29,10 +29,21 @@ class CommandCheckGate:
         **kwargs,
     ) -> QAResult:
         command = params.get("command", "")
-        raw_cwd = params.get("cwd", module_name or ".")
+        resolved = kwargs.get("module_path")
+        if "cwd" in params:
+            raw_cwd = params["cwd"]
+        elif resolved:
+            raw_cwd = resolved
+        elif module_name:
+            raw_cwd = module_name
+        else:
+            raw_cwd = "."
         # Resolve {module_path} template if present
         if "{module_path}" in raw_cwd:
-            module_path = str(project_root / module_name) if module_name else str(project_root)
+            if resolved:
+                module_path = resolved
+            else:
+                module_path = str(project_root / module_name) if module_name else str(project_root)
             raw_cwd = raw_cwd.format(module_path=module_path)
         cwd = project_root / raw_cwd
         timeout = params.get("timeout", 300)

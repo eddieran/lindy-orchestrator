@@ -145,21 +145,27 @@ def _check_layer_violations(
     module_name: str,
     layer_def: LayerDef,
     files: list[str],
+    file_prefix: str = "",
 ) -> list[Violation]:
     """Check files for layer ordering violations.
 
     layer[i] may only import from layer[j] where j <= i.
+
+    Args:
+        file_prefix: Git-relative prefix for this module's files (e.g. "backend/"
+            or "" for root modules).
     """
     violations: list[Violation] = []
-    module_prefix = module_name + "/"
+    # Use file_prefix if provided, otherwise fall back to module_name
+    effective_prefix = file_prefix if file_prefix is not None else (module_name + "/")
 
     for filepath in files:
         # Skip files outside this module
-        if not filepath.startswith(module_prefix):
+        if effective_prefix and not filepath.startswith(effective_prefix):
             continue
 
         # Skip test files
-        rel_in_module = filepath[len(module_prefix) :]
+        rel_in_module = filepath[len(effective_prefix) :] if effective_prefix else filepath
         parts = Path(rel_in_module).parts
         if any(p in ("tests", "test", "__tests__", "spec") for p in parts):
             continue
@@ -172,7 +178,7 @@ def _check_layer_violations(
             continue  # Unknown layer, skip
 
         # Extract imports
-        imports = _extract_intra_imports(full_path, module_prefix)
+        imports = _extract_intra_imports(full_path, effective_prefix)
         if not imports:
             continue
 
@@ -185,8 +191,9 @@ def _check_layer_violations(
                 # Python dotted import: convert dots to slashes
                 imp_path = imp.replace(".", "/")
                 # Remove module prefix if present
-                if imp_path.startswith(module_name + "/"):
-                    imp_path = imp_path[len(module_name) + 1 :]
+                mod_prefix = effective_prefix.rstrip("/") if effective_prefix else module_name
+                if mod_prefix and imp_path.startswith(mod_prefix + "/"):
+                    imp_path = imp_path[len(mod_prefix) + 1 :]
 
             target_layer = _resolve_layer(imp_path, layer_def.layers)
             if target_layer is None:
@@ -220,10 +227,11 @@ def _check_layer_violations(
     return violations
 
 
-def _get_staged_files(project_root: Path, module_name: str) -> list[str]:
-    """Get git staged files, scoped to module.
+def _get_staged_files(project_root: Path, file_prefix: str = "") -> list[str]:
+    """Get git staged files, scoped to module by file_prefix.
 
-    Reuses the same logic as structural_check._get_staged_files.
+    Args:
+        file_prefix: Relative path prefix (e.g. "backend/" or "" for all files).
     """
     try:
         result = subprocess.run(
@@ -235,9 +243,8 @@ def _get_staged_files(project_root: Path, module_name: str) -> list[str]:
         )
         if result.returncode == 0 and result.stdout.strip():
             files = result.stdout.strip().splitlines()
-            if module_name and module_name not in ("root", "*"):
-                prefix = module_name + "/"
-                return [f for f in files if f.startswith(prefix)]
+            if file_prefix:
+                return [f for f in files if f.startswith(file_prefix)]
             return files
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -253,9 +260,8 @@ def _get_staged_files(project_root: Path, module_name: str) -> list[str]:
         )
         if result.returncode == 0:
             files = result.stdout.strip().splitlines()
-            if module_name and module_name not in ("root", "*"):
-                prefix = module_name + "/"
-                return [f for f in files if f.startswith(prefix)]
+            if file_prefix:
+                return [f for f in files if f.startswith(file_prefix)]
             return files
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -310,6 +316,12 @@ class LayerCheckGate:
                 output="Layer check disabled.",
             )
 
+        # Compute file prefix from resolved module path
+        from .structural_check import _module_file_prefix
+
+        resolved = kwargs.get("module_path")
+        file_prefix = _module_file_prefix(project_root, module_name, resolved)
+
         # Parse layer definition from ARCHITECTURE.md
         layer_def = _parse_architecture_layers(project_root, module_name)
         if layer_def is None:
@@ -320,7 +332,7 @@ class LayerCheckGate:
             )
 
         # Get files to check
-        files = _get_staged_files(project_root, module_name)
+        files = _get_staged_files(project_root, file_prefix)
         if not files:
             return QAResult(
                 gate="layer_check",
@@ -329,7 +341,9 @@ class LayerCheckGate:
             )
 
         # Run layer violation checks
-        violations = _check_layer_violations(project_root, module_name, layer_def, files)
+        violations = _check_layer_violations(
+            project_root, module_name, layer_def, files, file_prefix=file_prefix
+        )
 
         return QAResult(
             gate="layer_check",

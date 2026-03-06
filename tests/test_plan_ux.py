@@ -112,6 +112,22 @@ class TestNonTTYFallback:
         assert "42 events" in output
 
 
+class TestRichProtocol:
+    def test_rich_returns_display(self):
+        pp, _con, _buf = _make_progress(interactive=True)
+        pp.set_phase("Calling LLM...")
+        result = pp.__rich__()
+        assert "Calling LLM..." in result.plain
+
+    def test_live_renderable_is_self(self):
+        """Live should use PlanProgress as renderable so __rich__() is called each refresh."""
+        pp, _con, _buf = _make_progress(interactive=True)
+        pp.start()
+        assert pp._live is not None
+        assert pp._live.renderable is pp
+        pp.stop()
+
+
 class TestInteractiveModeLifecycle:
     def test_start_creates_live(self):
         pp, _con, _buf = _make_progress(interactive=True)

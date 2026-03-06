@@ -32,16 +32,23 @@ def run_structural_check(
     project_root: Path,
     module_name: str,
     config: StructuralCheckConfig | None = None,
+    module_path: str | None = None,
 ) -> tuple[bool, list[Violation]]:
     """Run all structural checks on staged files in a module.
+
+    Args:
+        module_path: Resolved filesystem path for the module. When provided,
+            used to compute the file prefix instead of ``module_name``.
 
     Returns (passed, violations).
     """
     if config is None:
         config = StructuralCheckConfig()
 
+    file_prefix = _module_file_prefix(project_root, module_name, module_path)
+
     # Get staged files (or all tracked files if not in a git context)
-    staged_files = _get_staged_files(project_root, module_name)
+    staged_files = _get_staged_files(project_root, file_prefix)
 
     violations: list[Violation] = []
 
@@ -58,8 +65,9 @@ def run_structural_check(
         violations.extend(_check_sensitive_files(full_path, filepath, config.sensitive_patterns))
 
     # Check 3: Import boundary violations (module-level)
-    if config.enforce_module_boundary and module_name and module_name not in ("root", "*"):
-        violations.extend(_check_import_boundary(project_root, module_name, staged_files))
+    # Skip for root modules — there's no cross-module boundary to enforce
+    if config.enforce_module_boundary and file_prefix and module_name not in ("root", "*"):
+        violations.extend(_check_import_boundary(project_root, file_prefix, staged_files))
 
     passed = len(violations) == 0
     return passed, violations
@@ -116,12 +124,18 @@ def _check_sensitive_files(full_path: Path, rel_path: str, patterns: list[str]) 
 
 def _check_import_boundary(
     project_root: Path,
-    module_name: str,
+    file_prefix: str,
     staged_files: list[str],
 ) -> list[Violation]:
-    """Detect cross-module imports that violate module boundaries."""
+    """Detect cross-module imports that violate module boundaries.
+
+    Args:
+        file_prefix: Relative path prefix for this module's files (e.g. "backend/"
+            or "" for root modules). Derived from the module's configured path.
+    """
     violations: list[Violation] = []
-    module_prefix = module_name + "/"
+    # Derive module directory name from prefix for display and filtering
+    module_dir = file_prefix.rstrip("/") if file_prefix else ""
 
     # Get all module directories (top-level dirs that aren't hidden/standard)
     other_modules: list[str] = []
@@ -130,7 +144,7 @@ def _check_import_boundary(
             if (
                 item.is_dir()
                 and not item.name.startswith(".")
-                and item.name != module_name
+                and item.name != module_dir
                 and item.name not in ("node_modules", "__pycache__", ".venv", "venv")
             ):
                 other_modules.append(item.name)
@@ -146,7 +160,7 @@ def _check_import_boundary(
     ]
 
     for filepath in staged_files:
-        if not filepath.startswith(module_prefix):
+        if file_prefix and not filepath.startswith(file_prefix):
             continue
 
         full_path = project_root / filepath
@@ -170,7 +184,7 @@ def _check_import_boundary(
                         ),
                         remediation=(
                             f"Use the CONTRACTS.md interface instead of direct imports. "
-                            f"If `{module_name}` needs data from `{other_mod}`, "
+                            f"If `{module_dir or 'this module'}` needs data from `{other_mod}`, "
                             f"create a Cross-Module Request in STATUS.md."
                         ),
                     )
@@ -184,8 +198,12 @@ def _check_import_boundary(
 # ---------------------------------------------------------------------------
 
 
-def _get_staged_files(project_root: Path, module_name: str) -> list[str]:
-    """Get git staged files, scoped to module if specified."""
+def _get_staged_files(project_root: Path, file_prefix: str = "") -> list[str]:
+    """Get git staged files, scoped to module by file_prefix.
+
+    Args:
+        file_prefix: Relative path prefix (e.g. "backend/" or "" for all files).
+    """
     try:
         result = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
@@ -196,9 +214,8 @@ def _get_staged_files(project_root: Path, module_name: str) -> list[str]:
         )
         if result.returncode == 0 and result.stdout.strip():
             files = result.stdout.strip().splitlines()
-            if module_name and module_name not in ("root", "*"):
-                prefix = module_name + "/"
-                return [f for f in files if f.startswith(prefix)]
+            if file_prefix:
+                return [f for f in files if f.startswith(file_prefix)]
             return files
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -214,14 +231,37 @@ def _get_staged_files(project_root: Path, module_name: str) -> list[str]:
         )
         if result.returncode == 0:
             files = result.stdout.strip().splitlines()
-            if module_name and module_name not in ("root", "*"):
-                prefix = module_name + "/"
-                return [f for f in files if f.startswith(prefix)]
+            if file_prefix:
+                return [f for f in files if f.startswith(file_prefix)]
             return files
     except (subprocess.TimeoutExpired, OSError):
         pass
 
     return []
+
+
+def _module_file_prefix(
+    project_root: Path, module_name: str, module_path: str | None = None
+) -> str:
+    """Compute the git-relative file prefix for a module.
+
+    When module_path is the project root (path: ./), returns "" so all files
+    are included. Otherwise returns "relative_dir/" as a prefix filter.
+    """
+    if module_name in ("root", "*"):
+        return ""
+    if module_path:
+        try:
+            rel = Path(module_path).relative_to(project_root)
+            rel_str = str(rel)
+            if rel_str == ".":
+                return ""
+            return rel_str.rstrip("/") + "/"
+        except ValueError:
+            pass
+    if module_name:
+        return module_name + "/"
+    return ""
 
 
 def _format_violations(violations: list[Violation]) -> str:
@@ -271,7 +311,10 @@ class StructuralCheckGate:
             if "sensitive_patterns" in params:
                 config.sensitive_patterns = params["sensitive_patterns"]
 
-        passed, violations = run_structural_check(project_root, module_name, config)
+        resolved = kwargs.get("module_path")
+        passed, violations = run_structural_check(
+            project_root, module_name, config, module_path=resolved
+        )
 
         return QAResult(
             gate="structural_check",

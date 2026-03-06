@@ -342,6 +342,17 @@ def _execute_single_task(
         # Run QA gates (sequentially per task)
         all_qa_passed = True
         for qa in task.qa_checks:
+            # Auto-fill ci_check branch/repo if missing
+            if qa.gate == "ci_check":
+                if not qa.params.get("branch"):
+                    qa.params["branch"] = branch_name
+                if not qa.params.get("repo"):
+                    try:
+                        mod_cfg = config.get_module(task.module)
+                        if mod_cfg.repo:
+                            qa.params["repo"] = mod_cfg.repo
+                    except ValueError:
+                        pass
             progress(f"    Running QA: [bold]{qa.gate}[/]...")
 
             qa_result = run_qa_gate(
