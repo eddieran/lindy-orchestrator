@@ -301,13 +301,22 @@ def onboard(
 
 @app.command()
 def run(
-    goal: str = typer.Argument(..., help="Natural language goal to achieve"),
+    goal: Optional[str] = typer.Argument(None, help="Natural language goal to achieve"),
+    file: Optional[str] = typer.Option(
+        None, "-f", "--file", help="Read goal from file (use '-' for stdin)"
+    ),
+    plan_file: Optional[str] = typer.Option(
+        None, "-p", "--plan", help="Execute a saved plan JSON (skip planning step)"
+    ),
     config: Optional[str] = typer.Option(None, "-c", "--config", help="Config YAML path"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Read and analyze only"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed output"),
 ):
-    """Execute a goal with full orchestration."""
-    from .planner import generate_plan
+    """Execute a goal with full orchestration.
+
+    Goal can be provided as argument, from a file (--file goal.md), or stdin (--file -).
+    Use --plan to execute a previously saved plan JSON directly (skips LLM planning).
+    """
     from .scheduler import execute_plan
 
     cfg = _load_cfg(config)
@@ -320,12 +329,29 @@ def run(
         console.print("Install: https://docs.anthropic.com/en/docs/claude-code")
         raise typer.Exit(1)
 
+    # Load plan from file or generate from goal
+    if plan_file:
+        plan_path = Path(plan_file)
+        if not plan_path.exists():
+            console.print(f"[red]Plan file not found: {plan_file}[/]")
+            raise typer.Exit(1)
+        plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
+        plan = _plan_from_dict(plan_data)
+        goal = plan.goal
+        console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
+        console.print(f"Goal: [bold]{goal}[/]")
+        console.print(f"[green]Loaded plan from {plan_file}[/]\n")
+    else:
+        from .planner import generate_plan
+
+        goal = _resolve_goal(goal, file)
+
+        console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
+        console.print(f"Goal: [bold]{goal}[/]")
+
     logger = ActionLogger(cfg.log_path)
     sessions = SessionManager(cfg.sessions_path)
     session = sessions.create(goal=goal)
-
-    console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
-    console.print(f"Goal: [bold]{goal}[/]")
     console.print(f"Session: {session.session_id}\n")
 
     start = time.monotonic()
@@ -333,17 +359,19 @@ def run(
     def on_progress(msg: str):
         console.print(msg)
 
-    # Step 1-2: Plan
     logger.log_action("session_start", details={"goal": goal, "dry_run": cfg.safety.dry_run})
-    console.print("[bold cyan][1/3][/] Generating task plan...")
 
-    try:
-        plan = generate_plan(goal, cfg, on_progress=on_progress)
-    except Exception as e:
-        console.print(f"[red]Planning failed: {e}[/]")
-        session.status = "failed"
-        sessions.save(session)
-        raise typer.Exit(1)
+    if not plan_file:
+        # Step 1: Plan
+        console.print("[bold cyan][1/3][/] Generating task plan...")
+
+        try:
+            plan = generate_plan(goal, cfg, on_progress=on_progress)
+        except Exception as e:
+            console.print(f"[red]Planning failed: {e}[/]")
+            session.status = "failed"
+            sessions.save(session)
+            raise typer.Exit(1)
 
     # Persist plan to session for resume capability
     session.plan_json = _plan_to_dict(plan)
@@ -407,13 +435,20 @@ def run(
 
 @app.command()
 def plan(
-    goal: str = typer.Argument(..., help="Natural language goal to decompose"),
+    goal: Optional[str] = typer.Argument(None, help="Natural language goal to decompose"),
+    file: Optional[str] = typer.Option(
+        None, "-f", "--file", help="Read goal from file (use '-' for stdin)"
+    ),
     config: Optional[str] = typer.Option(None, "-c", "--config"),
     output_file: Optional[str] = typer.Option(None, "-o", "--output", help="Save plan as JSON"),
 ):
-    """Generate a task plan without executing it."""
+    """Generate a task plan without executing it.
+
+    Goal can be provided as argument, from a file (--file goal.md), or stdin (--file -).
+    """
     from .planner import generate_plan
 
+    goal = _resolve_goal(goal, file)
     cfg = _load_cfg(config)
 
     console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
@@ -434,8 +469,9 @@ def plan(
             console.print(f"     Prompt: {t.prompt[:100]}...")
 
     # Auto-persist plan
-    _persist_plan(cfg.root, plan_result)
-    console.print("\n[green]Plan saved to .orchestrator/plans/[/]")
+    plan_json_path = _persist_plan(cfg.root, plan_result)
+    console.print(f"\n[green]Plan saved to {plan_json_path}[/]")
+    console.print(f"[dim]To execute: lindy-orchestrate run --plan {plan_json_path}[/]")
 
     if output_file:
         data = _plan_to_dict(plan_result)
@@ -1056,6 +1092,28 @@ def mailbox(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_goal(goal: str | None, file: str | None) -> str:
+    """Resolve goal text from argument, file, or stdin."""
+    import sys
+
+    if file:
+        if file == "-":
+            text = sys.stdin.read().strip()
+            if not text:
+                console.print("[red]No input received from stdin.[/]")
+                raise typer.Exit(1)
+            return text
+        p = Path(file)
+        if not p.exists():
+            console.print(f"[red]File not found: {file}[/]")
+            raise typer.Exit(1)
+        return p.read_text(encoding="utf-8").strip()
+    if goal:
+        return goal
+    console.print("[red]Provide a goal as argument or use --file/-f.[/]")
+    raise typer.Exit(1)
+
+
 def _load_cfg(config_path: str | None):
     """Load config with error handling."""
     try:
@@ -1083,8 +1141,8 @@ def _plan_from_dict(data: dict) -> TaskPlan:
     return plan_from_dict(data)
 
 
-def _persist_plan(root: Path, plan: TaskPlan) -> None:
-    """Auto-save plan to .orchestrator/plans/."""
+def _persist_plan(root: Path, plan: TaskPlan) -> Path:
+    """Auto-save plan to .orchestrator/plans/. Returns the JSON path."""
     import re
     from datetime import datetime, timezone
 
@@ -1114,3 +1172,4 @@ def _persist_plan(root: Path, plan: TaskPlan) -> None:
         md_lines.append("")
 
     (plans_dir / "latest.md").write_text("\n".join(md_lines))
+    return json_path
