@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import typer
+from rich.console import Console
 
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
@@ -15,7 +16,7 @@ from .session import SessionManager
 from .status.parser import parse_status_md
 
 
-def register_ext_commands(app: typer.Typer, console, helpers) -> None:
+def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str, Any]) -> None:
     """Register extension commands on the Typer app.
 
     Args:

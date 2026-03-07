@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from rich.console import Console
 
 from . import __version__
 from .config import CONFIG_FILENAME
@@ -48,7 +49,7 @@ _IGNORED_DIRS = {
 }
 
 
-def register_init_commands(app: typer.Typer, console) -> None:
+def register_init_commands(app: typer.Typer, console: Console) -> None:
     """Register init and onboard commands on the Typer app."""
 
     @app.command()

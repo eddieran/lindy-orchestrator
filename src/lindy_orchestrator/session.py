@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -81,13 +84,21 @@ class SessionManager:
             try:
                 sessions.append(self._load(f))
             except Exception:
-                pass
+                log.warning("Failed to load session file %s", f, exc_info=True)
         return sessions
 
     def _save(self, state: SessionState) -> None:
         path = self.sessions_dir / f"{state.session_id}.json"
-        path.write_text(json.dumps(asdict(state), indent=2, default=str))
+        try:
+            path.write_text(json.dumps(asdict(state), indent=2, default=str))
+        except OSError:
+            log.exception("Failed to save session %s to %s", state.session_id, path)
+            raise
 
     def _load(self, path: Path) -> SessionState:
-        data = json.loads(path.read_text())
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            log.exception("Failed to load session from %s", path)
+            raise
         return SessionState(**data)

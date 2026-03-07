@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 class ActionLogger:
@@ -37,8 +41,12 @@ class ActionLogger:
             else:
                 entry["output"] = str(output)
 
-        with self.log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        try:
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        except OSError:
+            _log.warning("Failed to write action log to %s", self.log_path, exc_info=True)
+            print(f"[log fallback] {action}: {result}", file=sys.stderr)
 
     def log_dispatch(
         self,

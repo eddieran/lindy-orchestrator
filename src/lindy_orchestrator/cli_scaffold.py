@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from rich.console import Console
 
 from . import __version__
 from .cli_helpers import resolve_goal
@@ -155,7 +156,7 @@ def scaffold_response_to_context(data: dict, output_dir: str = ".") -> Discovery
 # ---------------------------------------------------------------------------
 
 
-def register_scaffold_command(app: typer.Typer, console) -> None:
+def register_scaffold_command(app: typer.Typer, console: Console) -> None:
     """Register the scaffold command on the Typer app."""
 
     @app.command()

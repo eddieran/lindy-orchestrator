@@ -26,7 +26,7 @@ class CommandCheckGate:
         project_root: Path,
         module_name: str = "",
         task_output: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> QAResult:
         command = params.get("command", "")
         resolved = kwargs.get("module_path")

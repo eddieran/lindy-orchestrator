@@ -30,7 +30,7 @@ class CICheckGate:
         project_root: Path,
         module_name: str = "",
         task_output: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> QAResult:
         repo = params.get("repo", "")
         workflow = params.get("workflow", "ci.yml")

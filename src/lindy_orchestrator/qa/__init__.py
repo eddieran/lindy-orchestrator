@@ -8,19 +8,21 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from ..config import CustomGateConfig, DispatcherConfig, ModuleConfig
 from ..models import QACheck, QAResult
+
+_T = TypeVar("_T")
 
 # Gate registry
 _GATES: dict[str, Any] = {}
 
 
-def register(name: str):
+def register(name: str) -> Callable[[type[_T]], type[_T]]:
     """Decorator to register a built-in QA gate."""
 
-    def decorator(cls):
+    def decorator(cls: type[_T]) -> type[_T]:
         _GATES[name] = cls
         return cls
 

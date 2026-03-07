@@ -7,6 +7,7 @@ tasks in parallel using concurrent.futures.
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Callable
@@ -20,6 +21,8 @@ from .models import QACheck, TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import format_qa_feedback
+
+log = logging.getLogger(__name__)
 
 
 def execute_plan(
@@ -130,7 +133,7 @@ def execute_plan(
                             )
                         )
                     except Exception:
-                        pass  # checkpoint failure should not stop execution
+                        log.warning("Checkpoint save failed", exc_info=True)
 
     hooks.emit(
         Event(
@@ -254,7 +257,7 @@ def _execute_single_task(
                     )
                     progress(f"    [dim]Injected {len(pending)} mailbox message(s)[/]")
             except Exception:
-                pass  # mailbox injection failure should not block dispatch
+                log.warning("Mailbox injection failed for %s", task.module, exc_info=True)
 
         # Inject branch delivery instructions so agents push to expected branch
         branch_name = f"{config.project.branch_prefix}/task-{task.id}"

@@ -7,11 +7,14 @@ Messages are appended atomically. No external infrastructure required.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -72,6 +75,7 @@ class Mailbox:
                         continue
                     messages.append(msg)
                 except (json.JSONDecodeError, TypeError):
+                    log.warning("Failed to parse mailbox line in %s: %s", path, line[:100])
                     continue
         return messages
 

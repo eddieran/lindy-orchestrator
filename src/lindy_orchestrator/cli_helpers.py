@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from .config import CONFIG_FILENAME, load_config
+from .config import CONFIG_FILENAME, OrchestratorConfig, load_config
 from .models import TaskPlan
 
 console = Console()
@@ -38,7 +38,7 @@ def resolve_goal(goal: str | None, file: str | None) -> str:
     raise typer.Exit(1)
 
 
-def load_cfg(config_path: str | None):
+def load_cfg(config_path: str | None) -> OrchestratorConfig:
     """Load config with error handling."""
     try:
         return load_config(config_path)

@@ -70,7 +70,7 @@ def run(
     config: Optional[str] = typer.Option(None, "-c", "--config", help="Config YAML path"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Read and analyze only"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed output"),
-):
+) -> None:
     """Execute a goal with full orchestration.
 
     Goal can be provided as argument, from a file (--file goal.md), or stdin (--file -).
@@ -208,7 +208,7 @@ def plan(
     ),
     config: Optional[str] = typer.Option(None, "-c", "--config"),
     output_file: Optional[str] = typer.Option(None, "-o", "--output", help="Save plan as JSON"),
-):
+) -> None:
     """Generate a task plan without executing it.
 
     Goal can be provided as argument, from a file (--file goal.md), or stdin (--file -).
@@ -257,7 +257,7 @@ def plan(
 def status(
     config: Optional[str] = typer.Option(None, "-c", "--config"),
     as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
-):
+) -> None:
     """Show all module statuses (no LLM calls)."""
     cfg = _load_cfg(config)
 
@@ -301,7 +301,7 @@ def logs(
     last: int = typer.Option(20, "-n", "--last", help="Show last N entries"),
     config: Optional[str] = typer.Option(None, "-c", "--config"),
     as_json: bool = typer.Option(False, "--json", help="Output raw JSONL"),
-):
+) -> None:
     """Show recent action logs."""
     cfg = _load_cfg(config)
     log_path = cfg.log_path
@@ -343,7 +343,7 @@ def resume(
     session_id: Optional[str] = typer.Argument(None, help="Session ID to resume"),
     config: Optional[str] = typer.Option(None, "-c", "--config"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed output"),
-):
+) -> None:
     """Resume a previous session from its last checkpoint.
 
     Skips already-completed tasks and re-executes failed/pending ones.
@@ -461,7 +461,7 @@ def resume(
 @app.command()
 def version(
     as_json: bool = typer.Option(False, "--json", help="Output as JSON for scripting"),
-):
+) -> None:
     """Print the current lindy-orchestrator version."""
     if as_json:
         console.print_json(json.dumps({"version": __version__}))
