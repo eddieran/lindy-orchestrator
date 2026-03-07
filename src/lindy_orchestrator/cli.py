@@ -21,6 +21,7 @@ from .cli_helpers import (
     resolve_goal,
 )
 from .dashboard import Dashboard
+from .codex_dispatcher import find_codex_cli
 from .dispatcher import find_claude_cli
 from .hooks import HookRegistry
 from .logger import ActionLogger
@@ -81,6 +82,11 @@ def run(
     config: Optional[str] = typer.Option(None, "-c", "--config", help="Config YAML path"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Read and analyze only"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed output"),
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        help="Dispatch provider: claude_cli (default) or codex_cli",
+    ),
 ) -> None:
     """Execute a goal with full orchestration.
 
@@ -93,11 +99,22 @@ def run(
     if dry_run:
         cfg.safety.dry_run = True
 
-    # Verify claude CLI exists
-    if not find_claude_cli():
-        console.print("[red]Error: Claude CLI not found in PATH.[/]")
-        console.print("Install: https://docs.anthropic.com/en/docs/claude-code")
-        raise typer.Exit(1)
+    # Override provider from CLI flag if specified
+    if provider:
+        cfg.dispatcher.provider = provider
+
+    # Verify the selected CLI exists
+    selected_provider = cfg.dispatcher.provider
+    if selected_provider == "codex_cli":
+        if not find_codex_cli():
+            console.print("[red]Error: Codex CLI not found in PATH.[/]")
+            console.print("Install: https://github.com/openai/codex")
+            raise typer.Exit(1)
+    else:
+        if not find_claude_cli():
+            console.print("[red]Error: Claude CLI not found in PATH.[/]")
+            console.print("Install: https://docs.anthropic.com/en/docs/claude-code")
+            raise typer.Exit(1)
 
     # Load plan from file or generate from goal
     if plan_file:
