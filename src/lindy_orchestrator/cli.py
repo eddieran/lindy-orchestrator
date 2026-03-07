@@ -11,7 +11,15 @@ import typer
 from rich.console import Console
 
 from . import __version__
-from .cli_helpers import load_cfg, persist_plan, plan_from_dict, plan_to_dict, resolve_goal
+from .cli_helpers import (
+    finalise_session,
+    load_cfg,
+    make_on_progress,
+    persist_plan,
+    plan_from_dict,
+    plan_to_dict,
+    resolve_goal,
+)
 from .dashboard import Dashboard
 from .dispatcher import find_claude_cli
 from .hooks import HookRegistry
@@ -114,9 +122,7 @@ def run(
     console.print(f"Session: {session.session_id}\n")
 
     start = time.monotonic()
-
-    def on_progress(msg: str):
-        console.print(msg)
+    on_progress = make_on_progress(console)
 
     logger.log_action("session_start", details={"goal": goal, "dry_run": cfg.safety.dry_run})
 
@@ -179,16 +185,7 @@ def run(
 
     print_goal_report(report, dispatches=len(plan.tasks), duration=duration)
 
-    # Update session with final plan state
-    session.plan_json = _plan_to_dict(plan)
-    session.completed_tasks = [
-        {"id": t.id, "module": t.module, "description": t.description} for t in completed
-    ]
-    if failed:
-        session.status = "paused"
-        sessions.save(session)
-    else:
-        sessions.complete(session)
+    completed, failed = finalise_session(session, sessions, plan)
 
     logger.log_action(
         "session_end",
@@ -222,9 +219,7 @@ def plan(
     console.print(f"Goal: [bold]{goal}[/]\n")
 
     progress = PlanProgress(console=console)
-
-    def on_progress(msg: str):
-        console.print(msg)
+    on_progress = make_on_progress(console)
 
     progress.start()
     try:
@@ -421,9 +416,7 @@ def resume(
     # Execute remaining
     logger = ActionLogger(cfg.log_path)
     start = time.monotonic()
-
-    def on_progress(msg: str):
-        console.print(msg)
+    on_progress = make_on_progress(console)
 
     console.print("\n[bold cyan]Resuming execution...[/]")
     hooks = HookRegistry()
@@ -446,16 +439,7 @@ def resume(
         duration=duration,
     )
 
-    # Update session
-    session.plan_json = _plan_to_dict(plan)
-    session.completed_tasks = [
-        {"id": t.id, "module": t.module, "description": t.description} for t in completed
-    ]
-    if failed:
-        session.status = "paused"
-        sessions.save(session)
-    else:
-        sessions.complete(session)
+    finalise_session(session, sessions, plan)
 
 
 @app.command()

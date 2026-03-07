@@ -9,6 +9,7 @@ from typing import Any, Optional
 import typer
 from rich.console import Console
 
+from .cli_helpers import finalise_session, make_on_progress
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
 from .reporter import PlanProgress, print_goal_report
@@ -257,9 +258,7 @@ def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str,
         console.print(f"Session: {session.session_id}\n")
 
         start = time.monotonic()
-
-        def on_progress(msg: str):
-            console.print(msg)
+        on_progress = make_on_progress(console)
 
         logger.log_action(
             "session_start",
@@ -330,15 +329,7 @@ def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str,
             except Exception as e:
                 console.print(f"[yellow]Failed to sync to tracker: {e}[/]")
 
-        session.plan_json = _plan_to_dict(plan_result)
-        session.completed_tasks = [
-            {"id": t.id, "module": t.module, "description": t.description} for t in completed
-        ]
-        if failed:
-            session.status = "paused"
-            sessions.save(session)
-        else:
-            sessions.complete(session)
+        completed, failed = finalise_session(session, sessions, plan_result)
 
         logger.log_action(
             "session_end",
