@@ -59,6 +59,7 @@ class CustomGateConfig(BaseModel):
     command: str
     cwd: str = "{module_path}"
     timeout: int = 600
+    modules: list[str] = Field(default_factory=list)  # empty = all modules
 
 
 class StructuralCheckConfig(BaseModel):

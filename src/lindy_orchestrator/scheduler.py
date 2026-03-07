@@ -216,6 +216,9 @@ def _execute_single_task(
     has_command = any(q.gate == "command_check" for q in task.qa_checks)
     if not has_command and config.qa_gates.custom:
         for gate in config.qa_gates.custom:
+            # Skip if gate is restricted to specific modules and task module doesn't match
+            if gate.modules and task.module not in gate.modules:
+                continue
             task.qa_checks.append(
                 QACheck(
                     gate="command_check",
