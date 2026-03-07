@@ -1,272 +1,312 @@
-# lindy-orchestrator 使用指南
+# lindy-orchestrator v0.8.0 使用指南
+
+> 轻量级、git 原生的多 Agent 编排框架。
+> 辅助功能文档参见 [USAGE_helpers.md](USAGE_helpers.md)。
+
+---
+
+## 目录
+
+1. [前置条件](#前置条件)
+2. [安装](#安装)
+3. [接入项目（onboard / init）](#接入项目)
+4. [配置详解（orchestrator.yaml）](#配置详解)
+5. [CLI 核心命令](#cli-核心命令)
+   - [run — 执行目标](#run--执行目标)
+   - [plan — 规划任务](#plan--规划任务)
+   - [resume — 恢复会话](#resume--恢复会话)
+   - [status — 查看状态](#status--查看状态)
+   - [logs — 查看日志](#logs--查看日志)
+   - [validate — 校验配置](#validate--校验配置)
+   - [version — 版本信息](#version--版本信息)
+6. [Provider 系统](#provider-系统)
+7. [目标描述最佳实践](#目标描述最佳实践)
+8. [项目结构示例](#项目结构示例)
+
+辅助功能：gc、scan、mailbox、issues、run-issue、DAG 仪表盘、Hook 事件系统、QA 门禁、Dispatch 模式、执行报告、会话管理、常见问题排查 → 参见 [USAGE_helpers.md](USAGE_helpers.md)
+
+---
 
 ## 前置条件
 
 - Python 3.11+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 已安装且在 PATH 中
 - Git
-- GitHub CLI (`gh`)（如果使用 CI check QA gate）
+- 至少安装以下一种 Agent CLI：
+  - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（默认 provider）
+  - [Codex CLI](https://github.com/openai/codex)（可选 provider）
+- GitHub CLI (`gh`)（如使用 tracker 集成或 CI check QA 门禁）
+
+---
+
+## 安装
 
 ```bash
-# 安装
-pip install lindy-orchestrator
-
-# 如需 Anthropic API 模式
-pip install lindy-orchestrator[api]
-
-# 验证
-lindy-orchestrate --version
-claude --version
+pip install lindy-orchestrator            # 基础安装
+pip install lindy-orchestrator[api]       # 含 Anthropic API 模式
+lindy-orchestrate --version              # 验证安装
 ```
 
 ---
 
-## 第一步：接入项目
+## 接入项目
 
-有两种方式，选一种。
+有两种方式接入项目，选一种即可。
 
 ### 方式 A：`onboard`（推荐）
 
-```bash
-cd your-project
-lindy-orchestrate onboard
-```
+`onboard` 命令会根据项目状态智能选择模式：
 
-这是一个三阶段流程：
-
-**阶段 1 — 静态分析**（自动）
-
-扫描项目目录，检测 marker 文件（`pyproject.toml`、`package.json`、`Cargo.toml`、`go.mod` 等）。检测结果包括：
-
-- 项目模块（子目录中有 marker 文件的即为模块）
-- 每个模块的技术栈（Python/Node.js/Rust/Go/...）
-- 依赖清单（从 manifest 中解析）
-- 入口文件、测试/构建/lint 命令
-- CI 配置（GitHub Actions/GitLab CI/Jenkins/CircleCI）
-- 目录树结构
-- 已有文档（README.md, CLAUDE.md）
-- 架构模式（REST API、数据库 ORM、前端 SPA、容器化等）
-
-如果项目根目录本身就有 marker 文件且没有子模块，会被识别为**单模块项目**。不需要手动指定模块数量。
-
-**阶段 2 — 交互式问答**
-
-根据扫描结果，问 7 个问题（已检测到的会跳过或提供默认值）：
-
-| # | 问题 | 说明 |
-|---|------|------|
-| Q1 | 项目主要用途 | 如果 README 中有描述会自动提取，确认即可 |
-| Q2 | 模块职责 | 展示检测到的模块，未识别到模式的会问你 |
-| Q3 | 跨模块依赖 | 只在多模块时问。格式：`frontend -> backend : REST API` |
-| Q4 | QA 要求 | 展示检测到的测试/lint 命令，确认或修改 |
-| Q5 | 敏感路径 | 默认 `.env`, `.env.*`, `*.key`, `*.pem`，可追加 |
-| Q6 | 耦合程度 | 只在多模块时问。1=松散 2=适中 3=紧密 |
-| Q7 | 分支前缀 | 默认 `af`，可改为任意值如 `feat`, `roxy` |
-
-不想回答可以用 `--non-interactive` 全自动：
+| 项目状态 | 触发模式 | 行为 |
+|----------|----------|------|
+| 空项目（无源文件） | scaffold 模式 | LLM 驱动，需要项目描述 |
+| 有代码但无 `orchestrator.yaml` | init+onboard 模式 | 扫描、问答、生成 |
+| 已有 `orchestrator.yaml` | re-onboard 模式 | 更新配置和文件 |
 
 ```bash
-lindy-orchestrate onboard --non-interactive
+lindy-orchestrate onboard                              # 已有代码的项目
+lindy-orchestrate onboard "一个基于 FastAPI 的后端服务"  # 空项目
+lindy-orchestrate onboard --file description.md         # 从文件读取描述
+cat desc.txt | lindy-orchestrate onboard --file -       # 从 stdin
+lindy-orchestrate onboard --non-interactive             # 全自动
+lindy-orchestrate onboard --force                       # 覆盖已有文件
+lindy-orchestrate onboard --depth 2                     # 调整扫描深度
 ```
 
-**阶段 3 — 生成文件**
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `DESCRIPTION` | — | 位置参数，项目描述（scaffold 模式需要） |
+| `--file PATH` | `-f` | 从文件读取描述（`-` 表示 stdin） |
+| `--depth N` | — | 目录扫描深度，默认 1 |
+| `--non-interactive` | `-y` | 跳过确认提示，使用默认值 |
+| `--force` | — | 覆盖已有文件 |
 
-| 文件 | 生成条件 | 作用 |
-|------|----------|------|
-| `orchestrator.yaml` | 始终 | 编排配置：模块定义、超时、QA 门禁、安全参数 |
-| `CLAUDE.md`（根目录） | 始终 | 项目级 Agent 上下文指令 |
-| `<module>/CLAUDE.md` | 每个模块 | 模块级 Agent 上下文（技术栈、目录结构、命令、边界） |
-| `CONTRACTS.md` | 耦合程度 ≥ 2 | 跨模块接口契约、STATUS.md schema、Task ID 约定 |
-| `<module>/STATUS.md` | 每个模块 | 模块状态追踪文件 |
-| `.orchestrator/` | 始终 | 日志和会话目录 |
-| `.gitignore` | 更新 | 忽略日志和会话文件 |
+**三阶段流程（init+onboard 模式）：**
+
+**阶段 1 — 静态分析**（自动）：扫描 marker 文件（`pyproject.toml`、`package.json`、`Cargo.toml`、`go.mod` 等），检测模块、技术栈、依赖、CI 配置、架构模式。
+
+**阶段 2 — 交互式问答**：根据扫描结果问 7 个问题（已检测到的跳过）：项目用途、模块职责、跨模块依赖、QA 要求、敏感路径、耦合程度、分支前缀。
+
+**阶段 3 — 生成文件**：
+
+| 文件 | 作用 |
+|------|------|
+| `orchestrator.yaml` | 编排配置 |
+| `CLAUDE.md`（根/模块） | Agent 上下文指令 |
+| `ARCHITECTURE.md` | 架构文档 |
+| `<module>/STATUS.md` | 模块状态追踪 |
+| `CONTRACTS.md` | 跨模块接口契约（耦合度 >= 2） |
+| `docs/agents/*.md` | 协调协议、编码规范、约束边界 |
+| `.orchestrator/` | 日志、会话、邮箱目录 |
 
 ### 方式 B：`init`（快速）
 
+只生成 `orchestrator.yaml` + `STATUS.md` + `.orchestrator/`。
+
 ```bash
-cd your-project
-
-# 自动检测
-lindy-orchestrate init
-
-# 或手动指定
-lindy-orchestrate init --modules "backend,frontend,worker"
+lindy-orchestrate init                            # 自动检测
+lindy-orchestrate init --modules "backend,frontend"  # 手动指定模块
+lindy-orchestrate init --depth 2                  # 扫描深度
+lindy-orchestrate init --no-status                # 不生成 STATUS.md
+lindy-orchestrate init --force                    # 覆盖已有文件
 ```
 
-只生成 `orchestrator.yaml` + `STATUS.md` + `.orchestrator/`。不生成 CLAUDE.md 和 CONTRACTS.md。适合你已经有这些文件或不需要的场景。
-
-**选项：**
-- `--depth 2` — 扫描深度（默认 1 层）
-- `--no-status` — 不生成 STATUS.md
-- `--force` — 覆盖已有文件
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `--modules LIST` | `-m` | 逗号分隔的模块名（跳过自动检测） |
+| `--depth N` | — | 扫描深度，默认 1 |
+| `--no-status` | — | 不生成 STATUS.md |
+| `--force` | — | 覆盖已有文件 |
 
 ---
 
-## 第二步：审阅和调整配置
+## 配置详解
 
-### orchestrator.yaml
+### orchestrator.yaml 完整 schema
 
 ```yaml
+# ─── 项目基本信息 ───
 project:
-  name: "my-project"
-  branch_prefix: "af"         # 任务分支前缀：af/task-1
+  name: "my-project"           # 项目名
+  branch_prefix: "af"          # 任务分支前缀：af/task-1, af/task-2
 
+# ─── 模块定义 ───
 modules:
-  - name: backend             # 模块名
-    path: backend/            # 相对路径
-    repo: myorg/my-backend    # GitHub repo（CI check 需要）
+  - name: backend              # 模块名
+    path: backend/             # 相对路径
+    status_md: STATUS.md       # 默认 STATUS.md
+    claude_md: CLAUDE.md       # 默认 CLAUDE.md
+    repo: myorg/my-backend     # GitHub repo slug（CI check 需要）
     ci_workflow: ci.yml        # CI workflow 文件名
-    # role: qa                # 标记为 QA 模块（agent_check 会派发到这里）
+    role: ""                   # "qa" 标记为 QA 模块
 
+# ─── 规划器 ───
 planner:
-  mode: cli                   # cli = claude -p（无需 API key）
-  # mode: api                 # api = Anthropic SDK（需要 ANTHROPIC_API_KEY）
-  # model: claude-sonnet-4-20250514
+  mode: cli                    # cli = claude -p | api = Anthropic SDK
+  model: claude-sonnet-4-20250514  # api 模式使用的模型
+  max_tokens: 4096             # 规划器最大输出 token
+  timeout_seconds: 120         # 规划器超时
+  # prompt_template: path/to/template.j2  # 自定义 Jinja2 模板
 
+# ─── 派发器 ───
 dispatcher:
-  timeout_seconds: 1800       # 单任务硬超时（30 分钟）
-  stall_timeout_seconds: 600  # 无输出判定停滞（10 分钟）
+  provider: claude_cli         # claude_cli（默认）或 codex_cli
+  timeout_seconds: 1800        # 单任务硬超时（30 分钟）
+  stall_timeout_seconds: 600   # 向后兼容的 stall 超时
+  stall_escalation:            # 两阶段 stall 升级
+    warn_after_seconds: 300    # 300 秒无输出 → 警告事件
+    kill_after_seconds: 600    # 600 秒无输出 → 终止进程
   permission_mode: bypassPermissions
-  # max_output_chars: 50000   # 输出截断阈值
+  max_output_chars: 50000      # 输出截断阈值
 
+# ─── QA 门禁 ───
 qa_gates:
-  custom:                     # 自定义 QA 门禁（YAML 定义，不需要写 Python）
+  ci_check:                    # CI 检查参数
+    timeout_seconds: 900
+    poll_interval: 30
+  structural:                  # 结构化检查
+    max_file_lines: 500
+    enforce_module_boundary: true
+    sensitive_patterns: [".env", "*.key", "*.pem"]
+  layer_check:                 # 层级检查
+    enabled: true
+    unknown_file_policy: skip  # skip | warn
+  custom:                      # 自定义 QA 门禁
     - name: backend-pytest
       command: "pytest --tb=short -q"
-      cwd: "{module_path}"    # {module_path} 会被替换为模块实际路径
-    - name: frontend-lint
-      command: "npm run lint"
-      cwd: "{module_path}"
+      cwd: "{module_path}"    # {module_path} 替换为模块路径
+      timeout: 600
+      modules: []              # 空 = 所有模块
 
+# ─── 安全设置 ───
 safety:
-  dry_run: false              # true = 模拟全流程但不派发 agent
-  max_retries_per_task: 2     # QA 失败后自动重试次数
-  max_parallel: 3             # 最大并行 agent 数
+  dry_run: false
+  max_retries_per_task: 2
+  max_parallel: 3
+
+# ─── 日志设置 ───
+logging:
+  dir: ".orchestrator/logs"
+  session_dir: ".orchestrator/sessions"
+  log_file: "actions.jsonl"
+
+# ─── 邮箱系统 ───
+mailbox:
+  enabled: true
+  dir: ".orchestrator/mailbox"
+  inject_on_dispatch: true     # 派发时自动注入待处理消息
+
+# ─── Tracker 集成 ───
+tracker:
+  enabled: false
+  provider: github             # github | linear
+  repo: ""
+  labels: [orchestrator]
+  sync_on_complete: true       # 完成时自动评论并关闭 issue
 ```
 
-**你需要确认的关键项：**
-1. `modules` — 路径是否正确，`repo` 填 GitHub slug（如果用 CI check）
-2. `qa_gates.custom` — 测试/lint 命令是否正确
-3. `safety.max_parallel` — 根据你的 Claude API 并发限制调整
+**qa_gates 模块级快捷语法：** 支持按模块名分组的写法（如 `backend:` 列表），会被自动规范化为 `custom` 列表并添加 `modules` 字段。
 
-### STATUS.md
-
-每个模块的 STATUS.md 是 Agent 了解模块现状的入口。生成后你应该填入实际状态：
-
-```markdown
-## Meta
-| Key | Value |
-|-----|-------|
-| module | backend |
-| last_updated | 2026-03-02 10:00 UTC |
-| overall_health | GREEN |
-| agent_session | — |
-
-## Active Work
-| ID | Task | Status | BlockedBy | Started | Notes |
-|----|------|--------|-----------|---------|-------|
-| BE-001 | 用户认证 API | IN_PROGRESS | — | 2026-03-01 | JWT 方案 |
-
-## Completed (Recent)
-| ID | Task | Completed | Outcome |
-|----|------|-----------|---------|
-| BE-000 | 项目初始化 | 2026-02-28 | 骨架搭建完成 |
-
-## Backlog
-- [ ] 接入 OAuth2
-- [ ] 添加 rate limiting
-
-## Cross-Module Requests
-| ID | From | To | Request | Priority | Status |
-|----|------|----|---------|----------|--------|
-
-## Cross-Module Deliverables
-| ID | From | To | Deliverable | Status | Path |
-|----|------|----|-------------|--------|------|
-
-## Key Metrics
-| Metric | Value |
-|--------|-------|
-| test_coverage | 45% |
-| api_endpoints | 12 |
-
-## Blockers
-- (none)
-```
-
-**健康度含义：**
-- `GREEN` — 正常推进
-- `YELLOW` — 有风险，需要关注
-- `RED` — 被阻塞，无法推进
+**stall_escalation 两阶段停滞升级：** Stage 1 警告（`warn_after_seconds`）→ Stage 2 终止（`kill_after_seconds`）。首次事件有宽限期（阈值翻倍，最低 300s/600s）。Bash 工具感知：最后工具为 Bash 时阈值增加 50%。
 
 ---
 
-## 第三步：使用
+## CLI 核心命令
 
-### 规划（不执行）
+### run — 执行目标
+
+完整编排流程：读取 STATUS.md → LLM 分解 → 按依赖并行派发 → QA 门禁 → 报告。
+
+```bash
+lindy-orchestrate run "在 backend 模块添加 /api/users CRUD 端点"
+lindy-orchestrate run --file goal.md                    # 从文件读取目标
+echo "重构数据层" | lindy-orchestrate run --file -      # 从 stdin
+lindy-orchestrate run --plan .orchestrator/plans/latest.json  # 执行已保存计划
+lindy-orchestrate run "Add tests" --dry-run             # 模拟运行
+lindy-orchestrate run "Add tests" --provider codex_cli  # 指定 provider
+lindy-orchestrate run "Add auth" -v                     # 详细输出
+lindy-orchestrate run "Fix bugs" -c path/to/config.yaml # 指定配置
+```
+
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `GOAL` | — | 位置参数，自然语言目标 |
+| `--file PATH` | `-f` | 从文件读取目标（`-` 表示 stdin） |
+| `--plan PATH` | `-p` | 执行已保存的计划 JSON（跳过 LLM 规划） |
+| `--config PATH` | `-c` | 指定配置文件路径 |
+| `--dry-run` | — | 模拟运行，不实际派发 agent |
+| `--verbose` | `-v` | 显示详细输出 |
+| `--provider NAME` | — | 指定 provider：`claude_cli` 或 `codex_cli` |
+
+### plan — 规划任务
+
+只生成任务计划，不执行。
 
 ```bash
 lindy-orchestrate plan "Add user authentication with JWT"
+lindy-orchestrate plan --file goal.md
+lindy-orchestrate plan "Add auth" -o plan.json          # 另存为 JSON
+lindy-orchestrate plan "Add auth" -c config.yaml
 ```
 
-LLM 会读取所有模块的 STATUS.md，分解目标为带依赖的任务 DAG。输出每个任务的：
-- 目标模块
-- 任务描述
-- 依赖关系
-- QA 检查项
-- 具体 prompt（agent 会收到的指令）
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `GOAL` | — | 位置参数，自然语言目标 |
+| `--file PATH` | `-f` | 从文件读取目标 |
+| `--output PATH` | `-o` | 另存为 JSON 文件 |
+| `--config PATH` | `-c` | 指定配置文件路径 |
+
+计划自动保存到 `.orchestrator/plans/`。推荐工作流：先 `plan` 审阅，再 `run --plan`。
 
 ```bash
-# 保存为 JSON 文件
-lindy-orchestrate plan "Add user authentication" -o plan.json
+lindy-orchestrate plan "Refactor data layer" -o plan.json
+# 审阅 plan.json
+lindy-orchestrate run --plan plan.json
 ```
 
-**建议：先 plan，审阅后再 run。**
+### resume — 恢复会话
 
-### 执行
+从上次检查点恢复执行。跳过已完成任务，重置失败任务为 pending 状态。
 
 ```bash
-lindy-orchestrate run "Add user authentication with JWT"
+lindy-orchestrate resume                 # 恢复最近一次
+lindy-orchestrate resume abc123          # 恢复指定会话
+lindy-orchestrate resume -v              # 详细输出
+lindy-orchestrate resume -c config.yaml
 ```
 
-完整流程：
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `SESSION_ID` | — | 位置参数，会话 ID（留空恢复最近） |
+| `--config PATH` | `-c` | 指定配置文件路径 |
+| `--verbose` | `-v` | 详细输出 |
 
-```
-读取所有 STATUS.md → LLM 分解目标 → 按依赖顺序并行派发
-                                        ↓
-                              Agent 在模块目录中工作
-                              （写代码 → commit → push）
-                                        ↓
-                              运行 QA 门禁（CI / 命令 / Agent 检查）
-                                        ↓
-                            通过 → 标记完成     失败 → 带反馈重试
-                                                  ↓
-                                        超过重试次数 → 标记失败，暂停
-```
+恢复逻辑：已完成保持不变；失败重置为 pending（重试计数归零）；被跳过的任务在依赖不再失败时也重置。
 
-**选项：**
-- `--dry-run` — 完整流程但不实际派发 agent
-- `-v` / `--verbose` — 显示 agent 的每次工具调用
-- `-c path/to/config.yaml` — 指定配置文件
+### status — 查看状态
 
-### 模拟运行
+展示模块健康度概览和最近日志。
 
 ```bash
-lindy-orchestrate run "Refactor the data layer" --dry-run
+lindy-orchestrate status                 # 状态表 + 最近 10 条日志
+lindy-orchestrate status --json          # JSON 输出
+lindy-orchestrate status --status-only   # 仅状态表
+lindy-orchestrate status --logs-only     # 仅日志
+lindy-orchestrate status -n 20           # 指定日志条数
 ```
 
-会显示完整的任务分解和执行顺序，但不会真的启动 agent。用来验证目标描述是否清晰。
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `--config PATH` | `-c` | 指定配置文件路径 |
+| `--json` | — | JSON 输出（含 modules、logs、mailbox） |
+| `--last N` | `-n` | 最近 N 条日志，默认 10 |
+| `--logs-only` | — | 仅显示日志 |
+| `--status-only` | — | 仅显示状态表 |
 
-### 查看状态
+输出内容：模块健康度（GREEN/YELLOW/RED）、活跃任务数、待处理请求数、阻塞项数、邮箱汇总、最近日志。
 
-```bash
-lindy-orchestrate status          # 表格形式
-lindy-orchestrate status --json   # JSON 形式
-```
+### logs — 查看日志
 
-展示每个模块的：健康度、活跃任务数、待处理请求数、阻塞项数。
-
-### 查看日志
+`status --logs-only` 的快捷方式。
 
 ```bash
 lindy-orchestrate logs            # 最近 20 条
@@ -274,140 +314,81 @@ lindy-orchestrate logs -n 50      # 最近 50 条
 lindy-orchestrate logs --json     # 原始 JSONL
 ```
 
-日志存储在 `.orchestrator/logs/actions.jsonl`，追加写入，不会覆盖。
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `--last N` | `-n` | 最近 N 条，默认 20 |
+| `--config PATH` | `-c` | 指定配置文件路径 |
+| `--json` | — | 原始 JSONL 输出 |
 
-### 恢复会话
+### validate — 校验配置
 
-```bash
-lindy-orchestrate resume          # 恢复最近一次
-lindy-orchestrate resume abc123   # 恢复指定 session
-```
-
-### 校验配置
+检查配置语法、模块路径、STATUS.md 可解析性、CLI 可用性。
 
 ```bash
 lindy-orchestrate validate
+lindy-orchestrate validate -c path/to/config.yaml
 ```
 
-检查：配置语法、模块路径是否存在、STATUS.md 是否存在且可解析、Claude CLI 是否可用。
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `--config PATH` | `-c` | 指定配置文件路径 |
 
----
+### version — 版本信息
 
-## QA 门禁详解
-
-QA 门禁在每个任务 dispatch 完成后自动运行。支持四种类型：
-
-### 1. CI Check
-
-轮询 GitHub Actions CI 状态。需要 `gh` CLI 和模块配置了 `repo` + `ci_workflow`。
-
-```yaml
-# 在 task plan 中由 LLM 自动分配
-qa_checks:
-  - gate: ci_check
-    params:
-      repo: myorg/my-backend
-      branch: af/task-1
-      workflow: ci.yml
-      timeout_seconds: 600
-      poll_interval: 30
-```
-
-### 2. Command Check
-
-运行任意 shell 命令，exit code 0 = 通过。
-
-```yaml
-qa_gates:
-  custom:
-    - name: backend-pytest
-      command: "pytest --tb=short -q"
-      cwd: "{module_path}"
-      timeout: 600
-```
-
-### 3. Agent Check
-
-派发一个独立的 QA agent 来验证。需要配置一个 `role: qa` 的模块。
-
-```yaml
-modules:
-  - name: qa
-    path: qa/
-    role: qa
-```
-
-QA agent 会收到前序任务的输出作为上下文，输出 `QA_RESULT: PASS` 或 `QA_RESULT: FAIL` + `FAILURE_REASON: ...`。
-
-### 4. 自定义 YAML 门禁
-
-在 `orchestrator.yaml` 中定义，无需写 Python：
-
-```yaml
-qa_gates:
-  custom:
-    - name: type-check
-      command: "npx tsc --noEmit"
-      cwd: "{module_path}"
-    - name: integration-test
-      command: "pytest tests/integration/ -x"
-      cwd: "{module_path}"
-```
-
-### 失败重试
-
-QA 失败后，编排器会：
-1. 将失败信息追加到原始 prompt
-2. 附加可操作性指令（"实际运行脚本"、"确认输出文件已生成"等）
-3. 重新派发 agent（最多 `max_retries_per_task` 次）
-
----
-
-## 两种 Dispatch 模式
-
-| 模式 | 函数 | 适用场景 |
-|------|------|----------|
-| **流式** | `dispatch_agent()` | 长任务 — 实时心跳监控，stall 检测，事件回调 |
-| **阻塞** | `dispatch_agent_simple()` | 短任务 — 规划、报告生成，无线程开销 |
-
-**Stall 检测机制：**
-- Agent 每产生一行输出就重置 stall 计时器
-- 首次事件有宽限期：`max(stall_timeout * 2, 600s)`（处理模型启动慢的情况）
-- 后续事件最低保障：`max(stall_timeout, 600s)`（保护长时间运行的 pytest 等工具）
-- 超过 stall 时间 → kill 进程，错误信息包含 stderr 和最后使用的工具名
-- 硬超时 `timeout_seconds` 是最终安全网
-
----
-
-## 目标描述的最佳实践
-
-编排器的效果直接取决于目标描述的质量。
-
-**好的目标：**
 ```bash
-# 具体、可验证
-lindy-orchestrate run "在 backend 模块添加 /api/users CRUD 端点，使用 SQLAlchemy ORM，包含 pytest 测试"
+lindy-orchestrate version          # 文本格式
+lindy-orchestrate version --json   # JSON 格式
+lindy-orchestrate --version        # 全局选项
+lindy-orchestrate -V               # 短选项
+```
 
-# 明确模块范围
+---
+
+## Provider 系统
+
+v0.8.0 引入了 provider 抽象层，支持多种 Agent CLI 后端。
+
+| Provider | 值 | CLI 工具 | 说明 |
+|----------|----|----------|------|
+| Claude CLI | `claude_cli` | `claude` | 默认 provider |
+| Codex CLI | `codex_cli` | `codex` | OpenAI Codex CLI |
+
+配置方式：
+
+```yaml
+dispatcher:
+  provider: claude_cli  # 或 codex_cli
+```
+
+```bash
+lindy-orchestrate run "Add tests" --provider codex_cli  # CLI 参数覆盖
+```
+
+两种 provider 共享相同的 dispatch 抽象：流式/阻塞 dispatch、两阶段 stall 升级、输出截断保护。
+
+| 特性 | claude_cli | codex_cli |
+|------|-----------|-----------|
+| 流式命令 | `claude -p <prompt> --output-format stream-json --verbose` | `codex --prompt <prompt> --output-format stream-json` |
+| 阻塞命令 | `claude -p <prompt> --output-format json` | `codex --prompt <prompt> --output-format json` |
+| 权限参数 | `--permission-mode bypassPermissions` | `--approval-mode full-auto` |
+
+---
+
+## 目标描述最佳实践
+
+编排器效果直接取决于目标描述的质量。
+
+```bash
+# 好：具体、可验证、明确模块范围
+lindy-orchestrate run "在 backend 模块添加 /api/users CRUD 端点，使用 SQLAlchemy ORM，包含 pytest 测试"
 lindy-orchestrate run "dashboard 模块：用 Recharts 添加每日 PnL 折线图，数据从 /api/portfolio 获取"
 
-# 有约束条件
-lindy-orchestrate run "重构 data 模块的数据获取逻辑，改用 async/await，保持 API 接口不变"
-```
-
-**差的目标：**
-```bash
-# 太模糊
+# 差：太模糊、太大、缺少上下文
 lindy-orchestrate run "改进系统"
-
-# 太大
 lindy-orchestrate run "搭建完整的交易系统"
-
-# 没有上下文
-lindy-orchestrate run "修 bug"
 ```
 
-**经验法则：** 如果你无法在 3 句话内描述验收标准，这个目标需要拆分。
+**经验法则：** 如果无法在 3 句话内描述验收标准，目标需要拆分。
 
 ---
 
@@ -419,10 +400,14 @@ lindy-orchestrate run "修 bug"
 my-app/
 ├── orchestrator.yaml
 ├── CLAUDE.md
-├── STATUS.md              # 根目录的 STATUS.md
+├── ARCHITECTURE.md
+├── STATUS.md
 ├── .orchestrator/
-│   ├── logs/
-│   └── sessions/
+│   ├── logs/actions.jsonl
+│   ├── sessions/
+│   ├── mailbox/
+│   ├── plans/
+│   └── reports/
 ├── pyproject.toml
 ├── src/
 └── tests/
@@ -433,13 +418,21 @@ my-app/
 ```
 my-platform/
 ├── orchestrator.yaml
-├── CLAUDE.md              # 项目级
-├── CONTRACTS.md           # 跨模块契约（耦合度 ≥ 2 才生成）
+├── CLAUDE.md
+├── ARCHITECTURE.md
+├── CONTRACTS.md
+├── docs/agents/
+│   ├── protocol.md
+│   ├── conventions.md
+│   └── boundaries.md
 ├── .orchestrator/
-│   ├── logs/
-│   └── sessions/
+│   ├── logs/actions.jsonl
+│   ├── sessions/
+│   ├── mailbox/{module}.jsonl
+│   ├── plans/latest.json
+│   └── reports/{session_id}_summary.md
 ├── backend/
-│   ├── CLAUDE.md          # 模块级
+│   ├── CLAUDE.md
 │   ├── STATUS.md
 │   └── ...
 ├── frontend/
@@ -451,47 +444,3 @@ my-platform/
     ├── STATUS.md
     └── ...
 ```
-
----
-
-## 常见问题
-
-### Claude CLI 未找到
-
-```
-Error: Claude CLI not found in PATH.
-```
-
-安装 Claude Code CLI：https://docs.anthropic.com/en/docs/claude-code
-
-### 没检测到模块
-
-```
-No modules detected.
-```
-
-你的项目根目录下没有含 marker 文件的子目录。两种解决方案：
-- `lindy-orchestrate init --modules "myapp"` 手动指定
-- 如果根目录本身就是项目（有 `pyproject.toml` 等），`onboard` 会自动将根目录识别为单模块
-
-### STATUS.md 解析错误
-
-解析器是容错的，不会崩溃。但如果表格格式不对（缺列、多列），字段可能为空。用 `validate` 检查：
-
-```bash
-lindy-orchestrate validate
-```
-
-### Agent 超时/停滞
-
-调整 `orchestrator.yaml`：
-
-```yaml
-dispatcher:
-  timeout_seconds: 3600       # 延长硬超时到 1 小时
-  stall_timeout_seconds: 900  # 延长 stall 检测到 15 分钟
-```
-
-### 想跳过 QA 快速迭代
-
-去掉 `qa_gates.custom` 配置项即可。CI check 和 agent check 只在 LLM 规划时自动分配，不配置 repo 就不会触发。
