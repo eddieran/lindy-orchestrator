@@ -23,8 +23,9 @@
 
 ### L-03 — `ExecutionProgress` dataclass defined but never used
 
-- **File:** `src/lindy_orchestrator/scheduler.py:27-44`
-- Presumably a scaffold for future progress tracking. Never instantiated.
+- **File:** `src/lindy_orchestrator/scheduler_helpers.py:11-32`
+- Moved from `scheduler.py` to `scheduler_helpers.py` to bring `scheduler.py` under 500 lines.
+  Presumably a scaffold for future progress tracking. Never instantiated.
 - **Fix:** Delete, or integrate into `execute_plan`.
 
 ### L-04 — `Dashboard.update_heartbeat()` never called from production code
@@ -84,13 +85,13 @@
 
 ### L-12 — Checkpoint failure silently swallowed
 
-- **File:** `src/lindy_orchestrator/scheduler.py:154-155`
+- **File:** `src/lindy_orchestrator/scheduler.py:132-133`
 - `except Exception: pass` after checkpoint save. May lose progress state silently.
 - **Fix:** Log at WARNING level.
 
 ### L-13 — Mailbox injection failure silently swallowed
 
-- **File:** `src/lindy_orchestrator/scheduler.py:278-279`
+- **File:** `src/lindy_orchestrator/scheduler.py:256-257`
 - `except Exception: pass` — no logging, no indication of failure.
 - **Fix:** Log at WARNING level.
 
@@ -256,7 +257,7 @@
 | `reporter.py` | MEDIUM (M-20) | Output formatting untested |
 | `providers/claude_cli.py` | LOW | Thin subprocess wrapper |
 | `providers/base.py` | LOW | Abstract base class |
-| `scheduler_helpers.py` | LOW | Small helper functions |
+| `scheduler_helpers.py` | LOW | Small helper functions + unused `ExecutionProgress` |
 | `status/writer.py` | N/A | May be dead code (M-12) |
 | `status/templates.py` | LOW | Template strings only |
 
@@ -268,9 +269,9 @@ All `except Exception` sites in `src/lindy_orchestrator/`:
 
 | File | Line | Pattern | Logged? | Risk |
 |------|------|---------|---------|------|
-| `scheduler.py` | 134 | `except Exception as e` | No (progress callback) | M |
-| `scheduler.py` | 154 | `except Exception: pass` | No | L (L-12) |
-| `scheduler.py` | 278 | `except Exception: pass` | No | L (L-13) |
+| `scheduler.py` | 112 | `except Exception as e` | No (progress callback) | M |
+| `scheduler.py` | 132 | `except Exception: pass` | No | L (L-12) |
+| `scheduler.py` | 256 | `except Exception: pass` | No | L (L-13) |
 | `dispatcher.py` | 352 | `except Exception: pass` | No | M (M-02) |
 | `dispatcher.py` | 355 | `except Exception as e` | No | M (M-03) |
 | `dispatcher.py` | 360 | `except Exception: pass` | No | M |

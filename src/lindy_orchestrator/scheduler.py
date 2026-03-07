@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import time
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -21,27 +20,6 @@ from .models import QACheck, TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import format_qa_feedback
-
-
-@dataclass
-class ExecutionProgress:
-    """Tracks overall execution progress."""
-
-    total_tasks: int = 0
-    completed: int = 0
-    failed: int = 0
-    skipped: int = 0
-    in_progress: int = 0
-    total_dispatches: int = 0
-    start_time: float = field(default_factory=time.monotonic)
-
-    @property
-    def pending(self) -> int:
-        return self.total_tasks - self.completed - self.failed - self.skipped - self.in_progress
-
-    @property
-    def elapsed_seconds(self) -> float:
-        return time.monotonic() - self.start_time if self.start_time else 0.0
 
 
 def execute_plan(

@@ -94,7 +94,7 @@
 
 ### H-08 — Scheduler execution engine untested
 
-- **File:** `src/lindy_orchestrator/scheduler.py` | **Lines:** 27-503 | **Category:** Test coverage
+- **File:** `src/lindy_orchestrator/scheduler.py` | **Lines:** 25-481 | **Category:** Test coverage
 - **Status:** Confirmed
 - `execute_plan` and `_execute_single_task` — the most critical execution path — have no unit tests. Auto-injection, retry loop, checkpoint, and dependency-failure skip are all unverified.
 - **Fix:** Add `tests/test_scheduler_integration.py` with mocked provider.
@@ -108,7 +108,7 @@
 
 ### H-10 — `_execute_single_task` is 334 lines
 
-- **File:** `src/lindy_orchestrator/scheduler.py` | **Lines:** 170-503 | **Category:** Long function
+- **File:** `src/lindy_orchestrator/scheduler.py` | **Lines:** 148-481 | **Category:** Long function
 - **Status:** Confirmed
 - Handles QA gate injection, branch naming, mailbox injection, heartbeat, dispatch, delivery check, QA iteration, and retry — all inline.
 - **Fix:** Extract `_inject_qa_gates`, `_inject_mailbox_messages`, `_run_qa_gates`, `_handle_retry`.
@@ -129,7 +129,7 @@
 
 ### H-13 — `execute_plan` is 121 lines
 
-- **File:** `src/lindy_orchestrator/scheduler.py` | **Lines:** 47-167 | **Category:** Long function
+- **File:** `src/lindy_orchestrator/scheduler.py` | **Lines:** 25-145 | **Category:** Long function
 - **Status:** Confirmed
 - Plan iteration, session management, hook emission, parallel dispatch, and checkpointing in one body.
 - **Fix:** Extract `_start_session`, `_end_session`, parallel dispatch loop.
@@ -192,7 +192,7 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 |----|------|-------|----------|-------------|
 | L-01 | `qa/feedback.py` | 160 | Deprecated | `callable` used as type annotation instead of `Callable`. |
 | L-02 | `config.py` | 131 | Deprecated | Pydantic v2 private attribute without `PrivateAttr`. |
-| L-03 | `scheduler.py` | 27-44 | Dead code (candidate) | `ExecutionProgress` dataclass defined, never used. |
+| L-03 | `scheduler_helpers.py` | 11-32 | Dead code (candidate) | `ExecutionProgress` dataclass never used; moved from `scheduler.py` to reduce file size. |
 | L-04 | `dashboard.py` | 83-88 | Dead code (candidate) | `update_heartbeat()` never called from production. |
 | L-05 | `discovery/generator.py` | 171-175 | Dead code | `_detect_module_ci()` ignores its `mod` parameter, always returns `"ci.yml"`. |
 | L-06 | `gc.py` | 274-282 | Dead code | `referenced` set built but never used in `_find_orphan_plans`. |
@@ -201,8 +201,8 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 | L-09 | `qa/structural_check.py` + `qa/layer_check.py` | 267-277, 272-282 | Duplication | `_format_violations()` nearly identical in two files. |
 | L-10 | `cli_helpers.py` + `cli.py` | 54-65, 54-58 | Duplication | Triple-indirection wrappers for `plan_to_dict`/`plan_from_dict`. |
 | L-11 | `cli.py`, `cli_ext.py`, `cli_init.py`, `cli_scaffold.py` | various | Unused import | `from typing import Optional` redundant with `__future__` annotations. |
-| L-12 | `scheduler.py` | 154-155 | Exception | Checkpoint failure silently swallowed (`except Exception: pass`). |
-| L-13 | `scheduler.py` | 278-279 | Exception | Mailbox injection failure silently swallowed. |
+| L-12 | `scheduler.py` | 132-133 | Exception | Checkpoint failure silently swallowed (`except Exception: pass`). |
+| L-13 | `scheduler.py` | 256-257 | Exception | Mailbox injection failure silently swallowed. |
 | L-14 | `session.py` | 83-84 | Exception | `list_sessions` silently skips unreadable files. |
 | L-15 | `scheduler_helpers.py` | 67 | Logging | Delivery check errors return message but not logged. |
 | L-16 | `cli.py` | 27 | Logging | `_version_callback` uses `print()` instead of `console.print()`. |
