@@ -44,12 +44,7 @@ class TestUpdateMetaTimestamp:
         assert "| overall_health | GREEN |" in text
 
     def test_only_replaces_first_occurrence(self, tmp_path):
-        content = (
-            "## Meta\n"
-            "| last_updated | 2025-01-01 |\n"
-            "## Notes\n"
-            "| last_updated | keep_this |\n"
-        )
+        content = "## Meta\n| last_updated | 2025-01-01 |\n## Notes\n| last_updated | keep_this |\n"
         path = self._make_status(tmp_path, content)
         update_meta_timestamp(path)
 

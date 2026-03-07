@@ -25,9 +25,7 @@ class TestCommandCheckGate:
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
     def test_successful_command(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="all tests passed", stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="all tests passed", stderr="")
         gate = CommandCheckGate()
         result = gate.check(params={"command": "pytest"}, project_root=tmp_path)
         assert result.passed
@@ -36,9 +34,7 @@ class TestCommandCheckGate:
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
     def test_failed_command(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(
-            returncode=1, stdout="FAILED", stderr="error details"
-        )
+        mock_run.return_value = MagicMock(returncode=1, stdout="FAILED", stderr="error details")
         gate = CommandCheckGate()
         result = gate.check(params={"command": "pytest"}, project_root=tmp_path)
         assert not result.passed
@@ -49,9 +45,7 @@ class TestCommandCheckGate:
     def test_timeout(self, mock_run, tmp_path):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="sleep", timeout=5)
         gate = CommandCheckGate()
-        result = gate.check(
-            params={"command": "sleep 100", "timeout": 5}, project_root=tmp_path
-        )
+        result = gate.check(params={"command": "sleep 100", "timeout": 5}, project_root=tmp_path)
         assert not result.passed
         assert "timed out" in result.output
         assert result.details.get("timeout") is True
@@ -60,9 +54,7 @@ class TestCommandCheckGate:
     def test_os_error(self, mock_run, tmp_path):
         mock_run.side_effect = OSError("command not found")
         gate = CommandCheckGate()
-        result = gate.check(
-            params={"command": "nonexistent-cmd"}, project_root=tmp_path
-        )
+        result = gate.check(params={"command": "nonexistent-cmd"}, project_root=tmp_path)
         assert not result.passed
         assert "Failed to run command" in result.output
 
@@ -153,9 +145,7 @@ class TestCommandCheckGate:
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
     def test_large_stdout_truncated(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout="x" * 6000, stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout="x" * 6000, stderr="")
         gate = CommandCheckGate()
         result = gate.check(params={"command": "echo hi"}, project_root=tmp_path)
         assert result.passed

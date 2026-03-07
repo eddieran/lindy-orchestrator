@@ -25,11 +25,7 @@ class TestMailboxCorruptedData:
             "in_reply_to": None,
             "task_id": None,
         }
-        inbox.write_text(
-            "not valid json\n"
-            + json.dumps(valid_msg) + "\n"
-            + "{bad json too\n"
-        )
+        inbox.write_text("not valid json\n" + json.dumps(valid_msg) + "\n" + "{bad json too\n")
 
         mb = Mailbox(mb_dir)
         messages = mb.receive("mod")
@@ -81,12 +77,14 @@ class TestMailboxCorruptedData:
         mb_dir = tmp_path / "mailbox"
         mb_dir.mkdir()
         inbox = mb_dir / "mod.jsonl"
-        valid = {"id": "abc", "from_module": "a", "to_module": "mod", "content": "hi",
-                 "status": "pending"}
-        inbox.write_text(
-            "corrupted\n"
-            + json.dumps(valid) + "\n"
-        )
+        valid = {
+            "id": "abc",
+            "from_module": "a",
+            "to_module": "mod",
+            "content": "hi",
+            "status": "pending",
+        }
+        inbox.write_text("corrupted\n" + json.dumps(valid) + "\n")
 
         mb = Mailbox(mb_dir)
         mb.acknowledge("mod", "abc")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 
-
 from lindy_orchestrator.cli_init import (
     _detect_modules,
     _detect_tech,

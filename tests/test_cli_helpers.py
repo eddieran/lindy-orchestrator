@@ -79,9 +79,7 @@ class TestResolveGoal:
 class TestLoadCfg:
     def test_valid_config(self, tmp_path):
         cfg_file = tmp_path / "orchestrator.yaml"
-        cfg_file.write_text(
-            "project:\n  name: test\nmodules:\n  - name: mod1\n    path: mod1/\n"
-        )
+        cfg_file.write_text("project:\n  name: test\nmodules:\n  - name: mod1\n    path: mod1/\n")
         cfg = load_cfg(str(cfg_file))
         assert cfg.project.name == "test"
 
@@ -166,9 +164,7 @@ class TestFinaliseSession:
     def _make_plan(self, statuses):
         tasks = []
         for i, s in enumerate(statuses, 1):
-            tasks.append(
-                TaskItem(id=i, module=f"mod{i}", description=f"Task {i}", status=s)
-            )
+            tasks.append(TaskItem(id=i, module=f"mod{i}", description=f"Task {i}", status=s))
         return TaskPlan(goal="Goal", tasks=tasks)
 
     def test_all_completed(self, tmp_path):

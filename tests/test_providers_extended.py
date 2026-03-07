@@ -47,9 +47,11 @@ class IncompleteProvider:
 
 class TestDispatchProviderProtocol:
     def test_protocol_is_runtime_checkable(self):
-        assert hasattr(DispatchProvider, "__protocol_attrs__") or hasattr(
-            DispatchProvider, "__abstractmethods__"
-        ) or True  # Protocol is marked @runtime_checkable
+        assert (
+            hasattr(DispatchProvider, "__protocol_attrs__")
+            or hasattr(DispatchProvider, "__abstractmethods__")
+            or True
+        )  # Protocol is marked @runtime_checkable
 
     def test_fake_provider_satisfies_protocol(self):
         provider = FakeProvider()

@@ -16,12 +16,7 @@ def _write_config(tmp_path, extra=""):
     """Create a minimal orchestrator.yaml in tmp_path."""
     cfg = tmp_path / "orchestrator.yaml"
     cfg.write_text(
-        "project:\n"
-        "  name: testproject\n"
-        "modules:\n"
-        "  - name: backend\n"
-        "    path: backend/\n"
-        + extra,
+        "project:\n  name: testproject\nmodules:\n  - name: backend\n    path: backend/\n" + extra,
         encoding="utf-8",
     )
     (tmp_path / "backend").mkdir(exist_ok=True)
@@ -66,8 +61,7 @@ class TestValidateCommand:
     def test_validate_missing_module_path(self, tmp_path):
         cfg = tmp_path / "orchestrator.yaml"
         cfg.write_text(
-            "project:\n  name: test\n"
-            "modules:\n  - name: missing_mod\n    path: missing_mod/\n"
+            "project:\n  name: test\nmodules:\n  - name: missing_mod\n    path: missing_mod/\n"
         )
         result = runner.invoke(app, ["validate", "-c", str(cfg)])
         assert result.exit_code != 0

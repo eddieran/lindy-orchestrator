@@ -58,24 +58,18 @@ class TestCustomGateShellInjection:
     def test_rejects_shell_metachar_in_module_path(self):
         """Module paths with shell metacharacters must be rejected."""
         gate = _custom_gate()
-        result = _run_custom_command_gate(
-            gate, {}, _PROJECT_ROOT, "backend; rm -rf /", None
-        )
+        result = _run_custom_command_gate(gate, {}, _PROJECT_ROOT, "backend; rm -rf /", None)
         assert not result.passed
         assert "Unsafe" in result.output or "path_validation_failed" in str(result.details)
 
     def test_rejects_pipe_in_module_path(self):
         gate = _custom_gate()
-        result = _run_custom_command_gate(
-            gate, {}, _PROJECT_ROOT, "x | cat /etc/passwd", None
-        )
+        result = _run_custom_command_gate(gate, {}, _PROJECT_ROOT, "x | cat /etc/passwd", None)
         assert not result.passed
 
     def test_rejects_dollar_subshell_in_module_path(self):
         gate = _custom_gate()
-        result = _run_custom_command_gate(
-            gate, {}, _PROJECT_ROOT, "$(whoami)", None
-        )
+        result = _run_custom_command_gate(gate, {}, _PROJECT_ROOT, "$(whoami)", None)
         assert not result.passed
 
     @patch("lindy_orchestrator.qa.subprocess.run")
@@ -103,9 +97,7 @@ class TestFormatStringInjection:
         gate = _custom_gate(cmd="echo {module_path}")
         # Since we validate the path itself, this would be caught by path validation.
         # But if it somehow passes, str.replace only substitutes exact matches.
-        result = _run_custom_command_gate(
-            gate, {}, _PROJECT_ROOT, "backend"
-        )
+        result = _run_custom_command_gate(gate, {}, _PROJECT_ROOT, "backend")
         # The command should contain the literal path, not class info
         if result.passed:
             cmd_args = mock_run.call_args[0][0]
