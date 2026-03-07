@@ -25,7 +25,7 @@ from .dispatcher import find_claude_cli
 from .hooks import HookRegistry
 from .logger import ActionLogger
 from .models import TaskStatus
-from .reporter import PlanProgress, print_goal_report, print_status_table
+from .reporter import PlanProgress, print_goal_report, print_log_entries, print_status_table
 from .session import SessionManager
 from .status.parser import parse_status_md
 
@@ -248,14 +248,17 @@ def plan(
         console.print(f"[green]Also saved to {output_file}[/]")
 
 
-@app.command()
-def status(
-    config: Optional[str] = typer.Option(None, "-c", "--config"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
-) -> None:
-    """Show all module statuses (no LLM calls)."""
-    cfg = _load_cfg(config)
+def _read_log_lines(cfg, last: int) -> list[str]:
+    """Read the last N log lines from the configured log path."""
+    log_path = cfg.log_path
+    if not log_path.exists():
+        return []
+    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+    return lines[-last:]
 
+
+def _collect_modules_data(cfg) -> list[dict]:
+    """Collect module status data from STATUS.md files."""
     modules_data = []
     for mod in cfg.modules:
         path = cfg.status_path(mod.name)
@@ -284,53 +287,53 @@ def status(
                     "blocker_count": 0,
                 }
             )
-
-    if as_json:
-        console.print_json(json.dumps(modules_data, indent=2))
-    else:
-        print_status_table(modules_data)
+    return modules_data
 
 
 @app.command()
+def status(
+    config: Optional[str] = typer.Option(None, "-c", "--config"),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
+    last: int = typer.Option(10, "-n", "--last", help="Number of recent log entries to show"),
+    logs_only: bool = typer.Option(False, "--logs-only", help="Show only recent log entries"),
+    status_only: bool = typer.Option(False, "--status-only", help="Show only module status table"),
+) -> None:
+    """Show module status overview and recent log entries.
+
+    By default shows both the module health table and recent important logs.
+    Use --status-only or --logs-only to show just one section.
+    """
+    cfg = _load_cfg(config)
+
+    show_status = not logs_only
+    show_logs = not status_only
+
+    if as_json:
+        result: dict = {}
+        if show_status:
+            result["modules"] = _collect_modules_data(cfg)
+        if show_logs:
+            result["logs"] = _read_log_lines(cfg, last)
+        console.print_json(json.dumps(result, indent=2))
+        return
+
+    if show_status:
+        modules_data = _collect_modules_data(cfg)
+        print_status_table(modules_data)
+
+    if show_logs:
+        log_lines = _read_log_lines(cfg, last)
+        print_log_entries(log_lines, console=console)
+
+
+@app.command(hidden=True)
 def logs(
     last: int = typer.Option(20, "-n", "--last", help="Show last N entries"),
     config: Optional[str] = typer.Option(None, "-c", "--config"),
     as_json: bool = typer.Option(False, "--json", help="Output raw JSONL"),
 ) -> None:
-    """Show recent action logs."""
-    cfg = _load_cfg(config)
-    log_path = cfg.log_path
-
-    if not log_path.exists():
-        console.print("[dim]No logs found.[/]")
-        return
-
-    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
-    recent = lines[-last:]
-
-    if as_json:
-        for line in recent:
-            console.print(line)
-        return
-
-    for line in recent:
-        try:
-            entry = json.loads(line)
-            ts = entry.get("timestamp", "")[:19]
-            action = entry.get("action", "?")
-            result = entry.get("result", "?")
-
-            color = {"success": "green", "error": "red", "fail": "red", "pass": "green"}.get(
-                result, "yellow"
-            )
-            console.print(f"  [{color}]{result:>7}[/] {ts} {action}")
-
-            details = entry.get("details", {})
-            if details:
-                for k, v in list(details.items())[:3]:
-                    console.print(f"          {k}: {v}")
-        except json.JSONDecodeError:
-            console.print(f"  [dim]{line[:100]}[/]")
+    """Show recent action logs (alias for 'status --logs-only')."""
+    status(config=config, as_json=as_json, last=last, logs_only=True, status_only=False)
 
 
 @app.command()
