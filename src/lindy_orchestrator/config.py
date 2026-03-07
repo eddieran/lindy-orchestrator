@@ -207,9 +207,63 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
 
     path = Path(config_path).resolve()
     raw = _load_yaml(path)
+    _normalize_qa_gates(raw)
     cfg = OrchestratorConfig.model_validate(raw)
     cfg._config_dir = path.parent
     return cfg
+
+
+_QA_GATES_KNOWN_KEYS = {"ci_check", "structural", "layer_check", "custom"}
+
+
+def _normalize_qa_gates(raw: dict[str, Any]) -> None:
+    """Convert module-scoped qa_gates into unified ``custom`` list.
+
+    Users may write::
+
+        qa_gates:
+          backend:
+            - name: pytest
+              command: "cd backend && pytest"
+          frontend:
+            - name: playwright
+              command: "npx playwright test"
+
+    This normalizes them into::
+
+        qa_gates:
+          custom:
+            - name: pytest
+              command: "cd backend && pytest"
+              modules: ["backend"]
+              cwd: "."
+            - name: playwright
+              command: "npx playwright test"
+              modules: ["frontend"]
+              cwd: "."
+    """
+    qa = raw.get("qa_gates")
+    if not isinstance(qa, dict):
+        return
+
+    custom: list[dict[str, Any]] = list(qa.get("custom", []))
+    for key in list(qa.keys()):
+        if key in _QA_GATES_KNOWN_KEYS:
+            continue
+        gates = qa.pop(key)
+        if not isinstance(gates, list):
+            continue
+        for gate in gates:
+            if not isinstance(gate, dict):
+                continue
+            gate.setdefault("modules", [key])
+            # Module-scoped gates without explicit cwd run from project root
+            # (commands like "cd backend && pytest" expect project root).
+            gate.setdefault("cwd", ".")
+            custom.append(gate)
+
+    if custom:
+        qa["custom"] = custom
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

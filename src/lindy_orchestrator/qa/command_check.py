@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -9,6 +10,9 @@ from typing import Any
 
 from ..models import QAResult
 from . import register
+
+# Shell metacharacters that require sh -c wrapping (&&, ||, |, ;, redirects)
+_SHELL_META_RE = re.compile(r"&&|\|\||[|;<>]")
 
 
 @register("command_check")
@@ -33,11 +37,10 @@ class CommandCheckGate:
         resolved = kwargs.get("module_path")
         if "cwd" in params:
             raw_cwd = params["cwd"]
-        elif resolved:
-            raw_cwd = resolved
-        elif module_name:
-            raw_cwd = module_name
         else:
+            # No cwd specified (e.g. plan-defined gates) — default to project root.
+            # Auto-injected gates always have cwd in params, so this branch only
+            # applies to plan-defined or user-defined qa_checks.
             raw_cwd = "."
         # Resolve {module_path} template if present — use str.replace() not
         # str.format() to prevent attribute access via format specifiers (M-28).
@@ -57,17 +60,22 @@ class CommandCheckGate:
                 output="No command specified",
             )
 
-        # SECURITY: always use shell=False. Parse string commands with shlex.
+        # SECURITY: use shell=False.  For compound commands containing shell
+        # operators (&&, ||, |, ;, redirects), wrap via ["sh", "-c", command]
+        # so the shell interprets operators while subprocess itself stays safe.
         if isinstance(command, str):
-            try:
-                cmd_args = shlex.split(command)
-            except ValueError as exc:
-                return QAResult(
-                    gate="command_check",
-                    passed=False,
-                    output=f"Failed to parse command: {exc}",
-                    details={"command": command, "error": str(exc)},
-                )
+            if _SHELL_META_RE.search(command):
+                cmd_args = ["sh", "-c", command]
+            else:
+                try:
+                    cmd_args = shlex.split(command)
+                except ValueError as exc:
+                    return QAResult(
+                        gate="command_check",
+                        passed=False,
+                        output=f"Failed to parse command: {exc}",
+                        details={"command": command, "error": str(exc)},
+                    )
         else:
             cmd_args = command
 

@@ -3,8 +3,9 @@
 from pathlib import Path
 
 import pytest
+import yaml
 
-from lindy_orchestrator.config import OrchestratorConfig, load_config
+from lindy_orchestrator.config import OrchestratorConfig, load_config, _normalize_qa_gates
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -76,3 +77,104 @@ def test_star_module_path():
     """module_path('*') also returns project root."""
     cfg = load_config(FIXTURES / "sample_config.yaml")
     assert cfg.module_path("*") == cfg.root.resolve()
+
+
+# ---------------------------------------------------------------------------
+# Module-scoped qa_gates normalization
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeQaGates:
+    def test_module_scoped_gates_become_custom(self):
+        """qa_gates.backend: [...] is converted to custom entries."""
+        raw = {
+            "qa_gates": {
+                "backend": [
+                    {"name": "pytest", "command": "cd backend && pytest"},
+                ],
+                "frontend": [
+                    {"name": "playwright", "command": "npx playwright test"},
+                ],
+            }
+        }
+        _normalize_qa_gates(raw)
+        custom = raw["qa_gates"]["custom"]
+        assert len(custom) == 2
+        # Module filters are set
+        assert custom[0]["modules"] == ["backend"]
+        assert custom[1]["modules"] == ["frontend"]
+        # cwd defaults to project root for module-scoped gates
+        assert custom[0]["cwd"] == "."
+        assert custom[1]["cwd"] == "."
+        # Original module keys are removed
+        assert "backend" not in raw["qa_gates"]
+        assert "frontend" not in raw["qa_gates"]
+
+    def test_existing_custom_preserved(self):
+        """Existing custom gates are preserved alongside module-scoped ones."""
+        raw = {
+            "qa_gates": {
+                "custom": [
+                    {"name": "global-lint", "command": "ruff check ."},
+                ],
+                "backend": [
+                    {"name": "pytest", "command": "pytest"},
+                ],
+            }
+        }
+        _normalize_qa_gates(raw)
+        custom = raw["qa_gates"]["custom"]
+        assert len(custom) == 2
+        assert custom[0]["name"] == "global-lint"
+        assert custom[1]["name"] == "pytest"
+
+    def test_known_keys_not_normalized(self):
+        """ci_check, structural, layer_check are not treated as modules."""
+        raw = {
+            "qa_gates": {
+                "structural": {"max_file_lines": 300},
+                "layer_check": {"enabled": True},
+            }
+        }
+        _normalize_qa_gates(raw)
+        assert "custom" not in raw["qa_gates"]
+        assert raw["qa_gates"]["structural"]["max_file_lines"] == 300
+
+    def test_no_qa_gates_is_noop(self):
+        raw = {"project": {"name": "test"}}
+        _normalize_qa_gates(raw)
+        assert "qa_gates" not in raw
+
+    def test_module_scoped_gate_with_explicit_cwd(self):
+        """Explicit cwd in a module-scoped gate is preserved."""
+        raw = {
+            "qa_gates": {
+                "backend": [
+                    {"name": "test", "command": "pytest", "cwd": "backend/"},
+                ],
+            }
+        }
+        _normalize_qa_gates(raw)
+        assert raw["qa_gates"]["custom"][0]["cwd"] == "backend/"
+
+    def test_load_module_scoped_config(self, tmp_path):
+        """Full round-trip: module-scoped YAML → loaded config."""
+        config_data = {
+            "project": {"name": "test"},
+            "modules": [{"name": "backend", "path": "backend/"}],
+            "qa_gates": {
+                "backend": [
+                    {
+                        "name": "pytest",
+                        "command": "cd backend && python -m pytest tests/",
+                    }
+                ],
+            },
+        }
+        config_file = tmp_path / "orchestrator.yaml"
+        config_file.write_text(yaml.dump(config_data))
+        cfg = load_config(config_file)
+        assert len(cfg.qa_gates.custom) == 1
+        assert cfg.qa_gates.custom[0].name == "pytest"
+        assert cfg.qa_gates.custom[0].modules == ["backend"]
+        assert cfg.qa_gates.custom[0].cwd == "."
