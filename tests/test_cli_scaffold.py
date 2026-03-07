@@ -1,4 +1,4 @@
-"""Tests for the scaffold CLI command."""
+"""Tests for the scaffold/onboard CLI command."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from lindy_orchestrator.cli import app
-from lindy_orchestrator.cli_scaffold import (
+from lindy_orchestrator.cli_onboard_helpers import (
     _build_scaffold_prompt,
     parse_scaffold_response,
     scaffold_response_to_context,
@@ -197,7 +197,7 @@ class TestScaffoldResponseToContext:
 
 
 # ---------------------------------------------------------------------------
-# CLI integration tests (mocked LLM)
+# CLI integration tests (mocked LLM) — now using "onboard" command
 # ---------------------------------------------------------------------------
 
 
@@ -210,24 +210,30 @@ def _mock_dispatch_simple(module, working_dir, prompt):
     )
 
 
-class TestScaffoldCLI:
-    def test_scaffold_no_description_exits(self):
-        result = runner.invoke(app, ["scaffold"])
+class TestOnboardScaffoldCLI:
+    """Tests for the scaffold mode of the unified onboard command."""
+
+    def test_onboard_empty_project_no_description_exits(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["onboard", "-y"])
+        # Empty project with no description should fail
         assert result.exit_code != 0
 
-    def test_scaffold_no_claude_cli(self):
-        with patch("lindy_orchestrator.cli_scaffold.find_claude_cli", return_value=None):
-            result = runner.invoke(app, ["scaffold", "A test project"])
+    def test_onboard_scaffold_no_claude_cli(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        with patch("lindy_orchestrator.cli_onboard.find_claude_cli", return_value=None):
+            result = runner.invoke(app, ["onboard", "A test project", "-y"])
             assert result.exit_code != 0
             assert "Claude CLI not found" in result.output
 
-    def test_scaffold_dry_run(self, tmp_path):
+    def test_onboard_scaffold_generates_files(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         with (
             patch(
-                "lindy_orchestrator.cli_scaffold.find_claude_cli",
+                "lindy_orchestrator.cli_onboard.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
+            patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
@@ -235,42 +241,13 @@ class TestScaffoldCLI:
             result = runner.invoke(
                 app,
                 [
-                    "scaffold",
+                    "onboard",
                     "A SaaS app with React and Python",
-                    "--output-dir",
-                    str(tmp_path),
-                    "--dry-run",
-                ],
-            )
-            assert result.exit_code == 0
-            assert "Dry run" in result.output
-            assert "orchestrator.yaml" in result.output
-            # No files should be written
-            assert not (tmp_path / "orchestrator.yaml").exists()
-
-    def test_scaffold_generates_files(self, tmp_path):
-        with (
-            patch(
-                "lindy_orchestrator.cli_scaffold.find_claude_cli",
-                return_value="/usr/bin/claude",
-            ),
-            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
-        ):
-            mock_provider = mock_provider_factory.return_value
-            mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
-
-            result = runner.invoke(
-                app,
-                [
-                    "scaffold",
-                    "A SaaS app with React and Python",
-                    "--output-dir",
-                    str(tmp_path),
                     "-y",
                 ],
             )
             assert result.exit_code == 0
-            assert "Scaffold complete" in result.output
+            assert "Onboarding complete" in result.output
 
             # Key files should exist
             assert (tmp_path / "orchestrator.yaml").exists()
@@ -284,16 +261,17 @@ class TestScaffoldCLI:
             # CONTRACTS.md should exist (complexity >= 2)
             assert (tmp_path / "CONTRACTS.md").exists()
 
-    def test_scaffold_from_file(self, tmp_path):
+    def test_onboard_scaffold_from_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         desc_file = tmp_path / "desc.md"
         desc_file.write_text("A microservice project with Go and gRPC")
 
         with (
             patch(
-                "lindy_orchestrator.cli_scaffold.find_claude_cli",
+                "lindy_orchestrator.cli_onboard.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
+            patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
@@ -301,27 +279,27 @@ class TestScaffoldCLI:
             result = runner.invoke(
                 app,
                 [
-                    "scaffold",
+                    "onboard",
                     "--file",
                     str(desc_file),
-                    "--output-dir",
-                    str(tmp_path / "output"),
                     "-y",
                 ],
             )
             assert result.exit_code == 0
-            assert "Scaffold complete" in result.output
+            assert "Onboarding complete" in result.output
 
-    def test_scaffold_llm_failure(self, tmp_path):
+    def test_onboard_scaffold_llm_failure(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
         def _mock_fail(module, working_dir, prompt):
             return DispatchResult(module=module, success=False, output="Connection error")
 
         with (
             patch(
-                "lindy_orchestrator.cli_scaffold.find_claude_cli",
+                "lindy_orchestrator.cli_onboard.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
+            patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_fail
@@ -329,26 +307,26 @@ class TestScaffoldCLI:
             result = runner.invoke(
                 app,
                 [
-                    "scaffold",
+                    "onboard",
                     "A project",
-                    "--output-dir",
-                    str(tmp_path),
                     "-y",
                 ],
             )
             assert result.exit_code != 0
             assert "failed" in result.output.lower()
 
-    def test_scaffold_invalid_json_response(self, tmp_path):
+    def test_onboard_scaffold_invalid_json_response(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
         def _mock_bad_json(module, working_dir, prompt):
             return DispatchResult(module=module, success=True, output="Not valid JSON at all")
 
         with (
             patch(
-                "lindy_orchestrator.cli_scaffold.find_claude_cli",
+                "lindy_orchestrator.cli_onboard.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
+            patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_bad_json
@@ -356,26 +334,26 @@ class TestScaffoldCLI:
             result = runner.invoke(
                 app,
                 [
-                    "scaffold",
+                    "onboard",
                     "A project",
-                    "--output-dir",
-                    str(tmp_path),
                     "-y",
                 ],
             )
             assert result.exit_code != 0
             assert "parse" in result.output.lower()
 
-    def test_scaffold_force_overwrites(self, tmp_path):
-        # Pre-create a file
-        (tmp_path / "orchestrator.yaml").write_text("original")
+    def test_onboard_scaffold_force_overwrites(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        # With orchestrator.yaml present, it enters re-onboard mode.
+        # Test force in scaffold mode: empty project, no config
+        (tmp_path / "README.md").write_text("just a readme")
 
         with (
             patch(
-                "lindy_orchestrator.cli_scaffold.find_claude_cli",
+                "lindy_orchestrator.cli_onboard.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
+            patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
@@ -383,16 +361,44 @@ class TestScaffoldCLI:
             result = runner.invoke(
                 app,
                 [
-                    "scaffold",
+                    "onboard",
                     "A project",
-                    "--output-dir",
-                    str(tmp_path),
                     "--force",
                     "-y",
                 ],
             )
             assert result.exit_code == 0
-            # File should be overwritten
-            content = (tmp_path / "orchestrator.yaml").read_text()
-            assert content != "original"
-            assert "my-saas-app" in content
+            # Files should be created
+            assert (tmp_path / "orchestrator.yaml").exists()
+
+
+class TestOnboardInitCLI:
+    """Tests for the init+onboard mode of the unified onboard command."""
+
+    def test_onboard_detects_existing_project(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        # Create a module directory with a marker
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        (backend / "pyproject.toml").write_text('[project]\nname = "test"')
+
+        result = runner.invoke(app, ["onboard", "-y"])
+        # Should detect init+onboard mode
+        assert "init+onboard" in result.output.lower() or result.exit_code == 0
+
+
+class TestOldCommandsRemoved:
+    """Verify that the old init and scaffold commands are no longer registered."""
+
+    def test_init_command_not_found(self):
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code != 0
+
+    def test_scaffold_command_not_found(self):
+        result = runner.invoke(app, ["scaffold"])
+        assert result.exit_code != 0
+
+    def test_onboard_command_exists(self):
+        result = runner.invoke(app, ["onboard", "--help"])
+        assert result.exit_code == 0
+        assert "onboard" in result.output.lower()

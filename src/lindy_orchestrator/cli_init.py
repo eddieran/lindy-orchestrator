@@ -104,6 +104,7 @@ def register_init_commands(app: typer.Typer, console: Console) -> None:
         orch_dir = cwd / ".orchestrator"
         (orch_dir / "logs").mkdir(parents=True, exist_ok=True)
         (orch_dir / "sessions").mkdir(parents=True, exist_ok=True)
+        (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
         console.print("[green]Created .orchestrator/ directory[/]")
 
         # Update .gitignore
@@ -267,6 +268,9 @@ def _generate_config(project_name: str, modules: list[tuple[str, str]]) -> str:
             "  dry_run: false",
             "  max_retries_per_task: 2",
             "  max_parallel: 3",
+            "",
+            "mailbox:",
+            "  enabled: true",
         ]
     )
     return "\n".join(lines) + "\n"

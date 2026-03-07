@@ -1,8 +1,8 @@
 """Live DAG dashboard for task execution.
 
-Renders a Rich Live panel showing the task DAG, a summary bar with
-task counts, elapsed time, and heartbeat info for the active task.
-Falls back to text-based progress when not on a TTY.
+Renders a Rich Live panel showing the task DAG as a compact ASCII tree
+with real-time status icons and optional annotation bubbles.  Falls back
+to text-based progress when not on a TTY.
 """
 
 from __future__ import annotations
@@ -15,16 +15,19 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-from .dag import render_dag
+from .dag import STATUS_ICONS, render_dag
 from .hooks import Event, EventType, HookRegistry
-from .models import TaskPlan
+from .models import TaskPlan, TaskStatus
 
 
 class Dashboard:
     """Live-updating DAG dashboard driven by hook events.
 
-    Subscribes to HookRegistry events and re-renders the DAG panel
-    on every state change. Falls back to plain text on non-TTY.
+    Subscribes to HookRegistry events and re-renders the DAG tree panel
+    on every state change.  Falls back to plain text on non-TTY.
+
+    When *verbose* is True, annotation bubbles show latest tool use or
+    status snippets next to active/recently-completed tasks.
     """
 
     def __init__(
@@ -43,10 +46,8 @@ class Dashboard:
         self._start_time = time.monotonic()
         self._lock = threading.Lock()
 
-        # Heartbeat tracking for the currently active task
-        self._active_task_id: int | None = None
-        self._hb_event_count = 0
-        self._hb_last_tool = ""
+        # Per-task annotation strings (shown when verbose)
+        self._annotations: dict[int, str] = {}
 
     # -- public API -----------------------------------------------------------
 
@@ -58,6 +59,7 @@ class Dashboard:
         self._hooks.on(EventType.TASK_FAILED, self._on_task_failed)
         self._hooks.on(EventType.TASK_RETRYING, self._on_task_retrying)
         self._hooks.on(EventType.TASK_SKIPPED, self._on_task_skipped)
+        self._hooks.on(EventType.TASK_HEARTBEAT, self._on_heartbeat)
         self._hooks.on(EventType.QA_PASSED, self._on_qa_event)
         self._hooks.on(EventType.QA_FAILED, self._on_qa_event)
         self._hooks.on(EventType.CHECKPOINT_SAVED, self._on_generic)
@@ -80,41 +82,62 @@ class Dashboard:
         # Print final static DAG
         self._console.print(self._build_panel(final=True))
 
-    def update_heartbeat(self, event_count: int, last_tool: str) -> None:
-        """Update heartbeat info from the dispatching task."""
+    def update_annotation(self, task_id: int, message: str) -> None:
+        """Set the annotation bubble for *task_id*."""
         with self._lock:
-            self._hb_event_count = event_count
-            self._hb_last_tool = last_tool
+            self._annotations[task_id] = message
         self._refresh()
 
     # -- event handlers -------------------------------------------------------
 
     def _on_task_started(self, event: Event) -> None:
         with self._lock:
-            self._active_task_id = event.task_id
-            self._hb_event_count = 0
-            self._hb_last_tool = ""
+            if event.task_id is not None:
+                self._annotations[event.task_id] = "starting\u2026"
         self._refresh()
 
     def _on_task_completed(self, event: Event) -> None:
         with self._lock:
-            if self._active_task_id == event.task_id:
-                self._active_task_id = None
+            if event.task_id is not None:
+                self._annotations[event.task_id] = "done"
         self._refresh()
 
     def _on_task_failed(self, event: Event) -> None:
         with self._lock:
-            if self._active_task_id == event.task_id:
-                self._active_task_id = None
+            if event.task_id is not None:
+                reason = event.data.get("reason", "failed")
+                self._annotations[event.task_id] = reason
         self._refresh()
 
     def _on_task_retrying(self, event: Event) -> None:
+        with self._lock:
+            if event.task_id is not None:
+                retry = event.data.get("retry", "?")
+                self._annotations[event.task_id] = f"retry {retry}"
         self._refresh()
 
     def _on_task_skipped(self, event: Event) -> None:
+        with self._lock:
+            if event.task_id is not None:
+                self._annotations[event.task_id] = "skipped"
+        self._refresh()
+
+    def _on_heartbeat(self, event: Event) -> None:
+        with self._lock:
+            if event.task_id is not None:
+                tool = event.data.get("tool", "")
+                if tool:
+                    self._annotations[event.task_id] = f"tool: {tool}"
         self._refresh()
 
     def _on_qa_event(self, event: Event) -> None:
+        with self._lock:
+            if event.task_id is not None:
+                gate = event.data.get("gate", "qa")
+                passed = event.type == EventType.QA_PASSED
+                self._annotations[event.task_id] = (
+                    f"QA {gate}: pass" if passed else f"QA {gate}: fail"
+                )
         self._refresh()
 
     def _on_generic(self, event: Event) -> None:
@@ -128,13 +151,17 @@ class Dashboard:
 
     def _build_panel(self, final: bool = False) -> Panel:
         """Build the full dashboard panel."""
-        dag_text = render_dag(self._plan)
+        with self._lock:
+            annotations = dict(self._annotations)
+
+        dag_text = render_dag(
+            self._plan,
+            annotations=annotations if self._verbose else None,
+            verbose=self._verbose,
+        )
         summary = self._build_summary()
-        heartbeat = self._build_heartbeat()
 
         parts = [dag_text, Text(""), summary]
-        if heartbeat.plain.strip():
-            parts.append(heartbeat)
 
         title = "Execution Complete" if final else "Executing"
         border = "green" if final and not self._plan.has_failures() else "cyan"
@@ -155,30 +182,22 @@ class Dashboard:
 
         text = Text()
         text.append("  ")
-        text.append(f"{counts['completed']}", style="green")
-        text.append(" completed  ", style="dim")
-        text.append(f"{counts['failed']}", style="red")
-        text.append(" failed  ", style="dim")
-        text.append(f"{counts['in_progress']}", style="bold blue")
-        text.append(" running  ", style="dim")
-        text.append(f"{counts['pending']}", style="dim")
-        text.append(" pending  ", style="dim")
+        text.append(f"{STATUS_ICONS[TaskStatus.COMPLETED]}", style="green")
+        text.append(f" {counts['completed']} completed", style="green")
+        text.append("  ", style="dim")
+        text.append(f"{STATUS_ICONS[TaskStatus.FAILED]}", style="red")
+        text.append(f" {counts['failed']} failed", style="red")
+        text.append("  ", style="dim")
+        text.append(f"{STATUS_ICONS[TaskStatus.IN_PROGRESS]}", style="bold blue")
+        text.append(f" {counts['in_progress']} running", style="bold blue")
+        text.append("  ", style="dim")
+        text.append(f"{STATUS_ICONS[TaskStatus.PENDING]}", style="dim")
+        text.append(f" {counts['pending']} pending", style="dim")
+        if counts["skipped"]:
+            text.append("  ", style="dim")
+            text.append(f"{STATUS_ICONS[TaskStatus.SKIPPED]}", style="dim")
+            text.append(f" {counts['skipped']} skipped", style="dim")
         text.append(f"  {mins}:{secs:02d}", style="bold cyan")
-        return text
-
-    def _build_heartbeat(self) -> Text:
-        """Build heartbeat info for the active task."""
-        text = Text()
-        with self._lock:
-            task_id = self._active_task_id
-            event_count = self._hb_event_count
-            last_tool = self._hb_last_tool
-
-        if task_id is not None:
-            text.append(f"  Task {task_id}: ", style="dim")
-            text.append(f"{event_count} events", style="dim")
-            if last_tool:
-                text.append(f", last tool: {last_tool}", style="dim")
         return text
 
 

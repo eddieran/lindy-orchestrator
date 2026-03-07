@@ -70,18 +70,6 @@ class TestCommandCheckGate:
         assert str(tmp_path / "subdir") in call_kwargs[1]["cwd"]
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
-    def test_cwd_from_module_name(self, mock_run, tmp_path):
-        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-        gate = CommandCheckGate()
-        gate.check(
-            params={"command": "echo hi"},
-            project_root=tmp_path,
-            module_name="backend",
-        )
-        call_kwargs = mock_run.call_args
-        assert "backend" in call_kwargs[1]["cwd"]
-
-    @patch("lindy_orchestrator.qa.command_check.subprocess.run")
     def test_cwd_module_path_template(self, mock_run, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         gate = CommandCheckGate()
@@ -94,24 +82,27 @@ class TestCommandCheckGate:
         assert "backend" in call_kwargs[1]["cwd"]
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
-    def test_cwd_from_resolved_kwarg(self, mock_run, tmp_path):
+    def test_cwd_from_explicit_params(self, mock_run, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         gate = CommandCheckGate()
         gate.check(
-            params={"command": "echo hi"},
+            params={"command": "echo hi", "cwd": "submodule"},
             project_root=tmp_path,
             module_path=str(tmp_path / "resolved"),
         )
         call_kwargs = mock_run.call_args
-        assert "resolved" in call_kwargs[1]["cwd"]
+        assert "submodule" in call_kwargs[1]["cwd"]
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
-    def test_default_cwd_is_project_root(self, mock_run, tmp_path):
+    def test_no_cwd_defaults_to_project_root(self, mock_run, tmp_path):
+        """Without cwd in params, defaults to project root (not module_path)."""
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         gate = CommandCheckGate()
         gate.check(
             params={"command": "echo hi"},
             project_root=tmp_path,
+            module_name="backend",
+            module_path=str(tmp_path / "backend"),
         )
         call_kwargs = mock_run.call_args
         assert call_kwargs[1]["cwd"] == str(tmp_path / ".")
@@ -172,6 +163,43 @@ class TestCommandCheckGate:
         )
         call_kwargs = mock_run.call_args
         assert call_kwargs[1]["timeout"] == 300
+
+    @patch("lindy_orchestrator.qa.command_check.subprocess.run")
+    def test_compound_command_uses_sh_c(self, mock_run, tmp_path):
+        """Commands with && are wrapped via sh -c, not split with shlex."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        gate = CommandCheckGate()
+        gate.check(
+            params={"command": "cd backend && python -m pytest tests/"},
+            project_root=tmp_path,
+        )
+        call_args = mock_run.call_args[0][0]
+        assert call_args == ["sh", "-c", "cd backend && python -m pytest tests/"]
+        assert mock_run.call_args[1].get("shell") is not True
+
+    @patch("lindy_orchestrator.qa.command_check.subprocess.run")
+    def test_pipe_command_uses_sh_c(self, mock_run, tmp_path):
+        """Commands with | are wrapped via sh -c."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        gate = CommandCheckGate()
+        gate.check(
+            params={"command": "cat output.txt | grep PASS"},
+            project_root=tmp_path,
+        )
+        call_args = mock_run.call_args[0][0]
+        assert call_args == ["sh", "-c", "cat output.txt | grep PASS"]
+
+    @patch("lindy_orchestrator.qa.command_check.subprocess.run")
+    def test_simple_command_uses_shlex(self, mock_run, tmp_path):
+        """Simple commands without shell operators use shlex.split."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        gate = CommandCheckGate()
+        gate.check(
+            params={"command": "python -m pytest tests/ -q"},
+            project_root=tmp_path,
+        )
+        call_args = mock_run.call_args[0][0]
+        assert call_args == ["python", "-m", "pytest", "tests/", "-q"]
 
     def test_gate_name(self):
         gate = CommandCheckGate()

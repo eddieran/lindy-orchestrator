@@ -25,9 +25,8 @@ from .dispatcher import find_claude_cli
 from .hooks import HookRegistry
 from .logger import ActionLogger
 from .models import TaskStatus
-from .reporter import PlanProgress, print_goal_report, print_status_table
+from .reporter import PlanProgress, print_goal_report
 from .session import SessionManager
-from .status.parser import parse_status_md
 
 
 def _version_callback(value: bool) -> None:
@@ -160,12 +159,16 @@ def run(
     console.print("\n[bold cyan][2/3][/] Executing tasks...")
     hooks = HookRegistry()
     dashboard: Dashboard | None = None
-    if verbose and console.is_terminal:
+    if console.is_terminal:
         dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
         dashboard.start()
-    plan = execute_plan(plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks)
-    if dashboard is not None:
+        # Dashboard takes over display; suppress on_progress text output
+        plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
         dashboard.stop()
+    else:
+        plan = execute_plan(
+            plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+        )
 
     # Step 4: Report
     console.print("\n[bold cyan][3/3][/] Generating report...")
@@ -246,91 +249,6 @@ def plan(
         data = _plan_to_dict(plan_result)
         Path(output_file).write_text(json.dumps(data, indent=2, default=str))
         console.print(f"[green]Also saved to {output_file}[/]")
-
-
-@app.command()
-def status(
-    config: Optional[str] = typer.Option(None, "-c", "--config"),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON"),
-) -> None:
-    """Show all module statuses (no LLM calls)."""
-    cfg = _load_cfg(config)
-
-    modules_data = []
-    for mod in cfg.modules:
-        path = cfg.status_path(mod.name)
-        if path.exists():
-            s = parse_status_md(path)
-            open_reqs = [r for r in s.requests if r.status.upper() == "OPEN"]
-            modules_data.append(
-                {
-                    "name": mod.name,
-                    "health": s.meta.overall_health,
-                    "last_updated": s.meta.last_updated,
-                    "active_count": len(s.active_work),
-                    "open_requests": len(open_reqs),
-                    "blocker_count": len(s.blockers),
-                    "blockers": s.blockers,
-                }
-            )
-        else:
-            modules_data.append(
-                {
-                    "name": mod.name,
-                    "health": "?",
-                    "last_updated": "N/A",
-                    "active_count": 0,
-                    "open_requests": 0,
-                    "blocker_count": 0,
-                }
-            )
-
-    if as_json:
-        console.print_json(json.dumps(modules_data, indent=2))
-    else:
-        print_status_table(modules_data)
-
-
-@app.command()
-def logs(
-    last: int = typer.Option(20, "-n", "--last", help="Show last N entries"),
-    config: Optional[str] = typer.Option(None, "-c", "--config"),
-    as_json: bool = typer.Option(False, "--json", help="Output raw JSONL"),
-) -> None:
-    """Show recent action logs."""
-    cfg = _load_cfg(config)
-    log_path = cfg.log_path
-
-    if not log_path.exists():
-        console.print("[dim]No logs found.[/]")
-        return
-
-    lines = log_path.read_text(encoding="utf-8").strip().splitlines()
-    recent = lines[-last:]
-
-    if as_json:
-        for line in recent:
-            console.print(line)
-        return
-
-    for line in recent:
-        try:
-            entry = json.loads(line)
-            ts = entry.get("timestamp", "")[:19]
-            action = entry.get("action", "?")
-            result = entry.get("result", "?")
-
-            color = {"success": "green", "error": "red", "fail": "red", "pass": "green"}.get(
-                result, "yellow"
-            )
-            console.print(f"  [{color}]{result:>7}[/] {ts} {action}")
-
-            details = entry.get("details", {})
-            if details:
-                for k, v in list(details.items())[:3]:
-                    console.print(f"          {k}: {v}")
-        except json.JSONDecodeError:
-            console.print(f"  [dim]{line[:100]}[/]")
 
 
 @app.command()
@@ -421,12 +339,15 @@ def resume(
     console.print("\n[bold cyan]Resuming execution...[/]")
     hooks = HookRegistry()
     dashboard: Dashboard | None = None
-    if verbose and console.is_terminal:
+    if console.is_terminal:
         dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
         dashboard.start()
-    plan = execute_plan(plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks)
-    if dashboard is not None:
+        plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
         dashboard.stop()
+    else:
+        plan = execute_plan(
+            plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+        )
 
     duration = round(time.monotonic() - start, 1)
     completed = [t for t in plan.tasks if t.status.value == "completed"]
@@ -453,11 +374,10 @@ def version(
         console.print(f"lindy-orchestrator v{__version__}")
 
 
-from .cli_init import register_init_commands  # noqa: E402
 from .cli_ext import register_ext_commands  # noqa: E402
-from .cli_scaffold import register_scaffold_command  # noqa: E402
+from .cli_onboard import register_onboard_command  # noqa: E402
+from .cli_status import register_status_commands  # noqa: E402
 
-register_init_commands(app, console)
 register_ext_commands(
     app,
     console,
@@ -469,4 +389,5 @@ register_ext_commands(
         "resolve_goal": _resolve_goal,
     },
 )
-register_scaffold_command(app, console)
+register_onboard_command(app, console)
+register_status_commands(app, console, _load_cfg)

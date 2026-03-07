@@ -1,4 +1,4 @@
-"""Tests for CLI extension commands — gc, scan, validate, issues."""
+"""Tests for CLI extension commands — gc, scan, validate, issues, status."""
 
 from __future__ import annotations
 
@@ -21,6 +21,49 @@ def _write_config(tmp_path, extra=""):
     )
     (tmp_path / "backend").mkdir(exist_ok=True)
     return str(cfg)
+
+
+def _write_status_md(tmp_path):
+    """Create a valid STATUS.md for the backend module."""
+    (tmp_path / "backend" / "STATUS.md").write_text(
+        "# Backend Status\n\n"
+        "## Meta\n"
+        "| Key | Value |\n"
+        "|-----|-------|\n"
+        "| module | backend |\n"
+        "| last_updated | 2026-01-01 |\n"
+        "| overall_health | GREEN |\n"
+        "| agent_session | — |\n\n"
+        "## Active Work\n"
+        "| ID | Task | Status | BlockedBy | Started | Notes |\n"
+        "|----|------|--------|-----------|---------|-------|\n\n"
+        "## Completed (Recent)\n| ID | Task | Completed | Outcome |\n|----|------|-----------|--------|\n\n"
+        "## Backlog\n- (none)\n\n"
+        "## Cross-Module Requests\n"
+        "| ID | From | To | Request | Priority | Status |\n"
+        "|----|------|----|---------|----------|--------|\n\n"
+        "## Cross-Module Deliverables\n"
+        "| ID | From | To | Deliverable | Status | Path |\n"
+        "|----|------|----|-------------|--------|------|\n\n"
+        "## Key Metrics\n| Metric | Value |\n|--------|-------|\n\n"
+        "## Blockers\n- (none)\n",
+        encoding="utf-8",
+    )
+
+
+def _write_log_file(tmp_path, entries=None):
+    """Write sample JSONL log entries."""
+    if entries is None:
+        entries = [
+            '{"timestamp":"2026-01-01T00:00:00","action":"session_start","result":"success","details":{"goal":"test"}}',
+            '{"timestamp":"2026-01-01T00:01:00","action":"dispatch","result":"success","details":{"module":"backend"}}',
+            '{"timestamp":"2026-01-01T00:02:00","action":"quality_gate","result":"fail","details":{"gate":"pytest"}}',
+        ]
+    log_dir = tmp_path / ".orchestrator" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "actions.jsonl"
+    log_file.write_text("\n".join(entries) + "\n", encoding="utf-8")
+    return log_file
 
 
 class TestValidateCommand:
@@ -227,3 +270,159 @@ class TestIssuesCommand:
         data = json.loads(result.output)
         assert len(data) == 1
         assert data[0]["id"] == "1"
+
+
+class TestStatusCommand:
+    """Tests for the unified status command (module health + logs)."""
+
+    def test_status_shows_module_table(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "backend" in result.output
+        assert "GREEN" in result.output
+
+    def test_status_shows_logs(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "Recent Logs" in result.output
+        assert "session_start" in result.output
+
+    def test_status_no_logs_file(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "No log entries" in result.output
+
+    def test_status_only_flag(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--status-only"])
+        assert result.exit_code == 0
+        assert "backend" in result.output
+        assert "Recent Logs" not in result.output
+
+    def test_logs_only_flag(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--logs-only"])
+        assert result.exit_code == 0
+        assert "Recent Logs" in result.output
+        assert "Module Status Overview" not in result.output
+
+    def test_status_last_n(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--logs-only", "-n", "1"])
+        assert result.exit_code == 0
+        # Should only show the last entry (quality_gate / fail)
+        assert "quality_gate" in result.output
+        assert "session_start" not in result.output
+
+    def test_status_json_output(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "modules" in data
+        assert "logs" in data
+        assert len(data["modules"]) == 1
+        assert data["modules"][0]["name"] == "backend"
+        assert len(data["logs"]) == 3
+
+    def test_status_json_status_only(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--json", "--status-only"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "modules" in data
+        assert "logs" not in data
+
+    def test_status_json_logs_only(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--json", "--logs-only"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "logs" in data
+        assert "modules" not in data
+
+    def test_status_missing_status_md(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--status-only"])
+        assert result.exit_code == 0
+        # Module should show with "?" health
+        assert "backend" in result.output
+
+    def test_status_shows_mailbox_summary(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        # Create mailbox dir and send a message
+        mb_dir = tmp_path / ".orchestrator" / "mailbox"
+        mb_dir.mkdir(parents=True, exist_ok=True)
+        from lindy_orchestrator.mailbox import Mailbox, Message
+
+        mb = Mailbox(mb_dir)
+        mb.send(Message(from_module="frontend", to_module="backend", content="test msg"))
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--status-only"])
+        assert result.exit_code == 0
+        assert "Mailbox" in result.output
+        assert "1 pending" in result.output
+
+    def test_status_json_includes_mailbox(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        mb_dir = tmp_path / ".orchestrator" / "mailbox"
+        mb_dir.mkdir(parents=True, exist_ok=True)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--json", "--status-only"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "mailbox" in data
+        assert "backend" in data["mailbox"]
+
+
+class TestLogsAlias:
+    """Tests for the backward-compat 'logs' command alias."""
+
+    def test_logs_alias_works(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["logs", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "Recent Logs" in result.output
+        assert "session_start" in result.output
+
+    def test_logs_alias_json(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["logs", "-c", cfg_path, "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "logs" in data
+        assert "modules" not in data
+
+    def test_logs_alias_with_last(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_log_file(tmp_path)
+        result = runner.invoke(app, ["logs", "-c", cfg_path, "-n", "1"])
+        assert result.exit_code == 0
+        assert "quality_gate" in result.output
+        assert "session_start" not in result.output
+
+    def test_logs_alias_no_logs(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        result = runner.invoke(app, ["logs", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "No log entries" in result.output

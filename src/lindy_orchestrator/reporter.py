@@ -152,3 +152,39 @@ def print_status_table(
         )
 
     con.print(table)
+
+
+def print_log_entries(
+    lines: list[str],
+    console: Console | None = None,
+) -> None:
+    """Print formatted log entries below the status table."""
+    import json
+
+    con = console or Console()
+
+    con.print()
+    con.print("[bold]Recent Logs[/]")
+
+    if not lines:
+        con.print("  [dim]No log entries.[/]")
+        return
+
+    for line in lines:
+        try:
+            entry = json.loads(line)
+            ts = entry.get("timestamp", "")[:19]
+            action = entry.get("action", "?")
+            result = entry.get("result", "?")
+
+            color = {"success": "green", "error": "red", "fail": "red", "pass": "green"}.get(
+                result, "yellow"
+            )
+            con.print(f"  [{color}]{result:>7}[/] {ts} {action}")
+
+            details = entry.get("details", {})
+            if details:
+                for k, v in list(details.items())[:3]:
+                    con.print(f"          {k}: {v}")
+        except json.JSONDecodeError:
+            con.print(f"  [dim]{line[:100]}[/]")

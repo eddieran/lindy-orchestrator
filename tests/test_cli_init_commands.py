@@ -1,9 +1,9 @@
-"""Tests for CLI init and onboard commands."""
+"""Tests for onboard helper functions (formerly in cli_init)."""
 
 from __future__ import annotations
 
 
-from lindy_orchestrator.cli_init import (
+from lindy_orchestrator.cli_onboard_helpers import (
     _detect_modules,
     _detect_tech,
     _generate_config,
@@ -147,6 +147,8 @@ class TestGenerateConfig:
         assert "planner:" in config
         assert "dispatcher:" in config
         assert "safety:" in config
+        assert "mailbox:" in config
+        assert "enabled: true" in config
 
     def test_empty_modules(self):
         config = _generate_config("proj", [])

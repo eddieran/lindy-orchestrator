@@ -349,8 +349,8 @@ class TestCommandCheckTemplateResolution:
         assert actual_cwd == str(_PROJECT_ROOT)
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
-    def test_no_cwd_no_module_path_falls_back_to_name(self, mock_run):
-        """Backward compat: no cwd, no module_path → use module_name."""
+    def test_no_cwd_defaults_to_project_root(self, mock_run):
+        """Without cwd in params, defaults to project root (not module_name)."""
         mock_run.return_value = _fake_run()
         gate = CommandCheckGate()
 
@@ -361,7 +361,7 @@ class TestCommandCheckTemplateResolution:
         )
 
         actual_cwd = mock_run.call_args.kwargs.get("cwd") or mock_run.call_args[1].get("cwd")
-        assert actual_cwd == str(_PROJECT_ROOT / "backend")
+        assert actual_cwd == str(_PROJECT_ROOT / ".")
 
 
 # ---------------------------------------------------------------------------

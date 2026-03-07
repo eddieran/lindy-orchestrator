@@ -75,6 +75,7 @@ def generate_artifacts(
     orch_dir = output_dir / ".orchestrator"
     (orch_dir / "logs").mkdir(parents=True, exist_ok=True)
     (orch_dir / "sessions").mkdir(parents=True, exist_ok=True)
+    (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
 
     # 8. Update .gitignore
     _update_gitignore(output_dir)

@@ -129,6 +129,7 @@ def test_creates_orchestrator_dir(tmp_path):
 
     assert (tmp_path / ".orchestrator" / "logs").is_dir()
     assert (tmp_path / ".orchestrator" / "sessions").is_dir()
+    assert (tmp_path / ".orchestrator" / "mailbox").is_dir()
 
 
 def test_skip_existing_files_without_force(tmp_path):

@@ -1,9 +1,10 @@
 """DAG visualization for TaskPlan.
 
-Renders a task dependency graph as either a Rich renderable (for terminal Live
-display) or plain ASCII (for logging / CI).  Tasks at the same topological
-level are placed side-by-side on the same row, with box-drawing edges between
-rows showing dependency relationships.
+Renders a task dependency graph as a compact ASCII tree with box-drawing
+characters inspired by Elixir's supervisor tree visualization.  Each task
+node shows a status icon, task ID, module name, and a short description.
+Optional annotation bubbles (``← message``) show latest activity next to
+active or recently-completed tasks.
 """
 
 from __future__ import annotations
@@ -32,30 +33,7 @@ STATUS_STYLES: dict[TaskStatus, str] = {
 
 # -- layout constants ---------------------------------------------------------
 
-_CELL_W = 30  # fixed width per task cell
-_GAP = 4  # gap between adjacent cells
-
-# -- direction flags for box-drawing ------------------------------------------
-
-_UP, _DOWN, _LEFT, _RIGHT = 1, 2, 4, 8
-
-_BOX: dict[int, str] = {
-    _UP: "\u2502",
-    _DOWN: "\u2502",
-    _LEFT: "\u2500",
-    _RIGHT: "\u2500",
-    _UP | _DOWN: "\u2502",
-    _LEFT | _RIGHT: "\u2500",
-    _UP | _RIGHT: "\u2514",
-    _UP | _LEFT: "\u2518",
-    _DOWN | _RIGHT: "\u250c",
-    _DOWN | _LEFT: "\u2510",
-    _UP | _LEFT | _RIGHT: "\u2534",
-    _DOWN | _LEFT | _RIGHT: "\u252c",
-    _UP | _DOWN | _RIGHT: "\u251c",
-    _UP | _DOWN | _LEFT: "\u2524",
-    _UP | _DOWN | _LEFT | _RIGHT: "\u253c",
-}
+_MAX_WIDTH = 78  # content width (80 minus 2-char margin)
 
 # -- topology -----------------------------------------------------------------
 
@@ -90,124 +68,150 @@ def _compute_levels(tasks: list[TaskItem]) -> list[list[TaskItem]]:
     return levels
 
 
-# -- grid helpers -------------------------------------------------------------
+# -- tree building ------------------------------------------------------------
 
 
-def _center_col(idx: int) -> int:
-    """Column-center of the *idx*-th cell in a level row."""
-    return idx * (_CELL_W + _GAP) + _CELL_W // 2
+def _build_tree(
+    tasks: list[TaskItem],
+) -> tuple[list[TaskItem], dict[int, list[TaskItem]], dict[int, list[int]]]:
+    """Build a tree structure from the task DAG for rendering.
+
+    Each task is assigned to exactly one tree parent (the dependency at the
+    highest topological level; ties broken by highest task ID).  Tasks with
+    no dependencies become roots.
+
+    Returns:
+        roots: Root tasks (no valid dependencies).
+        children: Mapping task_id -> list of child tasks in tree order.
+        extra_deps: Mapping task_id -> additional parent IDs not shown in tree.
+    """
+    if not tasks:
+        return [], {}, {}
+
+    task_map = {t.id: t for t in tasks}
+    levels = _compute_levels(tasks)
+    level_of: dict[int, int] = {}
+    for i, level_tasks in enumerate(levels):
+        for t in level_tasks:
+            level_of[t.id] = i
+
+    children: dict[int, list[TaskItem]] = {t.id: [] for t in tasks}
+    extra_deps: dict[int, list[int]] = {}
+    roots: list[TaskItem] = []
+
+    for t in tasks:
+        valid_deps = [d for d in t.depends_on if d in task_map]
+        if not valid_deps:
+            roots.append(t)
+        else:
+            primary = max(valid_deps, key=lambda d: (level_of.get(d, 0), d))
+            children[primary].append(t)
+            others = sorted(d for d in valid_deps if d != primary)
+            if others:
+                extra_deps[t.id] = others
+
+    # Stable ordering by task ID
+    roots.sort(key=lambda t: t.id)
+    for tid in children:
+        children[tid].sort(key=lambda t: t.id)
+
+    return roots, children, extra_deps
 
 
-def _node_label(task: TaskItem) -> str:
-    """Plain-text label for a single task node."""
+# -- node formatting ----------------------------------------------------------
+
+
+def _node_text(task: TaskItem, extra_deps: dict[int, list[int]]) -> str:
+    """Build the display text for a single task node."""
     icon = STATUS_ICONS[task.status]
-    head = f"{icon} {task.id} {task.module}"
-    room = _CELL_W - len(head) - 2  # ": "
-    if room > 3:
-        desc = task.description
-        if len(desc) > room:
-            desc = desc[: room - 1] + "\u2026"
-        return f"{head}: {desc}"
-    return head[:_CELL_W]
+    desc = task.description
+    if len(desc) > 30:
+        desc = desc[:29] + "\u2026"
+    extra = extra_deps.get(task.id, [])
+    dep_note = f" [+{','.join(str(d) for d in extra)}]" if extra else ""
+    return f"{icon} {task.id} {task.module}: {desc}{dep_note}"
 
 
-# -- level-row rendering ------------------------------------------------------
+def _format_line(
+    prefix: str,
+    connector: str,
+    node: str,
+    annotation: str = "",
+    max_width: int = _MAX_WIDTH,
+) -> str:
+    """Format a single tree line, ensuring it fits within *max_width*."""
+    line = f"{prefix}{connector}{node}"
+
+    if annotation:
+        ann = f" \u2190 {annotation}"  # ← annotation
+        if len(line) + len(ann) > max_width:
+            avail = max_width - len(line) - 5  # " ← " + "…"
+            if avail > 0:
+                ann = f" \u2190 {annotation[:avail]}\u2026"
+            else:
+                ann = ""
+        line += ann
+
+    if len(line) > max_width:
+        line = line[: max_width - 1] + "\u2026"
+    return line
 
 
-def _level_line_ascii(level: list[TaskItem]) -> str:
-    parts: list[str] = []
-    for i, t in enumerate(level):
-        label = _node_label(t)
-        parts.append(label[:_CELL_W].ljust(_CELL_W))
-        if i < len(level) - 1:
-            parts.append(" " * _GAP)
-    return "".join(parts)
+# -- tree walking -------------------------------------------------------------
 
 
-def _level_line_rich(level: list[TaskItem]) -> Text:
-    text = Text()
-    for i, t in enumerate(level):
-        label = _node_label(t)
-        padded = label[:_CELL_W].ljust(_CELL_W)
-        text.append(padded, style=STATUS_STYLES[t.status])
-        if i < len(level) - 1:
-            text.append(" " * _GAP)
-    return text
+def _walk_tree(
+    tasks: list[TaskItem],
+    annotations: dict[int, str] | None = None,
+    verbose: bool = False,
+) -> list[tuple[str, str, str, str, str, TaskItem]]:
+    """Walk the task DAG tree and yield rendering tuples.
 
+    Returns a list of ``(prefix, connector, node, annotation, style, task)``
+    tuples in display order.
+    """
+    if not tasks:
+        return [("", "", "(empty plan)", "", "dim", None)]  # type: ignore[list-item]
 
-# -- edge rendering -----------------------------------------------------------
+    roots, children, extra_deps = _build_tree(tasks)
+    annotations = annotations or {}
+    result: list[tuple[str, str, str, str, str, TaskItem]] = []
 
+    def _emit(task: TaskItem, prefix: str, is_last: bool) -> None:
+        connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
+        node = _node_text(task, extra_deps)
+        ann = ""
+        if verbose and task.id in annotations and annotations[task.id]:
+            ann = annotations[task.id]
+            if len(ann) > 40:
+                ann = ann[:39] + "\u2026"
 
-def _edge_lines(
-    prev_level: list[TaskItem],
-    next_level: list[TaskItem],
-) -> list[str]:
-    """Compute box-drawing connector rows between two adjacent levels."""
-    prev_pos = {t.id: _center_col(i) for i, t in enumerate(prev_level)}
-    next_pos = {t.id: _center_col(i) for i, t in enumerate(next_level)}
+        result.append((prefix, connector, node, ann, STATUS_STYLES[task.status], task))
 
-    # Determine required grid width
-    all_cols: list[int] = []
-    if prev_pos:
-        all_cols.extend(prev_pos.values())
-    if next_pos:
-        all_cols.extend(next_pos.values())
-    if not all_cols:
-        return []
-    grid_w = max(all_cols) + 1
+        kids = children.get(task.id, [])
+        child_prefix = prefix + ("    " if is_last else "\u2502   ")
+        for i, child in enumerate(kids):
+            _emit(child, child_prefix, i == len(kids) - 1)
 
-    # Direction mask per column
-    dirs = [0] * grid_w
+    for i, root in enumerate(roots):
+        _emit(root, "", i == len(roots) - 1)
 
-    for t in next_level:
-        pcols = sorted({prev_pos[d] for d in t.depends_on if d in prev_pos})
-        if not pcols:
-            continue
-        cc = next_pos[t.id]
-        points = sorted(set(pcols + [cc]))
-        lo, hi = points[0], points[-1]
-
-        # Horizontal span
-        for c in range(lo, hi + 1):
-            if c > lo:
-                dirs[c] |= _LEFT
-            if c < hi:
-                dirs[c] |= _RIGHT
-
-        # Parent drops
-        for pc in pcols:
-            dirs[pc] |= _UP
-
-        # Child arrival
-        dirs[cc] |= _DOWN
-
-    if not any(dirs):
-        return []
-
-    drop: list[str] = []
-    merge: list[str] = []
-    arrive: list[str] = []
-
-    for c in range(grid_w):
-        d = dirs[c]
-        drop.append("\u2502" if d & _UP else " ")
-        merge.append(_BOX.get(d, " ") if d else " ")
-        arrive.append("\u25bc" if d & _DOWN else " ")
-
-    return [
-        "".join(drop).rstrip(),
-        "".join(merge).rstrip(),
-        "".join(arrive).rstrip(),
-    ]
+    return result
 
 
 # -- public API ---------------------------------------------------------------
 
 
-def render_dag(plan: TaskPlan) -> Text:
+def render_dag(
+    plan: TaskPlan,
+    annotations: dict[int, str] | None = None,
+    verbose: bool = False,
+) -> Text:
     """Render a TaskPlan DAG as a :class:`rich.text.Text` renderable.
 
-    Nodes are coloured by status; edges use dim box-drawing characters.
+    Nodes are coloured by status; tree connectors use dim box-drawing
+    characters.  When *verbose* is True and *annotations* are provided,
+    activity bubbles appear next to active nodes.
     """
     text = Text()
 
@@ -217,28 +221,37 @@ def render_dag(plan: TaskPlan) -> Text:
 
     text.append(f"DAG: {plan.goal}\n", style="bold")
 
-    levels = _compute_levels(plan.tasks)
-    for i, level in enumerate(levels):
-        text.append_text(_level_line_rich(level))
+    for prefix, connector, node, ann, style, _task in _walk_tree(plan.tasks, annotations, verbose):
+        text.append(prefix, style="dim")
+        text.append(connector, style="dim")
+        text.append(node, style=style)
+        if ann:
+            # Compute padding so annotations align
+            current_len = len(prefix) + len(connector) + len(node)
+            pad = max(52 - current_len, 1)
+            # Truncate annotation to fit _MAX_WIDTH
+            avail = _MAX_WIDTH - current_len - pad - 2  # 2 for "← "
+            if avail > 0:
+                display_ann = ann[:avail] if len(ann) > avail else ann
+                text.append(" " * pad, style="dim")
+                text.append(f"\u2190 {display_ann}", style="dim italic")
         text.append("\n")
-        if i < len(levels) - 1:
-            for line in _edge_lines(level, levels[i + 1]):
-                text.append(line + "\n", style="dim")
 
     return text
 
 
-def render_dag_ascii(plan: TaskPlan) -> str:
+def render_dag_ascii(
+    plan: TaskPlan,
+    annotations: dict[int, str] | None = None,
+    verbose: bool = False,
+) -> str:
     """Render a TaskPlan DAG as plain ASCII / Unicode text (no colour)."""
     if not plan.tasks:
         return "(empty plan)"
 
     lines: list[str] = [f"DAG: {plan.goal}"]
 
-    levels = _compute_levels(plan.tasks)
-    for i, level in enumerate(levels):
-        lines.append(_level_line_ascii(level))
-        if i < len(levels) - 1:
-            lines.extend(_edge_lines(level, levels[i + 1]))
+    for prefix, connector, node, ann, _style, _task in _walk_tree(plan.tasks, annotations, verbose):
+        lines.append(_format_line(prefix, connector, node, ann))
 
     return "\n".join(lines)
