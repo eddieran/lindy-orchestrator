@@ -133,18 +133,23 @@ class TestCommandCheckGate:
             project_root=tmp_path,
         )
         call_kwargs = mock_run.call_args
-        assert call_kwargs[1]["shell"] is False
+        # shell should not be passed (defaults to False)
+        assert call_kwargs[1].get("shell") is not True
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
-    def test_string_command_uses_shell(self, mock_run, tmp_path):
+    def test_string_command_uses_shlex_not_shell(self, mock_run, tmp_path):
+        """String commands are parsed via shlex.split, not passed to shell."""
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         gate = CommandCheckGate()
         gate.check(
-            params={"command": "echo hi && echo bye"},
+            params={"command": "echo hi"},
             project_root=tmp_path,
         )
         call_kwargs = mock_run.call_args
-        assert call_kwargs[1]["shell"] is True
+        # shell=True must not be used (security fix M-01)
+        assert call_kwargs[1].get("shell") is not True
+        # command should be split into a list
+        assert call_kwargs[0][0] == ["echo", "hi"]
 
     @patch("lindy_orchestrator.qa.command_check.subprocess.run")
     def test_large_stdout_truncated(self, mock_run, tmp_path):

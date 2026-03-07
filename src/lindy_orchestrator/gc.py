@@ -132,8 +132,7 @@ def _find_stale_branches(
                     path=branch_name,
                 )
                 if apply:
-                    _delete_branch(project_root, branch_name)
-                    action.applied = True
+                    action.applied = _delete_branch(project_root, branch_name)
                 actions.append(action)
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -141,14 +140,15 @@ def _find_stale_branches(
     return actions
 
 
-def _delete_branch(project_root: Path, branch_name: str) -> None:
-    """Delete a local branch."""
-    subprocess.run(
+def _delete_branch(project_root: Path, branch_name: str) -> bool:
+    """Delete a local branch. Returns True if successful."""
+    result = subprocess.run(
         ["git", "branch", "-d", branch_name],
         cwd=project_root,
         capture_output=True,
         timeout=10,
     )
+    return result.returncode == 0
 
 
 def _find_old_sessions(

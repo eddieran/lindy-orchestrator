@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -11,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+# Session IDs must be safe path components (hex chars from uuid4[:8])
+_SAFE_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 @dataclass
@@ -53,7 +57,14 @@ class SessionManager:
         return self._load(files[0])
 
     def load(self, session_id: str) -> SessionState | None:
+        # SECURITY: validate session_id to prevent path traversal
+        if not _SAFE_SESSION_ID_RE.match(session_id):
+            log.warning("Rejected unsafe session_id: %r", session_id)
+            return None
         path = self.sessions_dir / f"{session_id}.json"
+        if not path.resolve().is_relative_to(self.sessions_dir.resolve()):
+            log.warning("Path traversal detected for session_id: %r", session_id)
+            return None
         if not path.exists():
             return None
         return self._load(path)
