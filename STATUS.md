@@ -50,7 +50,7 @@
 | audit_findings_total | 69 (14H/28M/27L) |
 | audit_findings_fixed | 35 |
 | audit_findings_remaining | 34 |
-| version | 0.6.1 |
+| version | 0.6.2 |
 | tests_passing | 824 |
 | ruff_warnings | 0 |
 

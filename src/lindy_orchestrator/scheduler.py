@@ -176,7 +176,10 @@ def _execute_single_task(
     while True:
         # Dispatch to module agent
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
-        working_dir = config.module_path(task.module)
+        # Dispatch from project root so prompt paths (e.g. "backend/app/...")
+        # resolve correctly.  Module path is passed separately for QA gates.
+        working_dir = config.root.resolve()
+        module_dir = config.module_path(task.module)
 
         # Heartbeat state for progress feedback
         _hb_count = 0
@@ -335,7 +338,7 @@ def _execute_single_task(
                 custom_gates=config.qa_gates.custom,
                 dispatcher_config=config.dispatcher,
                 qa_module=config.qa_module(),
-                module_path=working_dir,
+                module_path=module_dir,
             )
             task.qa_results.append(qa_result)
             logger.log_qa(qa.gate, qa_result.passed, qa_result.output)
