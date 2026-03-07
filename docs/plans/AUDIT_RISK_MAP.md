@@ -19,9 +19,9 @@
 | Risk Level | Count |
 |------------|-------|
 | **HIGH** | 14 |
-| **MEDIUM** | 27 |
-| **LOW** | 23 |
-| **Total** | 64 |
+| **MEDIUM** | 28 |
+| **LOW** | 27 |
+| **Total** | 69 |
 
 | Category | H | M | L | Total |
 |----------|---|---|---|-------|
@@ -31,10 +31,10 @@
 | Logging gaps | 3 | 3 | 2 | 8 |
 | Dependency health | 1 | 3 | 3 | 7 |
 | Long functions/classes (>80 lines) | 0 | 5 | 2 | 7 |
-| Unused functions/dead code | 0 | 3 | 5 | 8 |
-| Duplicated logic | 0 | 3 | 2 | 5 |
+| Unused functions/dead code | 0 | 3 | 6 | 9 |
+| Duplicated logic | 0 | 4 | 3 | 7 |
 | Missing type hints | 0 | 2 | 3 | 5 |
-| Deprecated APIs | 0 | 0 | 2 | 2 |
+| Deprecated APIs | 0 | 0 | 4 | 4 |
 | Unused imports | 0 | 0 | 1 | 1 |
 
 **Note:** Zero `import logging` calls exist in the entire source tree.
@@ -180,6 +180,7 @@
 | M-31 | `mailbox.py` | 45-46 | Security | Path traversal via module name in `_inbox_path()`. Fix: validate alphanumeric + `is_relative_to()`. |
 | M-32 | `logger.py` | 40-41 | Exception | `ActionLogger.log_action` has no exception handling; `OSError` crashes orchestrator. Fix: wrap in `try/except`, fallback to stderr. |
 | M-33 | `hooks.py` | 64-73 | Exception | `HookRegistry.emit()` has no exception protection; one failing handler blocks all subsequent handlers. Fix: wrap each handler call. |
+| M-34 | `cli.py` + `cli_ext.py` | 168-199, 300-350 | Duplication | Session finalization (collect results, build report, save session) duplicated across `run`, `resume`, `run_issue`. Fix: extract `_finalise_session()`. |
 
 ---
 
@@ -214,6 +215,10 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 | L-23 | `dashboard.py` | 83 | Test coverage | `update_heartbeat` TTY path not exercised in tests. |
 | L-24 | `session.py` | 91-93 | Security | `SessionState(**data)` from untrusted JSON; no schema validation. Fix: validate keys explicitly. |
 | L-25 | `planner.py` | 197-245 | Security | LLM-generated plan parsed as executable tasks without command validation. Fix: sanitize `qa_checks.params`. |
+| L-26 | `models.py` | 167 | Dead code (candidate) | `TaskPlan.is_complete()` never called in production; superseded by `all_terminal()`. Fix: remove or document distinction. |
+| L-27 | `cli.py` + `cli_ext.py` | multiple | Duplication | `on_progress` closure defined 4+ times identically. Fix: extract to `cli_helpers.py`. |
+| L-28 | `status/parser.py` | 35-38 | Deprecated | Accepts both `"Cross-Department"` and `"Cross-Module"` section names; legacy compatibility shim. Fix: deprecation warning. |
+| L-29 | `planner.py` | 230 | Deprecated | `_parse_task_plan` accepts `"department"` field fallback from pre-1.0 naming. Fix: remove if prompt no longer produces it. |
 
 ---
 
@@ -245,10 +250,10 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 | Finding | Action |
 |---------|--------|
 | H-10, H-11, H-13, H-14 | Decompose `_execute_single_task`, `dispatch_agent`, `execute_plan`, `run` |
-| M-14, M-15, M-16 | Consolidate duplicated logic |
+| M-14, M-15, M-16, M-34 | Consolidate duplicated logic |
 | M-11, M-12, M-13 | Remove confirmed dead code |
 | M-25, M-26, M-27 | Pin dependency upper bounds |
 
 ### Phase 4 — Polish (low urgency)
 
-- L-01 through L-25: Address as part of regular maintenance cycles.
+- L-01 through L-29: Address as part of regular maintenance cycles.

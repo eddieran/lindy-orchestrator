@@ -172,6 +172,33 @@
   A prompt injection via the goal text could produce malicious commands.
 - **Fix:** Validate `qa_checks` params against an allowlist of safe commands. Log raw plan.
 
+### L-26 — `TaskPlan.is_complete()` never called in production
+
+- **File:** `src/lindy_orchestrator/models.py:167`
+- Tested in `test_models.py` but production code uses `all_terminal()` instead.
+  `is_complete` treats FAILED as not-complete; `all_terminal` treats FAILED as terminal.
+- **Fix:** Remove if unused, or document the semantic distinction explicitly.
+
+### L-27 — `on_progress` closure defined 4+ times identically
+
+- **Files:** `cli.py` (lines 118, 226, 425), `cli_ext.py` (line 260)
+- `def on_progress(msg: str): console.print(msg)` — identical throwaway closure.
+- **Fix:** Define `_make_progress_printer(console)` in `cli_helpers.py`.
+
+### L-28 — Status parser accepts legacy "Department" naming
+
+- **File:** `src/lindy_orchestrator/status/parser.py:35-38`
+- Accepts both `"Cross-Department Requests"` and `"Cross-Module Requests"` section names.
+  Also accepts `"department"` in `_parse_meta`. Legacy compatibility from pre-1.0 naming.
+- **Fix:** Emit deprecation warning when old names detected, or remove if no longer needed.
+
+### L-29 — Planner accepts `"department"` field fallback
+
+- **File:** `src/lindy_orchestrator/planner.py:230`
+- `t.get("module", t.get("department", "unknown"))` — remnant of older naming.
+  If current prompt in `prompts.py` never produces `"department"`, this is dead weight.
+- **Fix:** Verify prompt output; remove fallback if not needed.
+
 ---
 
 ## Dependency Version Snapshot
