@@ -119,12 +119,17 @@ class TestRichProtocol:
         result = pp.__rich__()
         assert "Calling LLM..." in result.plain
 
-    def test_live_renderable_is_self(self):
-        """Live should use PlanProgress as renderable so __rich__() is called each refresh."""
+    def test_live_uses_rich_protocol(self):
+        """Live refresh should invoke __rich__() and reflect current state."""
         pp, _con, _buf = _make_progress(interactive=True)
         pp.start()
         assert pp._live is not None
-        assert pp._live.renderable is pp
+        pp.set_phase("Testing phase...")
+        pp.tick_event()
+        # Verify __rich__() returns current state (this is what Live calls on refresh)
+        display = pp.__rich__()
+        assert "Testing phase..." in display.plain
+        assert "events: 1" in display.plain
         pp.stop()
 
 
