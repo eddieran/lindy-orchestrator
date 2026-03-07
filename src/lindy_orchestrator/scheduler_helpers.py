@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from .config import OrchestratorConfig
+from .mailbox import Mailbox, format_mailbox_messages
 from .models import QACheck, TaskItem
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -144,3 +149,58 @@ def inject_qa_gates(
                 )
             )
             progress(f"    [dim]Auto-injected QA: command_check ({gate.command})[/]")
+
+
+def inject_mailbox_messages(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    progress: Callable[[str], None],
+) -> None:
+    """Inject pending mailbox messages into task prompt if enabled."""
+    if not config.mailbox.enabled or not config.mailbox.inject_on_dispatch:
+        return
+    try:
+        mb = Mailbox(config.root / config.mailbox.dir)
+        pending = mb.receive(task.module, unread_only=True)
+        if pending:
+            formatted = format_mailbox_messages(pending)
+            task.prompt = (
+                f"{task.prompt}\n\n## Inter-agent messages for {task.module}\n\n{formatted}\n"
+            )
+            progress(f"    [dim]Injected {len(pending)} mailbox message(s)[/]")
+    except Exception:
+        log.warning("Mailbox injection failed for %s", task.module, exc_info=True)
+
+
+def inject_branch_delivery(
+    task: TaskItem,
+    branch_name: str,
+    worktree_path: Path | None,
+    dispatches: int,
+) -> None:
+    """Inject branch delivery instructions into task prompt on first dispatch."""
+    if dispatches != 0:
+        return
+    if worktree_path:
+        task.prompt = (
+            f"{task.prompt}\n\n"
+            f"## IMPORTANT: Branch delivery requirements\n\n"
+            f"You are already on branch `{branch_name}` (worktree isolation).\n"
+            f"Do NOT switch branches or run `git checkout`.\n"
+            f"When done:\n"
+            f"1. `git add` and `git commit` your changes\n"
+            f"2. `git push -u origin {branch_name}` (push to remote)\n"
+            f"Do NOT skip the push step — CI verification depends on it.\n"
+        )
+    else:
+        task.prompt = (
+            f"{task.prompt}\n\n"
+            f"## IMPORTANT: Branch delivery requirements\n\n"
+            f"You MUST deliver your work on branch `{branch_name}`.\n"
+            f"Before starting work:\n"
+            f"1. `git checkout -b {branch_name}` (create the branch)\n"
+            f"When done:\n"
+            f"2. `git add` and `git commit` your changes\n"
+            f"3. `git push -u origin {branch_name}` (push to remote)\n"
+            f"Do NOT skip the push step — CI verification depends on it.\n"
+        )
