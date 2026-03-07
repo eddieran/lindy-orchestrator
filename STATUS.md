@@ -15,6 +15,11 @@
 ## Completed (Recent)
 | ID | Task | Completed | Outcome |
 |----|------|-----------|---------|
+| 2 | CLI optimization: unified onboard command | 2026-03-07 | Merged init+scaffold+onboard into single `onboard` command |
+| 2a | CLI optimization: unified status+logs | 2026-03-07 | Combined status and logs into single `status` command with subcommands |
+| 2b | CLI optimization: dashboard redesign | 2026-03-07 | Compact ASCII DAG tree with real-time annotations |
+| 2c | CLI optimization: mailbox default + status | 2026-03-07 | Mailbox enabled by default; mailbox summary in status output |
+| 2d | CLI optimization: E2E tests | 2026-03-07 | Comprehensive E2E test suite; pytest-cov configured; +104 tests |
 | 1 | Comprehensive codebase audit | 2026-03-07 | 69 findings (14H/28M/27L); 35 fixed across tasks 1-6; see `docs/plans/AUDIT_FINAL_REPORT.md` |
 | 1a | Dead code removal (task 2) | 2026-03-07 | Removed 19 lines confirmed dead code from gc.py, ci_check.py, github_issues.py |
 | 1b | Type hints + exception handling (task 3) | 2026-03-07 | 17 files improved; structured logging added to 6 core modules |
@@ -44,7 +49,8 @@
 | audit_findings_total | 69 (14H/28M/27L) |
 | audit_findings_fixed | 35 |
 | audit_findings_remaining | 34 |
-| tests_passing | 712 |
+| version | 0.6.0 |
+| tests_passing | 816 |
 | ruff_warnings | 0 |
 
 ## Blockers
