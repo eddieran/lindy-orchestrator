@@ -10,6 +10,7 @@ import concurrent.futures
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
@@ -21,6 +22,7 @@ from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import format_qa_feedback
+from .worktree import create_worktree, remove_worktree
 
 log = logging.getLogger(__name__)
 
@@ -171,15 +173,58 @@ def _execute_single_task(
     """
     inject_qa_gates(task, config, progress)
 
+    branch_name = f"{config.project.branch_prefix}/task-{task.id}"
+
+    # Create isolated worktree for parallel safety
+    worktree_path: Path | None = None
+    try:
+        worktree_path = create_worktree(config.root, branch_name, task.id)
+        progress(f"    [dim]Worktree: .worktrees/task-{task.id}[/]")
+    except Exception as e:
+        log.warning("Worktree creation failed, using shared directory: %s", e)
+
+    try:
+        return _dispatch_loop(
+            task, config, logger, progress, detail, max_retries,
+            hooks, branch_name, worktree_path,
+        )
+    finally:
+        if worktree_path:
+            try:
+                remove_worktree(config.root, task.id)
+            except Exception:
+                log.warning("Worktree cleanup failed for task-%d", task.id, exc_info=True)
+
+
+def _dispatch_loop(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    logger: ActionLogger,
+    progress: Callable[[str], None],
+    detail: Callable[[str], None],
+    max_retries: int,
+    hooks: HookRegistry | None,
+    branch_name: str,
+    worktree_path: Path | None,
+) -> int:
+    """Inner dispatch loop with retry logic. Extracted for worktree cleanup."""
     dispatches = 0
 
     while True:
         # Dispatch to module agent
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
-        # Dispatch from project root so prompt paths (e.g. "backend/app/...")
-        # resolve correctly.  Module path is passed separately for QA gates.
-        working_dir = config.root.resolve()
-        module_dir = config.module_path(task.module)
+
+        # Use worktree for isolation; fall back to project root
+        if worktree_path:
+            working_dir = worktree_path
+            if task.module in ("root", "*"):
+                module_dir = worktree_path
+            else:
+                mod = config.get_module(task.module)
+                module_dir = (worktree_path / mod.path).resolve()
+        else:
+            working_dir = config.root.resolve()
+            module_dir = config.module_path(task.module)
 
         # Heartbeat state for progress feedback
         _hb_count = 0
@@ -236,20 +281,31 @@ def _execute_single_task(
             except Exception:
                 log.warning("Mailbox injection failed for %s", task.module, exc_info=True)
 
-        # Inject branch delivery instructions so agents push to expected branch
-        branch_name = f"{config.project.branch_prefix}/task-{task.id}"
+        # Inject branch delivery instructions
         if dispatches == 0:
-            task.prompt = (
-                f"{task.prompt}\n\n"
-                f"## IMPORTANT: Branch delivery requirements\n\n"
-                f"You MUST deliver your work on branch `{branch_name}`.\n"
-                f"Before starting work:\n"
-                f"1. `git checkout -b {branch_name}` (create the branch)\n"
-                f"When done:\n"
-                f"2. `git add` and `git commit` your changes\n"
-                f"3. `git push -u origin {branch_name}` (push to remote)\n"
-                f"Do NOT skip the push step — CI verification depends on it.\n"
-            )
+            if worktree_path:
+                task.prompt = (
+                    f"{task.prompt}\n\n"
+                    f"## IMPORTANT: Branch delivery requirements\n\n"
+                    f"You are already on branch `{branch_name}` (worktree isolation).\n"
+                    f"Do NOT switch branches or run `git checkout`.\n"
+                    f"When done:\n"
+                    f"1. `git add` and `git commit` your changes\n"
+                    f"2. `git push -u origin {branch_name}` (push to remote)\n"
+                    f"Do NOT skip the push step — CI verification depends on it.\n"
+                )
+            else:
+                task.prompt = (
+                    f"{task.prompt}\n\n"
+                    f"## IMPORTANT: Branch delivery requirements\n\n"
+                    f"You MUST deliver your work on branch `{branch_name}`.\n"
+                    f"Before starting work:\n"
+                    f"1. `git checkout -b {branch_name}` (create the branch)\n"
+                    f"When done:\n"
+                    f"2. `git add` and `git commit` your changes\n"
+                    f"3. `git push -u origin {branch_name}` (push to remote)\n"
+                    f"Do NOT skip the push step — CI verification depends on it.\n"
+                )
 
         provider = create_provider(config.dispatcher)
         result = provider.dispatch(
@@ -332,7 +388,7 @@ def _execute_single_task(
 
             qa_result = run_qa_gate(
                 check=qa,
-                project_root=config.root,
+                project_root=worktree_path or config.root,
                 module_name=task.module,
                 task_output=task.result,
                 custom_gates=config.qa_gates.custom,
