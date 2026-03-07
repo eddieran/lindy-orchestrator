@@ -648,6 +648,26 @@ def resume(
             t.qa_results = []
             console.print(f"    {t.id}. [bold][{t.module}][/] {t.description} [yellow]→ retry[/]")
 
+    # Reset SKIPPED tasks whose dependencies are no longer failed
+    # (they were skipped because a dep failed, but that dep is now reset to PENDING)
+    changed = True
+    while changed:
+        changed = False
+        failed_or_skipped = {
+            t.id for t in plan.tasks if t.status in (TaskStatus.FAILED, TaskStatus.SKIPPED)
+        }
+        for t in plan.tasks:
+            if t.status != TaskStatus.SKIPPED:
+                continue
+            # If none of its deps are still failed/skipped, reset to PENDING
+            if not any(dep in failed_or_skipped for dep in t.depends_on):
+                t.status = TaskStatus.PENDING
+                t.result = ""
+                changed = True
+                console.print(
+                    f"    {t.id}. [bold][{t.module}][/] {t.description} [yellow]→ unskipped[/]"
+                )
+
     for t in plan.tasks:
         if t.status == TaskStatus.PENDING:
             console.print(f"    {t.id}. [bold][{t.module}][/] {t.description} [dim]pending[/]")
