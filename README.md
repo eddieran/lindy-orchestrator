@@ -84,10 +84,15 @@ See [docs/USAGE.md](docs/USAGE.md) for the full usage guide.
 | `onboard` | Deep onboard — static analysis, interactive Q&A, full artifact generation |
 | `run <goal>` | Decompose and execute a goal with parallel dispatch and QA gates |
 | `plan <goal>` | Generate a task plan without executing (use `-o plan.json` to save) |
-| `status` | Show module health, active tasks, and blockers (`--json` for machine output) |
+| `status` | Show module health, active tasks, blockers, and recent logs (`--json` for machine output) |
 | `logs` | Show recent action logs (`-n 50` for count, `--json` for raw JSONL) |
 | `resume` | Resume a previous session (latest or by session ID) |
 | `validate` | Validate config, module paths, STATUS.md, and Claude CLI availability |
+| `gc` | Clean up stale branches, old sessions, oversized logs (`--apply` to execute) |
+| `scan` | Scan for entropy: architecture drift, contract violations, quality decay |
+| `issues` | List issues from the configured tracker (`--label`, `--status`, `--json`) |
+| `run-issue <id>` | Fetch an issue from the tracker and execute it as a goal |
+| `mailbox [module]` | View or send inter-agent mailbox messages (`--send-to`, `-m`) |
 
 All commands accept `-c path/to/orchestrator.yaml` to specify a config file.
 
@@ -127,6 +132,16 @@ safety:
   dry_run: false
   max_retries_per_task: 2
   max_parallel: 3
+
+tracker:
+  enabled: false                      # enable issue tracker integration
+  provider: github                    # "github" or "linear"
+  repo: myorg/my-project             # GitHub repo slug
+  sync_on_complete: true              # auto-comment and close on completion
+
+mailbox:
+  enabled: false                      # enable inter-agent messaging
+  inject_on_dispatch: true            # auto-inject pending messages into prompts
 ```
 
 ## Key Concepts
@@ -149,6 +164,8 @@ Pluggable validation that runs after each task dispatch:
 
 | Gate | Description |
 |------|-------------|
+| `structural_check` | File size limits, sensitive file detection, import boundary enforcement |
+| `layer_check` | Intra-module layer ordering (parsed from ARCHITECTURE.md) |
 | `ci_check` | Polls GitHub Actions workflow status via `gh` CLI |
 | `command_check` | Runs arbitrary shell commands (exit code 0 = pass) |
 | `agent_check` | Dispatches a separate QA agent for semantic validation |
@@ -174,24 +191,44 @@ Persistent execution state stored as JSON in `.orchestrator/sessions/`. Supports
 ```
 src/lindy_orchestrator/
 ├── cli.py                  # Typer CLI entry point
+├── cli_ext.py              # Extension commands (gc, scan, validate, issues, etc.)
+├── cli_helpers.py          # Shared CLI helper functions
+├── cli_onboard.py          # Onboard/init command registration
 ├── config.py               # YAML config loading + Pydantic validation
 ├── models.py               # Core data models (TaskPlan, TaskItem, QACheck, ...)
-├── dispatcher.py            # Claude CLI subprocess management (streaming + blocking)
-├── planner.py              # Goal → TaskPlan decomposition via LLM
-├── scheduler.py            # DAG-based parallel execution with retry logic
-├── prompts.py              # LLM prompt templates (Jinja2)
-├── session.py              # Session state persistence and resume
+├── dag.py                  # DAG utilities for task dependency resolution
+├── dashboard.py            # Rich live dashboard for execution monitoring
+├── dispatcher.py           # Claude CLI subprocess management (streaming + blocking)
+├── gc.py                   # Garbage collection (stale branches, old sessions, logs)
+├── hooks.py                # Hook registry for event-driven callbacks
 ├── logger.py               # Append-only JSONL audit trail
+├── mailbox.py              # Inter-agent mailbox messaging system
+├── planner.py              # Goal → TaskPlan decomposition via LLM
+├── prompts.py              # LLM prompt templates (Jinja2)
 ├── reporter.py             # Rich console output formatting
+├── scheduler.py            # DAG-based parallel execution with retry logic
+├── session.py              # Session state persistence and resume
 ├── qa/
 │   ├── __init__.py         # Gate registry and runner
+│   ├── structural_check.py # File size, sensitive files, import boundaries
+│   ├── layer_check.py      # Intra-module layer ordering
 │   ├── ci_check.py         # GitHub Actions CI polling
 │   ├── command_check.py    # Shell command execution
-│   └── agent_check.py      # Agent-based semantic validation
+│   ├── agent_check.py      # Agent-based semantic validation
+│   └── feedback.py         # QA failure feedback formatting
 ├── status/
 │   ├── parser.py           # STATUS.md → structured data
 │   ├── templates.py        # STATUS.md generation
 │   └── writer.py           # Surgical markdown table updates
+├── entropy/
+│   └── scanner.py          # Architecture drift and quality decay detection
+├── trackers/
+│   ├── base.py             # Tracker interface
+│   ├── factory.py          # Tracker provider factory
+│   └── github_issues.py    # GitHub Issues integration
+├── dispatchers/
+│   ├── base.py             # Dispatcher provider interface
+│   └── claude_cli.py       # Claude CLI dispatcher implementation
 └── discovery/
     ├── analyzer.py         # Static project analysis (tech stack, dependencies)
     ├── interview.py        # Interactive and non-interactive onboarding Q&A

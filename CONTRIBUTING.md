@@ -48,11 +48,15 @@ docs/                       # Usage guides
 
 Key modules:
 - `cli.py` — CLI entry point (Typer)
+- `cli_ext.py` — Extension commands (gc, scan, issues, run-issue, mailbox)
 - `config.py` — Configuration loading (Pydantic)
 - `dispatcher.py` — Claude Code CLI subprocess management
 - `scheduler.py` — DAG-based parallel task execution
 - `planner.py` — Goal decomposition via LLM
-- `qa/` — Pluggable QA gate system
+- `qa/` — Pluggable QA gate system (structural, layer, CI, command, agent checks)
+- `entropy/` — Architecture drift and quality decay scanning
+- `trackers/` — Issue tracker integration (GitHub, Linear)
+- `mailbox.py` — Inter-agent messaging system
 
 ## Reporting Issues
 

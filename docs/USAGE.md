@@ -248,6 +248,8 @@ lindy-orchestrate run "Add user authentication with JWT"
 - `--dry-run` — 完整流程但不实际派发 agent
 - `-v` / `--verbose` — 显示 agent 的每次工具调用
 - `-c path/to/config.yaml` — 指定配置文件
+- `-f` / `--file goal.md` — 从文件读取目标（使用 `-f -` 从 stdin 读取）
+- `-p` / `--plan plan.json` — 执行已保存的任务计划（跳过 LLM 规划步骤）
 
 ### 模拟运行
 
@@ -290,6 +292,79 @@ lindy-orchestrate validate
 ```
 
 检查：配置语法、模块路径是否存在、STATUS.md 是否存在且可解析、Claude CLI 是否可用。
+
+### 清理工作区
+
+```bash
+lindy-orchestrate gc              # 默认 dry run，显示待清理项
+lindy-orchestrate gc --apply      # 实际执行清理
+```
+
+清理过期的任务分支、旧会话文件、超大日志文件和孤立的计划文件。
+
+**选项：**
+- `--apply` — 实际执行清理（默认只显示）
+- `--branch-age 14` — 任务分支最大保留天数（默认 14）
+- `--session-age 30` — 会话文件最大保留天数（默认 30）
+- `--log-size 10` — 日志文件最大大小 MB（默认 10）
+- `--status-stale 7` — STATUS.md 过期阈值天数（默认 7）
+
+### 熵扫描
+
+```bash
+lindy-orchestrate scan                  # 扫描所有模块
+lindy-orchestrate scan --module backend # 扫描指定模块
+lindy-orchestrate scan --grade-only     # 只显示评分
+```
+
+检测架构漂移、契约违规、代码质量衰减等问题。
+
+### 问题追踪
+
+需要在 `orchestrator.yaml` 中配置 `tracker`：
+
+```yaml
+tracker:
+  enabled: true
+  provider: github         # github | linear
+  repo: myorg/my-project
+  labels: ["orchestrator"]
+  sync_on_complete: true
+```
+
+```bash
+# 列出问题
+lindy-orchestrate issues                     # 列出 open 状态的问题
+lindy-orchestrate issues --label bug         # 按标签过滤
+lindy-orchestrate issues --status closed     # 按状态过滤
+lindy-orchestrate issues --json              # JSON 格式输出
+
+# 从问题执行
+lindy-orchestrate run-issue 42               # 获取 issue #42 并作为目标执行
+lindy-orchestrate run-issue 42 --dry-run     # 模拟运行
+```
+
+`run-issue` 会自动获取 issue 内容作为目标，执行完成后可自动在 issue 上添加评论并关闭（需配置 `sync_on_complete: true`）。
+
+### 模块间通信（Mailbox）
+
+需要在 `orchestrator.yaml` 中配置 `mailbox`：
+
+```yaml
+mailbox:
+  enabled: true
+  inject_on_dispatch: true   # 自动将待处理消息注入 agent prompt
+```
+
+```bash
+# 查看消息
+lindy-orchestrate mailbox                    # 查看所有模块的消息概览
+lindy-orchestrate mailbox frontend           # 查看 frontend 模块的待处理消息
+lindy-orchestrate mailbox frontend --json    # JSON 格式输出
+
+# 发送消息
+lindy-orchestrate mailbox --send-to backend --send-from frontend -m "Need API endpoint for /users"
+```
 
 ---
 
