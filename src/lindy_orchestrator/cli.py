@@ -160,12 +160,16 @@ def run(
     console.print("\n[bold cyan][2/3][/] Executing tasks...")
     hooks = HookRegistry()
     dashboard: Dashboard | None = None
-    if verbose and console.is_terminal:
+    if console.is_terminal:
         dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
         dashboard.start()
-    plan = execute_plan(plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks)
-    if dashboard is not None:
+        # Dashboard takes over display; suppress on_progress text output
+        plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
         dashboard.stop()
+    else:
+        plan = execute_plan(
+            plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+        )
 
     # Step 4: Report
     console.print("\n[bold cyan][3/3][/] Generating report...")
@@ -424,12 +428,15 @@ def resume(
     console.print("\n[bold cyan]Resuming execution...[/]")
     hooks = HookRegistry()
     dashboard: Dashboard | None = None
-    if verbose and console.is_terminal:
+    if console.is_terminal:
         dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
         dashboard.start()
-    plan = execute_plan(plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks)
-    if dashboard is not None:
+        plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
         dashboard.stop()
+    else:
+        plan = execute_plan(
+            plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+        )
 
     duration = round(time.monotonic() - start, 1)
     completed = [t for t in plan.tasks if t.status.value == "completed"]

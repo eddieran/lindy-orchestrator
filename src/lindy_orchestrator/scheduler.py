@@ -78,6 +78,14 @@ def execute_plan(
             for task in ready:
                 task.status = TaskStatus.IN_PROGRESS
                 task.started_at = datetime.now(timezone.utc).isoformat()
+                hooks.emit(
+                    Event(
+                        type=EventType.TASK_STARTED,
+                        task_id=task.id,
+                        module=task.module,
+                        data={"description": task.description},
+                    )
+                )
                 progress(f"\n  [bold]Task {task.id}:[/] [{task.module}] {task.description}")
 
                 if config.safety.dry_run:
@@ -233,6 +241,16 @@ def _execute_single_task(
                         tool_name = block.get("name", "?")
                         _hb_last_tool = tool_name
                         detail(f"      [dim]tool: {tool_name}[/]")
+
+            if hooks and tool_name:
+                hooks.emit(
+                    Event(
+                        type=EventType.TASK_HEARTBEAT,
+                        task_id=task.id,
+                        module=task.module,
+                        data={"tool": tool_name, "event_count": _hb_count},
+                    )
+                )
 
             # Heartbeat: every 30 seconds
             now = time.monotonic()

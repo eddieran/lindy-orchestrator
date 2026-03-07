@@ -1,12 +1,12 @@
-"""Tests for DAG visualization module."""
+"""Tests for DAG visualization module (compact tree rendering)."""
 
 from rich.text import Text
 
 from lindy_orchestrator.dag import (
     STATUS_ICONS,
     STATUS_STYLES,
+    _build_tree,
     _compute_levels,
-    _edge_lines,
     render_dag,
     render_dag_ascii,
 )
@@ -85,6 +85,61 @@ class TestComputeLevels:
 
 
 # ---------------------------------------------------------------------------
+# Tree building
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTree:
+    def test_empty(self):
+        roots, children, extra = _build_tree([])
+        assert roots == []
+        assert children == {}
+        assert extra == {}
+
+    def test_single_root(self):
+        t = _task(1)
+        roots, children, extra = _build_tree([t])
+        assert roots == [t]
+        assert children[1] == []
+        assert extra == {}
+
+    def test_linear_chain_tree(self):
+        t1 = _task(1)
+        t2 = _task(2, depends_on=[1])
+        t3 = _task(3, depends_on=[2])
+        roots, children, extra = _build_tree([t1, t2, t3])
+        assert roots == [t1]
+        assert children[1] == [t2]
+        assert children[2] == [t3]
+
+    def test_diamond_assigns_to_deepest_parent(self):
+        t1 = _task(1)
+        t2 = _task(2, depends_on=[1])
+        t3 = _task(3, depends_on=[1])
+        t4 = _task(4, depends_on=[2, 3])
+        roots, children, extra = _build_tree([t1, t2, t3, t4])
+        assert roots == [t1]
+        # t4 assigned to highest-level parent (both at level 1, highest id = 3)
+        assert t4 in children[3]
+        assert 2 in extra[4]
+
+    def test_multiple_roots(self):
+        t1 = _task(1)
+        t2 = _task(2)
+        roots, children, extra = _build_tree([t1, t2])
+        assert len(roots) == 2
+        assert roots[0].id == 1
+        assert roots[1].id == 2
+
+    def test_children_sorted_by_id(self):
+        t1 = _task(1)
+        t3 = _task(3, depends_on=[1])
+        t2 = _task(2, depends_on=[1])
+        roots, children, extra = _build_tree([t1, t3, t2])
+        assert [c.id for c in children[1]] == [2, 3]
+
+
+# ---------------------------------------------------------------------------
 # Status icons & coloring
 # ---------------------------------------------------------------------------
 
@@ -132,62 +187,7 @@ class TestStatusDisplay:
 
 
 # ---------------------------------------------------------------------------
-# Edge rendering
-# ---------------------------------------------------------------------------
-
-
-class TestEdgeRendering:
-    def test_no_edges_for_single_level(self):
-        """Tasks with no dependencies produce no edge rows."""
-        level = [_task(1), _task(2)]
-        result = _edge_lines(level, [])
-        assert result == []
-
-    def test_direct_vertical(self):
-        """Parent directly above child → vertical connector."""
-        parent_level = [_task(1)]
-        child_level = [_task(2, depends_on=[1])]
-        rows = _edge_lines(parent_level, child_level)
-        assert len(rows) == 3
-        # The merge row should contain │ (vertical pass-through)
-        assert "\u2502" in rows[1]
-        # The arrive row should contain ▼
-        assert "\u25bc" in rows[2]
-
-    def test_fan_out_edges(self):
-        """Single parent fanning to multiple children."""
-        parent_level = [_task(1)]
-        child_level = [_task(2, depends_on=[1]), _task(3, depends_on=[1])]
-        rows = _edge_lines(parent_level, child_level)
-        assert len(rows) == 3
-        # Should contain horizontal connector ─
-        assert "\u2500" in rows[1]
-        # Should have ▼ for both children
-        assert rows[2].count("\u25bc") == 2
-
-    def test_diamond_merge_edges(self):
-        """Two parents merging into one child."""
-        parent_level = [_task(1), _task(2)]
-        child_level = [_task(3, depends_on=[1, 2])]
-        rows = _edge_lines(parent_level, child_level)
-        assert len(rows) == 3
-        # Drop row: two │ for two parents
-        assert rows[0].count("\u2502") == 2
-        # Merge row: horizontal connector
-        assert "\u2500" in rows[1]
-        # Arrive row: one ▼ for the child
-        assert rows[2].count("\u25bc") == 1
-
-    def test_no_edges_when_no_deps(self):
-        """Children without dependencies produce no connectors."""
-        parent_level = [_task(1)]
-        child_level = [_task(2)]  # no depends_on
-        rows = _edge_lines(parent_level, child_level)
-        assert rows == []
-
-
-# ---------------------------------------------------------------------------
-# Single-task plan
+# Tree rendering — single task
 # ---------------------------------------------------------------------------
 
 
@@ -207,7 +207,7 @@ class TestSingleTask:
 
 
 # ---------------------------------------------------------------------------
-# Linear chain
+# Tree rendering — linear chain
 # ---------------------------------------------------------------------------
 
 
@@ -221,14 +221,12 @@ class TestLinearChain:
         )
         out = render_dag_ascii(plan)
         lines = out.split("\n")
-        # Header + 3 level rows + 2 * 3 edge rows = 10 lines
         assert lines[0] == "DAG: Chain"
-        # Each level has exactly one task
         assert "1 a" in out
         assert "2 b" in out
         assert "3 c" in out
-        # Vertical connectors between levels
-        assert "\u25bc" in out  # ▼
+        # Tree uses box-drawing connectors
+        assert "\u2514" in out or "\u251c" in out  # └ or ├
 
     def test_rich_three_levels(self):
         plan = _plan(
@@ -242,7 +240,7 @@ class TestLinearChain:
 
 
 # ---------------------------------------------------------------------------
-# Diamond dependency pattern
+# Tree rendering — diamond dependency pattern
 # ---------------------------------------------------------------------------
 
 
@@ -257,12 +255,10 @@ class TestDiamondPattern:
         )
         out = render_dag_ascii(plan)
         assert "DAG: Diamond" in out
-        # All tasks present
         for tid in range(1, 5):
             assert f"{tid} " in out
-        # Edge connectors present
-        assert "\u25bc" in out  # ▼
-        assert "\u2502" in out  # │
+        # Diamond merge task should show extra dependency
+        assert "[+" in out  # extra dep annotation like [+2]
 
     def test_rich(self):
         plan = _plan(
@@ -279,7 +275,7 @@ class TestDiamondPattern:
 
 
 # ---------------------------------------------------------------------------
-# Wide parallel fan-out
+# Tree rendering — wide parallel fan-out
 # ---------------------------------------------------------------------------
 
 
@@ -295,18 +291,11 @@ class TestWideFanOut:
         )
         out = render_dag_ascii(plan)
         assert "DAG: FanOut" in out
-        # All 5 tasks present
         for tid in range(1, 6):
             assert f"{tid} " in out
-        # Fan-out edges present
-        assert "\u25bc" in out
-        # 4 children → 4 ▼ arrows (plus one possible from root level)
-        lines = out.split("\n")
-        arrow_line = [ln for ln in lines if "\u25bc" in ln]
-        assert len(arrow_line) >= 1
-        # At least 4 ▼ in the arrow row(s)
-        total_arrows = sum(ln.count("\u25bc") for ln in arrow_line)
-        assert total_arrows >= 4
+        # Tree connectors present
+        assert "\u251c" in out  # ├
+        assert "\u2514" in out  # └
 
     def test_rich(self):
         plan = _plan(
@@ -354,3 +343,175 @@ class TestMixedStatuses:
         out = render_dag_ascii(plan)
         for status in TaskStatus:
             assert STATUS_ICONS[status] in out
+
+
+# ---------------------------------------------------------------------------
+# Annotations (verbose mode)
+# ---------------------------------------------------------------------------
+
+
+class TestAnnotations:
+    def test_annotations_shown_when_verbose(self):
+        plan = _plan(
+            _task(1, module="api", desc="Build", status=TaskStatus.IN_PROGRESS),
+            _task(2, module="fe", desc="Frontend", depends_on=[1]),
+        )
+        annotations = {1: "tool: Edit"}
+        out = render_dag_ascii(plan, annotations=annotations, verbose=True)
+        assert "\u2190 tool: Edit" in out  # ← tool: Edit
+
+    def test_annotations_hidden_when_not_verbose(self):
+        plan = _plan(
+            _task(1, module="api", desc="Build", status=TaskStatus.IN_PROGRESS),
+        )
+        annotations = {1: "tool: Edit"}
+        out = render_dag_ascii(plan, annotations=annotations, verbose=False)
+        assert "\u2190" not in out
+
+    def test_long_annotation_truncated(self):
+        plan = _plan(
+            _task(1, module="api", desc="Build", status=TaskStatus.IN_PROGRESS),
+        )
+        annotations = {1: "x" * 100}
+        out = render_dag_ascii(plan, annotations=annotations, verbose=True)
+        # Should be truncated to fit within 78 chars
+        lines = out.split("\n")
+        for line in lines:
+            assert len(line) <= 78, f"Line too long ({len(line)}): {line!r}"
+
+    def test_rich_annotations(self):
+        plan = _plan(
+            _task(1, module="api", desc="Build", status=TaskStatus.IN_PROGRESS),
+        )
+        annotations = {1: "tool: Bash"}
+        result = render_dag(plan, annotations=annotations, verbose=True)
+        assert "\u2190 tool: Bash" in result.plain
+
+
+# ---------------------------------------------------------------------------
+# Terminal fit test (80 columns x 24 rows)
+# ---------------------------------------------------------------------------
+
+
+class TestFitsTerminal:
+    def test_six_task_dag_fits_80x24(self):
+        """6-task DAG with mixed statuses fits within 80 columns and 24 rows."""
+        plan = _plan(
+            _task(
+                1,
+                module="core",
+                desc="Initialize project",
+                status=TaskStatus.COMPLETED,
+            ),
+            _task(
+                2,
+                module="api",
+                desc="Build API endpoints",
+                status=TaskStatus.COMPLETED,
+                depends_on=[1],
+            ),
+            _task(
+                3,
+                module="fe",
+                desc="Build frontend UI",
+                status=TaskStatus.IN_PROGRESS,
+                depends_on=[1],
+            ),
+            _task(
+                4,
+                module="be",
+                desc="Build backend service",
+                status=TaskStatus.PENDING,
+                depends_on=[1],
+            ),
+            _task(
+                5,
+                module="qa",
+                desc="Run integration tests",
+                status=TaskStatus.FAILED,
+                depends_on=[2, 3, 4],
+            ),
+            _task(
+                6,
+                module="deploy",
+                desc="Deploy to staging",
+                status=TaskStatus.SKIPPED,
+                depends_on=[5],
+            ),
+            goal="Deploy Application",
+        )
+        out = render_dag_ascii(plan)
+        lines = out.strip().split("\n")
+        assert len(lines) <= 24, f"DAG has {len(lines)} lines, must be <= 24"
+        for i, line in enumerate(lines):
+            assert len(line) <= 80, f"Line {i} is {len(line)} chars: {line!r}"
+
+    def test_six_task_dag_with_annotations_fits_80x24(self):
+        """6-task DAG with verbose annotations fits within 80 columns and 24 rows."""
+        plan = _plan(
+            _task(
+                1,
+                module="core",
+                desc="Initialize project",
+                status=TaskStatus.COMPLETED,
+            ),
+            _task(
+                2,
+                module="api",
+                desc="Build API endpoints",
+                status=TaskStatus.COMPLETED,
+                depends_on=[1],
+            ),
+            _task(
+                3,
+                module="fe",
+                desc="Build frontend UI",
+                status=TaskStatus.IN_PROGRESS,
+                depends_on=[1],
+            ),
+            _task(
+                4,
+                module="be",
+                desc="Build backend service",
+                status=TaskStatus.PENDING,
+                depends_on=[1],
+            ),
+            _task(
+                5,
+                module="qa",
+                desc="Run integration tests",
+                status=TaskStatus.FAILED,
+                depends_on=[2, 3, 4],
+            ),
+            _task(
+                6,
+                module="deploy",
+                desc="Deploy to staging",
+                status=TaskStatus.SKIPPED,
+                depends_on=[5],
+            ),
+            goal="Deploy Application",
+        )
+        annotations = {
+            1: "completed in 30s",
+            2: "tool: Edit",
+            3: "tool: Bash",
+            5: "error: timeout after 120s",
+        }
+        out = render_dag_ascii(plan, annotations=annotations, verbose=True)
+        lines = out.strip().split("\n")
+        assert len(lines) <= 24, f"DAG has {len(lines)} lines, must be <= 24"
+        for i, line in enumerate(lines):
+            assert len(line) <= 80, f"Line {i} is {len(line)} chars: {line!r}"
+
+    def test_eight_task_linear_fits_80x24(self):
+        """8-task linear chain fits within 80 columns and 24 rows."""
+        tasks = [_task(1, module="m1", desc="Step 1")]
+        for i in range(2, 9):
+            tasks.append(_task(i, module=f"m{i}", desc=f"Step {i}", depends_on=[i - 1]))
+        plan = _plan(*tasks, goal="Linear Chain")
+        out = render_dag_ascii(plan)
+        lines = out.strip().split("\n")
+        assert len(lines) <= 24, f"DAG has {len(lines)} lines, must be <= 24"
+        for i, line in enumerate(lines):
+            assert len(line) <= 80, f"Line {i} is {len(line)} chars: {line!r}"

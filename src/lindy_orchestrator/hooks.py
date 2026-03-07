@@ -26,6 +26,7 @@ class EventType(str, Enum):
     QA_FAILED = "qa_failed"
     STALL_WARNING = "stall_warning"
     STALL_KILLED = "stall_killed"
+    TASK_HEARTBEAT = "task_heartbeat"
     CHECKPOINT_SAVED = "checkpoint_saved"
     MAILBOX_MESSAGE = "mailbox_message"
     SESSION_START = "session_start"

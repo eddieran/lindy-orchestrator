@@ -110,8 +110,107 @@ class TestDashboardRender:
         dash = Dashboard(plan, hooks, console=console)
         summary = dash._build_summary()
         plain = summary.plain
-        assert "1" in plain  # completed count
+        assert "1 completed" in plain
+        assert "1 pending" in plain
         assert "0:" in plain  # elapsed time
+
+    def test_summary_shows_skipped_when_present(self):
+        plan = _plan(
+            _task(1, status=TaskStatus.COMPLETED),
+            _task(2, status=TaskStatus.SKIPPED),
+        )
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console)
+        summary = dash._build_summary()
+        assert "skipped" in summary.plain
+
+
+# ---------------------------------------------------------------------------
+# Annotation tracking
+# ---------------------------------------------------------------------------
+
+
+class TestAnnotations:
+    def test_update_annotation(self):
+        plan = _plan(_task(1))
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
+        dash.update_annotation(1, "tool: Edit")
+        assert dash._annotations[1] == "tool: Edit"
+
+    def test_heartbeat_event_sets_annotation(self):
+        plan = _plan(_task(1))
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
+        dash.start()
+
+        hooks.emit(
+            Event(
+                type=EventType.TASK_HEARTBEAT,
+                task_id=1,
+                module="mod",
+                data={"tool": "Read"},
+            )
+        )
+        assert dash._annotations[1] == "tool: Read"
+
+    def test_task_started_sets_annotation(self):
+        plan = _plan(_task(1))
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
+        dash.start()
+
+        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
+        assert "starting" in dash._annotations[1]
+
+    def test_task_completed_sets_annotation(self):
+        plan = _plan(_task(1))
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
+        dash.start()
+
+        hooks.emit(Event(type=EventType.TASK_COMPLETED, task_id=1, module="mod"))
+        assert dash._annotations[1] == "done"
+
+    def test_task_failed_sets_annotation(self):
+        plan = _plan(_task(1))
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
+        dash.start()
+
+        hooks.emit(
+            Event(
+                type=EventType.TASK_FAILED,
+                task_id=1,
+                module="mod",
+                data={"reason": "timeout"},
+            )
+        )
+        assert dash._annotations[1] == "timeout"
+
+    def test_qa_event_sets_annotation(self):
+        plan = _plan(_task(1))
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
+        dash.start()
+
+        hooks.emit(
+            Event(
+                type=EventType.QA_PASSED,
+                task_id=1,
+                module="mod",
+                data={"gate": "structural_check"},
+            )
+        )
+        assert "structural_check" in dash._annotations[1]
+        assert "pass" in dash._annotations[1]
 
 
 # ---------------------------------------------------------------------------
@@ -120,65 +219,7 @@ class TestDashboardRender:
 
 
 class TestEventDrivenUpdates:
-    def test_task_started_sets_active_id(self):
-        plan = _plan(_task(1), _task(2, depends_on=[1]))
-        hooks = HookRegistry()
-        console = _make_console(is_terminal=False)
-        dash = Dashboard(plan, hooks, console=console)
-        dash.start()
-
-        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
-        assert dash._active_task_id == 1
-
-    def test_task_completed_clears_active_id(self):
-        plan = _plan(_task(1))
-        hooks = HookRegistry()
-        console = _make_console(is_terminal=False)
-        dash = Dashboard(plan, hooks, console=console)
-        dash.start()
-
-        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
-        assert dash._active_task_id == 1
-
-        hooks.emit(Event(type=EventType.TASK_COMPLETED, task_id=1, module="mod"))
-        assert dash._active_task_id is None
-
-    def test_task_failed_clears_active_id(self):
-        plan = _plan(_task(1))
-        hooks = HookRegistry()
-        console = _make_console(is_terminal=False)
-        dash = Dashboard(plan, hooks, console=console)
-        dash.start()
-
-        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
-        hooks.emit(Event(type=EventType.TASK_FAILED, task_id=1, module="mod"))
-        assert dash._active_task_id is None
-
-    def test_heartbeat_update(self):
-        plan = _plan(_task(1))
-        hooks = HookRegistry()
-        console = _make_console(is_terminal=False)
-        dash = Dashboard(plan, hooks, console=console)
-        dash.start()
-
-        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
-        dash.update_heartbeat(42, "Read")
-        assert dash._hb_event_count == 42
-        assert dash._hb_last_tool == "Read"
-
-        hb_text = dash._build_heartbeat()
-        assert "42 events" in hb_text.plain
-        assert "Read" in hb_text.plain
-
-    def test_heartbeat_empty_when_no_active_task(self):
-        plan = _plan(_task(1))
-        hooks = HookRegistry()
-        console = _make_console(is_terminal=False)
-        dash = Dashboard(plan, hooks, console=console)
-        hb_text = dash._build_heartbeat()
-        assert hb_text.plain.strip() == ""
-
-    def test_multiple_events_update_state(self):
+    def test_multiple_events_update_annotations(self):
         plan = _plan(
             _task(1),
             _task(2, depends_on=[1]),
@@ -186,18 +227,46 @@ class TestEventDrivenUpdates:
         )
         hooks = HookRegistry()
         console = _make_console(is_terminal=False)
-        dash = Dashboard(plan, hooks, console=console)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
         dash.start()
 
-        # Start and complete task 1
         hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
-        assert dash._active_task_id == 1
-        hooks.emit(Event(type=EventType.TASK_COMPLETED, task_id=1, module="mod"))
-        assert dash._active_task_id is None
+        assert "starting" in dash._annotations[1]
 
-        # Start task 2
+        hooks.emit(
+            Event(
+                type=EventType.TASK_HEARTBEAT,
+                task_id=1,
+                module="mod",
+                data={"tool": "Edit"},
+            )
+        )
+        assert dash._annotations[1] == "tool: Edit"
+
+        hooks.emit(Event(type=EventType.TASK_COMPLETED, task_id=1, module="mod"))
+        assert dash._annotations[1] == "done"
+
         hooks.emit(Event(type=EventType.TASK_STARTED, task_id=2, module="mod"))
-        assert dash._active_task_id == 2
+        assert "starting" in dash._annotations[2]
+        # Task 1 annotation preserved
+        assert dash._annotations[1] == "done"
+
+    def test_retrying_sets_annotation(self):
+        plan = _plan(_task(1))
+        hooks = HookRegistry()
+        console = _make_console(is_terminal=False)
+        dash = Dashboard(plan, hooks, console=console, verbose=True)
+        dash.start()
+
+        hooks.emit(
+            Event(
+                type=EventType.TASK_RETRYING,
+                task_id=1,
+                module="mod",
+                data={"retry": 2},
+            )
+        )
+        assert "retry 2" in dash._annotations[1]
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +291,7 @@ class TestNonTTYFallback:
         dash.start()
         dash.stop()
         output = console.file.getvalue()
-        # Should contain task info from the rendered DAG
+        # Should contain task info from the rendered DAG tree
         assert "1 mod" in output
 
     def test_interactive_starts_live(self):
