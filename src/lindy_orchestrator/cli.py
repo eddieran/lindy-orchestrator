@@ -21,12 +21,34 @@ from .reporter import PlanProgress, print_goal_report, print_status_table
 from .session import SessionManager
 from .status.parser import parse_status_md
 
+
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f"lindy-orchestrate {__version__}")
+        raise typer.Exit()
+
+
 app = typer.Typer(
     name="lindy-orchestrate",
     help="Lightweight, git-native multi-agent orchestration framework.",
     no_args_is_help=True,
 )
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show version and exit.",
+    ),
+) -> None:
+    """Lightweight, git-native multi-agent orchestration framework."""
+
 
 # Private aliases for internal use and backward compat with cli_ext
 _load_cfg = load_cfg
