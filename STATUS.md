@@ -15,6 +15,7 @@
 ## Completed (Recent)
 | ID | Task | Completed | Outcome |
 |----|------|-----------|---------|
+| 3 | Fix shell compound commands & module-scoped qa_gates | 2026-03-07 | sh -c wrapping for &&/||/|, cwd default to project root, config normalization |
 | 2 | CLI optimization: unified onboard command | 2026-03-07 | Merged init+scaffold+onboard into single `onboard` command |
 | 2a | CLI optimization: unified status+logs | 2026-03-07 | Combined status and logs into single `status` command with subcommands |
 | 2b | CLI optimization: dashboard redesign | 2026-03-07 | Compact ASCII DAG tree with real-time annotations |
@@ -49,8 +50,8 @@
 | audit_findings_total | 69 (14H/28M/27L) |
 | audit_findings_fixed | 35 |
 | audit_findings_remaining | 34 |
-| version | 0.6.0 |
-| tests_passing | 816 |
+| version | 0.6.1 |
+| tests_passing | 824 |
 | ruff_warnings | 0 |
 
 ## Blockers
