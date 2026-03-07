@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-from lindy_orchestrator.cli_onboard import (
+from lindy_orchestrator.cli_onboard_helpers import (
     _detect_modules,
     _detect_tech,
     _generate_config,
