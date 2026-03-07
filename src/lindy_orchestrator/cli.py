@@ -456,11 +456,9 @@ def version(
         console.print(f"lindy-orchestrator v{__version__}")
 
 
-from .cli_init import register_init_commands  # noqa: E402
 from .cli_ext import register_ext_commands  # noqa: E402
-from .cli_scaffold import register_scaffold_command  # noqa: E402
+from .cli_onboard import register_onboard_command  # noqa: E402
 
-register_init_commands(app, console)
 register_ext_commands(
     app,
     console,
@@ -472,4 +470,4 @@ register_ext_commands(
         "resolve_goal": _resolve_goal,
     },
 )
-register_scaffold_command(app, console)
+register_onboard_command(app, console)
