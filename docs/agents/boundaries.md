@@ -50,13 +50,20 @@ The following are allowed exceptions to boundary rules:
 - **Mailbox directory** (`.orchestrator/mailbox/`) -- agents may read/write mailbox
   JSONL files for their own module. The `Mailbox` class enforces path safety
   with `_SAFE_MODULE_RE` validation and `is_relative_to()` checks.
+  Mailbox messages are automatically injected into agent prompts during dispatch
+  via `scheduler_helpers.inject_mailbox_messages()` when `mailbox.inject_on_dispatch`
+  is enabled.
 - **Tracker integration** -- the `cli_ext.py:run_issue` command syncs results
   back to the issue tracker (comments, status updates). This crosses the
   boundary between orchestrator and external tracker but is explicitly
-  allowed via the `TrackerProvider` protocol.
+  allowed via the `TrackerProvider` protocol. Supported providers: GitHub Issues
+  (via `gh` CLI).
 - **STATUS.md files** -- agents update their own module's STATUS.md. The
   `status/writer.py` module validates content before writing.
 - **Report files** (`.orchestrator/reports/`) -- the reporter writes Markdown
   summaries after execution. These are read-only artifacts.
 - **Plan files** (`.orchestrator/plans/`) -- the CLI persists plan JSON for
   resume capability. The `gc` command cleans up orphaned plans.
+- **Worktree directory** (`.worktrees/`) -- the scheduler creates isolated git
+  worktrees for parallel task execution. These are automatically cleaned up
+  after task completion via `worktree.py`.

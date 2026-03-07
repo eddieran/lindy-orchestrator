@@ -44,8 +44,15 @@ provides helpers for updating the meta timestamp.
 - Branches are merged after QA gates pass
 
 Branch delivery instructions are automatically injected into the agent prompt
-by the scheduler before the first dispatch. On retry, the same branch is reused
-(agents are told not to recreate the branch).
+by the scheduler before the first dispatch (via `scheduler_helpers.inject_branch_delivery()`).
+On retry, the same branch is reused (agents are told not to recreate the branch).
+
+### Worktree Isolation
+
+When tasks run in parallel, each agent gets its own git worktree via `worktree.py`.
+The worktree is pre-configured on the delivery branch, so agents do not need to
+run `git checkout`. This prevents checkout race conditions between concurrent agents.
+Worktrees are cleaned up automatically after task completion.
 
 ## QA Gates
 
@@ -116,6 +123,14 @@ The `layer_check` gate enforces intra-module layer ordering:
 - Shared directories (`utils/`, `shared/`, `common/`) are exempt (treated as layer -1)
 - Test directories are excluded from checking
 
+### Auto-Injection of QA Gates
+
+The scheduler automatically injects standard QA gates into every task via
+`scheduler_helpers.inject_qa_gates()`:
+- `structural_check` is always injected (unless already present)
+- `layer_check` is injected when enabled and `ARCHITECTURE.md` exists
+- Custom command gates from config are injected when applicable to the task's module
+
 ## Structured QA Feedback and Retry
 
 When a QA gate fails, the system does not simply re-run the task. Instead:
@@ -164,8 +179,9 @@ Each message is a JSON object with fields: `id`, `from_module`, `to_module`,
 ### Automatic Injection
 
 When `mailbox.inject_on_dispatch` is true (default), the scheduler automatically
-injects pending mailbox messages into the agent prompt before dispatch. This
-allows agents to receive messages from other modules without polling.
+injects pending mailbox messages into the agent prompt before dispatch (via
+`scheduler_helpers.inject_mailbox_messages()`). This allows agents to receive
+messages from other modules without polling.
 
 ### CLI Commands
 
