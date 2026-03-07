@@ -147,6 +147,8 @@ class TestGenerateConfig:
         assert "planner:" in config
         assert "dispatcher:" in config
         assert "safety:" in config
+        assert "mailbox:" in config
+        assert "enabled: true" in config
 
     def test_empty_modules(self):
         config = _generate_config("proj", [])

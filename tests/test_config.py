@@ -44,6 +44,7 @@ def test_default_config():
     assert cfg.planner.mode == "cli"
     assert cfg.dispatcher.timeout_seconds == 1800
     assert cfg.safety.max_parallel == 3
+    assert cfg.mailbox.enabled is True
 
 
 def test_config_not_found():

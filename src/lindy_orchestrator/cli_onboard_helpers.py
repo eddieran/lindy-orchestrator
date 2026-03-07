@@ -211,6 +211,9 @@ def _generate_config(project_name: str, modules: list[tuple[str, str]]) -> str:
             "  dry_run: false",
             "  max_retries_per_task: 2",
             "  max_parallel: 3",
+            "",
+            "mailbox:",
+            "  enabled: true",
         ]
     )
     return "\n".join(lines) + "\n"

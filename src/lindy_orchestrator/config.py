@@ -87,7 +87,7 @@ class SafetyConfig(BaseModel):
 
 
 class MailboxConfig(BaseModel):
-    enabled: bool = False  # opt-in
+    enabled: bool = True  # enabled by default
     dir: str = ".orchestrator/mailbox"
     inject_on_dispatch: bool = True  # auto-inject pending messages into prompts
 

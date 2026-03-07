@@ -366,6 +366,32 @@ class TestStatusCommand:
         # Module should show with "?" health
         assert "backend" in result.output
 
+    def test_status_shows_mailbox_summary(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        # Create mailbox dir and send a message
+        mb_dir = tmp_path / ".orchestrator" / "mailbox"
+        mb_dir.mkdir(parents=True, exist_ok=True)
+        from lindy_orchestrator.mailbox import Mailbox, Message
+
+        mb = Mailbox(mb_dir)
+        mb.send(Message(from_module="frontend", to_module="backend", content="test msg"))
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--status-only"])
+        assert result.exit_code == 0
+        assert "Mailbox" in result.output
+        assert "1 pending" in result.output
+
+    def test_status_json_includes_mailbox(self, tmp_path):
+        cfg_path = _write_config(tmp_path)
+        _write_status_md(tmp_path)
+        mb_dir = tmp_path / ".orchestrator" / "mailbox"
+        mb_dir.mkdir(parents=True, exist_ok=True)
+        result = runner.invoke(app, ["status", "-c", cfg_path, "--json", "--status-only"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "mailbox" in data
+        assert "backend" in data["mailbox"]
+
 
 class TestLogsAlias:
     """Tests for the backward-compat 'logs' command alias."""
