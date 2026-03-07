@@ -14,10 +14,14 @@ from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
-from .scheduler_helpers import _check_delivery, inject_qa_gates
+from .scheduler_helpers import (
+    _check_delivery,
+    inject_branch_delivery,
+    inject_mailbox_messages,
+    inject_qa_gates,
+)
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
-from .mailbox import Mailbox, format_mailbox_messages
 from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
@@ -185,8 +189,15 @@ def _execute_single_task(
 
     try:
         return _dispatch_loop(
-            task, config, logger, progress, detail, max_retries,
-            hooks, branch_name, worktree_path,
+            task,
+            config,
+            logger,
+            progress,
+            detail,
+            max_retries,
+            hooks,
+            branch_name,
+            worktree_path,
         )
     finally:
         if worktree_path:
@@ -266,46 +277,10 @@ def _dispatch_loop(
                 _hb_last_print = now
 
         # Inject pending mailbox messages if enabled
-        if config.mailbox.enabled and config.mailbox.inject_on_dispatch:
-            try:
-                mb = Mailbox(config.root / config.mailbox.dir)
-                pending = mb.receive(task.module, unread_only=True)
-                if pending:
-                    formatted = format_mailbox_messages(pending)
-                    task.prompt = (
-                        f"{task.prompt}\n\n"
-                        f"## Inter-agent messages for {task.module}\n\n"
-                        f"{formatted}\n"
-                    )
-                    progress(f"    [dim]Injected {len(pending)} mailbox message(s)[/]")
-            except Exception:
-                log.warning("Mailbox injection failed for %s", task.module, exc_info=True)
+        inject_mailbox_messages(task, config, progress)
 
         # Inject branch delivery instructions
-        if dispatches == 0:
-            if worktree_path:
-                task.prompt = (
-                    f"{task.prompt}\n\n"
-                    f"## IMPORTANT: Branch delivery requirements\n\n"
-                    f"You are already on branch `{branch_name}` (worktree isolation).\n"
-                    f"Do NOT switch branches or run `git checkout`.\n"
-                    f"When done:\n"
-                    f"1. `git add` and `git commit` your changes\n"
-                    f"2. `git push -u origin {branch_name}` (push to remote)\n"
-                    f"Do NOT skip the push step — CI verification depends on it.\n"
-                )
-            else:
-                task.prompt = (
-                    f"{task.prompt}\n\n"
-                    f"## IMPORTANT: Branch delivery requirements\n\n"
-                    f"You MUST deliver your work on branch `{branch_name}`.\n"
-                    f"Before starting work:\n"
-                    f"1. `git checkout -b {branch_name}` (create the branch)\n"
-                    f"When done:\n"
-                    f"2. `git add` and `git commit` your changes\n"
-                    f"3. `git push -u origin {branch_name}` (push to remote)\n"
-                    f"Do NOT skip the push step — CI verification depends on it.\n"
-                )
+        inject_branch_delivery(task, branch_name, worktree_path, dispatches)
 
         provider = create_provider(config.dispatcher)
         result = provider.dispatch(
