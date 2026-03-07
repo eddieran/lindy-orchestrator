@@ -25,7 +25,11 @@ from .dispatcher import find_claude_cli
 from .hooks import HookRegistry
 from .logger import ActionLogger
 from .models import TaskStatus
-from .reporter import PlanProgress, print_goal_report
+from .reporter import (
+    PlanProgress,
+    generate_execution_summary,
+    save_summary_report,
+)
 from .session import SessionManager
 
 
@@ -174,19 +178,9 @@ def run(
     console.print("\n[bold cyan][3/3][/] Generating report...")
     duration = round(time.monotonic() - start, 1)
 
-    completed = [t for t in plan.tasks if t.status.value == "completed"]
-    failed = [t for t in plan.tasks if t.status.value == "failed"]
-
-    if failed:
-        report = f"GOAL PAUSED: {goal}\n\nCompleted: {len(completed)}/{len(plan.tasks)}\n"
-        for t in failed:
-            report += f"Failed: Task {t.id} [{t.module}] {t.description}\n"
-    else:
-        report = f"GOAL COMPLETED: {goal}\n\n"
-        for t in completed:
-            report += f"- [{t.module}] {t.description}\n"
-
-    print_goal_report(report, dispatches=len(plan.tasks), duration=duration)
+    generate_execution_summary(plan, duration, session.session_id, console=console)
+    report_path = save_summary_report(plan, duration, session.session_id, cfg.root)
+    console.print(f"\n[dim]Report saved to {report_path}[/]")
 
     completed, failed = finalise_session(session, sessions, plan)
 
@@ -350,15 +344,10 @@ def resume(
         )
 
     duration = round(time.monotonic() - start, 1)
-    completed = [t for t in plan.tasks if t.status.value == "completed"]
-    failed = [t for t in plan.tasks if t.status.value == "failed"]
 
-    print_goal_report(
-        f"{'GOAL COMPLETED' if not failed else 'GOAL PAUSED'}: {session.goal}\n\n"
-        f"Completed: {len(completed)}/{len(plan.tasks)} tasks",
-        dispatches=len(plan.tasks),
-        duration=duration,
-    )
+    generate_execution_summary(plan, duration, session.session_id, console=console)
+    report_path = save_summary_report(plan, duration, session.session_id, cfg.root)
+    console.print(f"\n[dim]Report saved to {report_path}[/]")
 
     finalise_session(session, sessions, plan)
 

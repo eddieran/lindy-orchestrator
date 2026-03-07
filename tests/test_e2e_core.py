@@ -1,5 +1,6 @@
-"""End-to-end CLI tests — core commands (version, status, mailbox, run, plan, resume).
+"""End-to-end CLI tests — core commands (version, status, mailbox, run, plan).
 
+Resume tests are in test_e2e_resume.py.
 Uses Typer CliRunner, mocking only external dependencies (Claude CLI, git, LLM).
 """
 
@@ -295,6 +296,93 @@ class TestE2ERun:
         assert result.exit_code == 0
         assert "PAUSED" in result.output
 
+    # --- Execution summary report E2E tests ---
+
+    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    def test_run_shows_execution_summary(self, mock_plan, mock_exec, mock_cli, cfg_path):
+        """Run command outputs the execution summary with task details and metrics."""
+        result = runner.invoke(app, ["run", "Build feature X", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "Task Details" in result.output
+        assert "Execution Metrics" in result.output
+
+    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    def test_run_shows_session_in_summary(self, mock_plan, mock_exec, mock_cli, cfg_path):
+        """Execution summary header includes the session ID."""
+        result = runner.invoke(app, ["run", "Auth feature", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "Session" in result.output
+
+    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    def test_run_shows_task_counts(self, mock_plan, mock_exec, mock_cli, cfg_path):
+        """Summary shows pass/fail/skip counts."""
+        result = runner.invoke(app, ["run", "API work", "-c", cfg_path])
+        assert result.exit_code == 0
+        # mock_execute_plan completes both tasks
+        assert "2 passed" in result.output
+        assert "0 failed" in result.output
+
+    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    def test_run_saves_report_file(self, mock_plan, mock_exec, mock_cli, project_dir, cfg_path):
+        """Run command saves a Markdown report to .orchestrator/reports/."""
+        result = runner.invoke(app, ["run", "Save report test", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "Report saved to" in result.output
+        reports_dir = project_dir / ".orchestrator" / "reports"
+        assert reports_dir.exists()
+        report_files = list(reports_dir.glob("*_summary.md"))
+        assert len(report_files) == 1
+        content = report_files[0].read_text()
+        assert "# Execution Summary" in content
+        assert "COMPLETED" in content
+
+    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.scheduler.execute_plan")
+    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    def test_run_failure_report_shows_task_details(self, mock_plan, mock_exec, mock_cli, cfg_path):
+        """When tasks fail, execution summary shows FAIL status and retry count."""
+
+        def exec_with_retries(plan, cfg, logger, on_progress=None, verbose=False, hooks=None):
+            plan.tasks[0].status = TaskStatus.COMPLETED
+            plan.tasks[0].result = "done"
+            plan.tasks[1].status = TaskStatus.FAILED
+            plan.tasks[1].result = "compile error"
+            plan.tasks[1].retries = 3
+            return plan
+
+        mock_exec.side_effect = exec_with_retries
+        result = runner.invoke(app, ["run", "test", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "GOAL PAUSED" in result.output
+        assert "1 failed" in result.output
+        assert "Task Details" in result.output
+
+    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    def test_run_from_plan_file_shows_report(self, mock_exec, mock_cli, project_dir, cfg_path):
+        """Run from plan file also produces the execution summary report."""
+        from lindy_orchestrator.models import plan_to_dict
+
+        plan = make_plan("Plan file report")
+        for t in plan.tasks:
+            t.status = TaskStatus.PENDING
+        plan_file = project_dir / "plan.json"
+        plan_file.write_text(json.dumps(plan_to_dict(plan), indent=2, default=str))
+
+        result = runner.invoke(app, ["run", "--plan", str(plan_file), "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "GOAL COMPLETED" in result.output
+        assert "Report saved to" in result.output
+        assert "Execution Metrics" in result.output
+
 
 # ---------------------------------------------------------------------------
 # 5. Plan command
@@ -333,67 +421,3 @@ class TestE2EPlan:
         result = runner.invoke(app, ["plan", "--file", str(goal_file), "-c", cfg_path])
         assert result.exit_code == 0
         assert "2 tasks" in result.output
-
-
-# ---------------------------------------------------------------------------
-# 6. Resume command
-# ---------------------------------------------------------------------------
-
-
-class TestE2EResume:
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    def test_resume_latest_session(self, mock_exec, project_dir, cfg_path):
-        """Resume picks up the latest session and re-executes pending tasks."""
-        from lindy_orchestrator.models import plan_to_dict
-        from lindy_orchestrator.session import SessionManager
-
-        sessions = SessionManager(project_dir / ".orchestrator" / "sessions")
-        session = sessions.create(goal="Resume goal")
-        plan = make_plan("Resume goal")
-        plan.tasks[0].status = TaskStatus.COMPLETED
-        plan.tasks[1].status = TaskStatus.FAILED
-        plan.tasks[1].result = "error"
-        session.plan_json = plan_to_dict(plan)
-        session.status = "paused"
-        sessions.save(session)
-
-        result = runner.invoke(app, ["resume", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "Resume" in result.output
-        assert "retry" in result.output or "remaining" in result.output
-
-    def test_resume_no_session(self, project_dir, cfg_path):
-        result = runner.invoke(app, ["resume", "-c", cfg_path])
-        assert result.exit_code != 0
-        assert "No session found" in result.output
-
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    def test_resume_already_completed(self, mock_exec, project_dir, cfg_path):
-        from lindy_orchestrator.session import SessionManager
-
-        sessions = SessionManager(project_dir / ".orchestrator" / "sessions")
-        session = sessions.create(goal="Done goal")
-        session.status = "completed"
-        sessions.save(session)
-
-        result = runner.invoke(app, ["resume", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "already completed" in result.output.lower()
-
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    def test_resume_by_session_id(self, mock_exec, project_dir, cfg_path):
-        from lindy_orchestrator.models import plan_to_dict
-        from lindy_orchestrator.session import SessionManager
-
-        sessions = SessionManager(project_dir / ".orchestrator" / "sessions")
-        session = sessions.create(goal="Specific session")
-        plan = make_plan("Specific session")
-        plan.tasks[0].status = TaskStatus.COMPLETED
-        plan.tasks[1].status = TaskStatus.PENDING
-        session.plan_json = plan_to_dict(plan)
-        session.status = "paused"
-        sessions.save(session)
-
-        result = runner.invoke(app, ["resume", session.session_id, "-c", cfg_path])
-        assert result.exit_code == 0
-        assert session.session_id in result.output

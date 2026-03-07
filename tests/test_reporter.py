@@ -1,4 +1,9 @@
-"""Tests for reporter module — PlanProgress, print_goal_report, print_status_table."""
+"""Tests for reporter module — PlanProgress, print_goal_report, print_status_table,
+helper functions (_task_duration, _format_duration, _qa_summary), and print_log_entries.
+
+Execution summary tests (generate_execution_summary, save_summary_report) are in
+test_reporter_summary.py.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +11,21 @@ from io import StringIO
 
 from rich.console import Console
 
-from lindy_orchestrator.reporter import PlanProgress, print_goal_report, print_status_table
+from lindy_orchestrator.models import QAResult, TaskItem
+from lindy_orchestrator.reporter import (
+    PlanProgress,
+    _format_duration,
+    _qa_summary,
+    _task_duration,
+    print_goal_report,
+    print_log_entries,
+    print_status_table,
+)
 
 
-def _make_console() -> Console:
+def _make_console(width: int = 80) -> Console:
     """Create a non-interactive console that writes to a string buffer."""
-    return Console(file=StringIO(), force_terminal=False)
+    return Console(file=StringIO(), force_terminal=False, width=width)
 
 
 def _get_output(console: Console) -> str:
@@ -162,3 +176,227 @@ class TestPrintStatusTable:
         print_status_table(modules, console=con)
         output = _get_output(con)
         assert "BLUE" in output
+
+
+# ---------------------------------------------------------------------------
+# Helper functions: _task_duration
+# ---------------------------------------------------------------------------
+
+
+class TestTaskDuration:
+    def test_valid_timestamps(self):
+        task = TaskItem(
+            id=1,
+            module="x",
+            description="t",
+            started_at="2026-03-07T10:00:00+00:00",
+            completed_at="2026-03-07T10:02:30+00:00",
+        )
+        assert _task_duration(task) == 150.0
+
+    def test_no_started_at(self):
+        task = TaskItem(id=1, module="x", description="t", completed_at="2026-03-07T10:02:30+00:00")
+        assert _task_duration(task) is None
+
+    def test_no_completed_at(self):
+        task = TaskItem(id=1, module="x", description="t", started_at="2026-03-07T10:00:00+00:00")
+        assert _task_duration(task) is None
+
+    def test_both_none(self):
+        task = TaskItem(id=1, module="x", description="t")
+        assert _task_duration(task) is None
+
+    def test_invalid_timestamp_format(self):
+        task = TaskItem(
+            id=1, module="x", description="t", started_at="not-a-date", completed_at="also-not"
+        )
+        assert _task_duration(task) is None
+
+    def test_zero_duration(self):
+        task = TaskItem(
+            id=1,
+            module="x",
+            description="t",
+            started_at="2026-03-07T10:00:00",
+            completed_at="2026-03-07T10:00:00",
+        )
+        assert _task_duration(task) == 0.0
+
+    def test_naive_timestamps(self):
+        """Timestamps without timezone info still work."""
+        task = TaskItem(
+            id=1,
+            module="x",
+            description="t",
+            started_at="2026-03-07T10:00:00",
+            completed_at="2026-03-07T10:01:00",
+        )
+        assert _task_duration(task) == 60.0
+
+
+# ---------------------------------------------------------------------------
+# Helper functions: _format_duration
+# ---------------------------------------------------------------------------
+
+
+class TestFormatDuration:
+    def test_none(self):
+        assert _format_duration(None) == "-"
+
+    def test_sub_minute(self):
+        assert _format_duration(42.3) == "42.3s"
+
+    def test_exactly_60(self):
+        assert _format_duration(60.0) == "1m00s"
+
+    def test_over_minute(self):
+        assert _format_duration(90.0) == "1m30s"
+
+    def test_zero(self):
+        assert _format_duration(0.0) == "0.0s"
+
+    def test_large_duration(self):
+        assert _format_duration(3661.0) == "61m01s"
+
+    def test_just_under_minute(self):
+        assert _format_duration(59.9) == "59.9s"
+
+
+# ---------------------------------------------------------------------------
+# Helper functions: _qa_summary
+# ---------------------------------------------------------------------------
+
+
+class TestQaSummary:
+    def test_no_qa_results(self):
+        task = TaskItem(id=1, module="x", description="t")
+        assert _qa_summary(task) == "-"
+
+    def test_single_pass(self):
+        task = TaskItem(
+            id=1,
+            module="x",
+            description="t",
+            qa_results=[QAResult(gate="lint", passed=True)],
+        )
+        assert _qa_summary(task) == "lint:PASS"
+
+    def test_single_fail(self):
+        task = TaskItem(
+            id=1,
+            module="x",
+            description="t",
+            qa_results=[QAResult(gate="test", passed=False)],
+        )
+        assert _qa_summary(task) == "test:FAIL"
+
+    def test_multiple_results(self):
+        task = TaskItem(
+            id=1,
+            module="x",
+            description="t",
+            qa_results=[
+                QAResult(gate="lint", passed=True),
+                QAResult(gate="test", passed=False),
+                QAResult(gate="build", passed=True),
+            ],
+        )
+        result = _qa_summary(task)
+        assert result == "lint:PASS, test:FAIL, build:PASS"
+
+
+# ---------------------------------------------------------------------------
+# print_log_entries
+# ---------------------------------------------------------------------------
+
+
+class TestPrintLogEntries:
+    def test_empty_lines(self):
+        con = _make_console()
+        print_log_entries([], console=con)
+        output = _get_output(con)
+        assert "No log entries" in output
+
+    def test_valid_json_entry(self):
+        con = _make_console()
+        lines = [
+            '{"timestamp":"2026-01-01T00:00:00","action":"session_start","result":"success","details":{"goal":"test"}}'
+        ]
+        print_log_entries(lines, console=con)
+        output = _get_output(con)
+        assert "session_start" in output
+        assert "success" in output
+
+    def test_multiple_entries(self):
+        con = _make_console()
+        lines = [
+            '{"timestamp":"2026-01-01T00:00:00","action":"start","result":"success","details":{}}',
+            '{"timestamp":"2026-01-01T00:01:00","action":"dispatch","result":"error","details":{}}',
+        ]
+        print_log_entries(lines, console=con)
+        output = _get_output(con)
+        assert "start" in output
+        assert "dispatch" in output
+        assert "error" in output
+
+    def test_invalid_json_fallback(self):
+        con = _make_console()
+        lines = ["this is not json at all"]
+        print_log_entries(lines, console=con)
+        output = _get_output(con)
+        assert "this is not json at all" in output
+
+    def test_mixed_valid_and_invalid(self):
+        con = _make_console()
+        lines = [
+            '{"timestamp":"2026-01-01T00:00:00","action":"test","result":"pass","details":{}}',
+            "broken line",
+        ]
+        print_log_entries(lines, console=con)
+        output = _get_output(con)
+        assert "test" in output
+        assert "broken line" in output
+
+    def test_entry_with_details(self):
+        con = _make_console()
+        lines = [
+            '{"timestamp":"2026-01-01T00:00:00","action":"dispatch","result":"success","details":{"module":"backend","task_id":1}}'
+        ]
+        print_log_entries(lines, console=con)
+        output = _get_output(con)
+        assert "module" in output
+        assert "backend" in output
+
+    def test_result_colors(self):
+        """Different result values use different color codes — we just check they render."""
+        con = _make_console()
+        lines = [
+            '{"timestamp":"T","action":"a","result":"success","details":{}}',
+            '{"timestamp":"T","action":"b","result":"error","details":{}}',
+            '{"timestamp":"T","action":"c","result":"fail","details":{}}',
+            '{"timestamp":"T","action":"d","result":"pass","details":{}}',
+            '{"timestamp":"T","action":"e","result":"unknown","details":{}}',
+        ]
+        print_log_entries(lines, console=con)
+        output = _get_output(con)
+        # All actions should appear
+        for action in ("a", "b", "c", "d", "e"):
+            assert action in output
+
+    def test_default_console(self):
+        # Should not raise even without explicit console
+        print_log_entries([])
+
+    def test_details_truncated_to_3(self):
+        """Only first 3 detail keys are shown."""
+        con = _make_console()
+        lines = [
+            '{"timestamp":"T","action":"a","result":"success","details":{"k1":"v1","k2":"v2","k3":"v3","k4":"v4"}}'
+        ]
+        print_log_entries(lines, console=con)
+        output = _get_output(con)
+        assert "k1" in output
+        assert "k2" in output
+        assert "k3" in output
+        # k4 should not appear (truncated to first 3)
+        assert "k4" not in output
