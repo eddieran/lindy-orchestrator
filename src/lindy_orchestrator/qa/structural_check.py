@@ -292,7 +292,7 @@ class StructuralCheckGate:
         project_root: Path | None = None,
         module_name: str = "",
         task_output: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> QAResult:
         if project_root is None:
             return QAResult(

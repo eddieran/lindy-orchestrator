@@ -8,6 +8,7 @@ Two dispatch modes:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import shutil
@@ -19,6 +20,8 @@ from typing import Any, Callable
 
 from .config import DispatcherConfig
 from .models import DispatchResult
+
+log = logging.getLogger(__name__)
 
 
 def find_claude_cli() -> str | None:
@@ -350,9 +353,10 @@ def dispatch_agent(
                     try:
                         on_event(event)
                     except Exception:
-                        pass  # Never let callback crash the dispatcher
+                        log.debug("on_event callback error", exc_info=True)
 
     except Exception as e:
+        log.exception("Dispatcher error during streaming dispatch")
         # Ensure process is cleaned up
         try:
             proc.kill()
@@ -416,7 +420,7 @@ def _read_stderr(proc: subprocess.Popen) -> str:
         try:
             return (proc.stderr.read() or "").strip()
         except Exception:
-            pass
+            log.warning("Failed to read stderr from process", exc_info=True)
     return ""
 
 

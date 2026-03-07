@@ -7,11 +7,18 @@ Messages are appended atomically. No external infrastructure required.
 from __future__ import annotations
 
 import json
+import logging
+import re
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+# Module names must be safe path components (alphanumeric, dash, underscore, dot)
+_SAFE_MODULE_RE = re.compile(r"^[\w.\-]+$")
 
 
 @dataclass
@@ -43,7 +50,13 @@ class Mailbox:
         self._lock = threading.Lock()
 
     def _inbox_path(self, module: str) -> Path:
-        return self.mailbox_dir / f"{module}.jsonl"
+        # SECURITY: validate module name to prevent path traversal
+        if not _SAFE_MODULE_RE.match(module):
+            raise ValueError(f"Unsafe module name rejected: {module!r}")
+        path = self.mailbox_dir / f"{module}.jsonl"
+        if not path.resolve().is_relative_to(self.mailbox_dir.resolve()):
+            raise ValueError(f"Path traversal detected for module: {module!r}")
+        return path
 
     def send(self, message: Message) -> None:
         """Append a message to the recipient's inbox."""
@@ -72,6 +85,7 @@ class Mailbox:
                         continue
                     messages.append(msg)
                 except (json.JSONDecodeError, TypeError):
+                    log.warning("Failed to parse mailbox line in %s: %s", path, line[:100])
                     continue
         return messages
 

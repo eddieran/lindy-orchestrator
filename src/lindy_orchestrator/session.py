@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
+
+# Session IDs must be safe path components (hex chars from uuid4[:8])
+_SAFE_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
 
 
 @dataclass
@@ -50,7 +57,14 @@ class SessionManager:
         return self._load(files[0])
 
     def load(self, session_id: str) -> SessionState | None:
+        # SECURITY: validate session_id to prevent path traversal
+        if not _SAFE_SESSION_ID_RE.match(session_id):
+            log.warning("Rejected unsafe session_id: %r", session_id)
+            return None
         path = self.sessions_dir / f"{session_id}.json"
+        if not path.resolve().is_relative_to(self.sessions_dir.resolve()):
+            log.warning("Path traversal detected for session_id: %r", session_id)
+            return None
         if not path.exists():
             return None
         return self._load(path)
@@ -81,13 +95,21 @@ class SessionManager:
             try:
                 sessions.append(self._load(f))
             except Exception:
-                pass
+                log.warning("Failed to load session file %s", f, exc_info=True)
         return sessions
 
     def _save(self, state: SessionState) -> None:
         path = self.sessions_dir / f"{state.session_id}.json"
-        path.write_text(json.dumps(asdict(state), indent=2, default=str))
+        try:
+            path.write_text(json.dumps(asdict(state), indent=2, default=str))
+        except OSError:
+            log.exception("Failed to save session %s to %s", state.session_id, path)
+            raise
 
     def _load(self, path: Path) -> SessionState:
-        data = json.loads(path.read_text())
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            log.exception("Failed to load session from %s", path)
+            raise
         return SessionState(**data)

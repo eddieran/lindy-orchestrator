@@ -11,7 +11,6 @@ Test directories are excluded from checking.
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,7 +18,7 @@ from typing import Any
 from ..config import LayerCheckConfig
 from ..models import QAResult
 from . import register
-from .structural_check import Violation
+from .structural_check import Violation, _get_staged_files
 
 
 @dataclass
@@ -227,48 +226,6 @@ def _check_layer_violations(
     return violations
 
 
-def _get_staged_files(project_root: Path, file_prefix: str = "") -> list[str]:
-    """Get git staged files, scoped to module by file_prefix.
-
-    Args:
-        file_prefix: Relative path prefix (e.g. "backend/" or "" for all files).
-    """
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--name-only"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            files = result.stdout.strip().splitlines()
-            if file_prefix:
-                return [f for f in files if f.startswith(file_prefix)]
-            return files
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-
-    # Fallback: list tracked files
-    try:
-        result = subprocess.run(
-            ["git", "ls-files"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            files = result.stdout.strip().splitlines()
-            if file_prefix:
-                return [f for f in files if f.startswith(file_prefix)]
-            return files
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-
-    return []
-
-
 def _format_violations(violations: list[Violation]) -> str:
     """Format layer violations into a human/agent-readable report."""
     if not violations:
@@ -292,7 +249,7 @@ class LayerCheckGate:
         project_root: Path | None = None,
         module_name: str = "",
         task_output: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> QAResult:
         if project_root is None:
             return QAResult(

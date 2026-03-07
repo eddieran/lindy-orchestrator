@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,7 @@ class CommandCheckGate:
         project_root: Path,
         module_name: str = "",
         task_output: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> QAResult:
         command = params.get("command", "")
         resolved = kwargs.get("module_path")
@@ -38,13 +39,14 @@ class CommandCheckGate:
             raw_cwd = module_name
         else:
             raw_cwd = "."
-        # Resolve {module_path} template if present
+        # Resolve {module_path} template if present — use str.replace() not
+        # str.format() to prevent attribute access via format specifiers (M-28).
         if "{module_path}" in raw_cwd:
             if resolved:
                 module_path = resolved
             else:
                 module_path = str(project_root / module_name) if module_name else str(project_root)
-            raw_cwd = raw_cwd.format(module_path=module_path)
+            raw_cwd = raw_cwd.replace("{module_path}", module_path)
         cwd = project_root / raw_cwd
         timeout = params.get("timeout", 300)
 
@@ -55,16 +57,27 @@ class CommandCheckGate:
                 output="No command specified",
             )
 
-        use_shell = isinstance(command, str)
+        # SECURITY: always use shell=False. Parse string commands with shlex.
+        if isinstance(command, str):
+            try:
+                cmd_args = shlex.split(command)
+            except ValueError as exc:
+                return QAResult(
+                    gate="command_check",
+                    passed=False,
+                    output=f"Failed to parse command: {exc}",
+                    details={"command": command, "error": str(exc)},
+                )
+        else:
+            cmd_args = command
 
         try:
             proc = subprocess.run(
-                command,
+                cmd_args,
                 cwd=str(cwd),
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                shell=use_shell,
             )
         except subprocess.TimeoutExpired:
             return QAResult(

@@ -30,7 +30,7 @@ class CICheckGate:
         project_root: Path,
         module_name: str = "",
         task_output: str = "",
-        **kwargs,
+        **kwargs: Any,
     ) -> QAResult:
         repo = params.get("repo", "")
         workflow = params.get("workflow", "ci.yml")
@@ -52,7 +52,6 @@ class CICheckGate:
             return quick
 
         deadline = time.monotonic() + timeout_seconds
-        last_error = ""
 
         while time.monotonic() < deadline:
             time.sleep(poll_interval)
@@ -66,7 +65,7 @@ class CICheckGate:
         return QAResult(
             gate="ci_check",
             passed=False,
-            output=f"CI timed out after {timeout_seconds}s on {repo}@{branch}. Last: {last_error}",
+            output=f"CI timed out after {timeout_seconds}s on {repo}@{branch}",
             details={"repo": repo, "branch": branch, "timeout": True},
         )
 

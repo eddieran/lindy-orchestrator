@@ -6,11 +6,14 @@ state transitions, QA results, stall detection, checkpoints, and more.
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable
+
+log = logging.getLogger(__name__)
 
 
 class EventType(str, Enum):
@@ -68,9 +71,15 @@ class HookRegistry:
             any_handlers = list(self._any_handlers)
 
         for handler in specific:
-            handler(event)
+            try:
+                handler(event)
+            except Exception:
+                log.warning("Hook handler %s failed for %s", handler, event.type, exc_info=True)
         for handler in any_handlers:
-            handler(event)
+            try:
+                handler(event)
+            except Exception:
+                log.warning("Hook handler %s failed for %s", handler, event.type, exc_info=True)
 
     def remove(self, event_type: EventType, handler: EventHandler) -> None:
         """Remove a specific handler."""

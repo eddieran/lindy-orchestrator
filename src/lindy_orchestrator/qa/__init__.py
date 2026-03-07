@@ -6,21 +6,28 @@ Users can also define custom command-based gates in orchestrator.yaml.
 
 from __future__ import annotations
 
+import re
+import shlex
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from ..config import CustomGateConfig, DispatcherConfig, ModuleConfig
 from ..models import QACheck, QAResult
+
+# Only allow safe characters in paths used for command substitution.
+_SAFE_PATH_RE = re.compile(r"^[\w./\-]+$")
+
+_T = TypeVar("_T")
 
 # Gate registry
 _GATES: dict[str, Any] = {}
 
 
-def register(name: str):
+def register(name: str) -> Callable[[type[_T]], type[_T]]:
     """Decorator to register a built-in QA gate."""
 
-    def decorator(cls):
+    def decorator(cls: type[_T]) -> type[_T]:
         _GATES[name] = cls
         return cls
 
@@ -82,6 +89,12 @@ def run_qa_gate(
     )
 
 
+def _validate_path_for_substitution(path: str) -> bool:
+    """Validate a path is safe for use in command substitution."""
+    resolved = Path(path).resolve()
+    return _SAFE_PATH_RE.match(str(resolved)) is not None
+
+
 def _run_custom_command_gate(
     gate_def: CustomGateConfig,
     params: dict[str, Any],
@@ -94,13 +107,34 @@ def _run_custom_command_gate(
         module_path = resolved_module_path
     else:
         module_path = str(project_root / module_name) if module_name else str(project_root)
-    command = gate_def.command.format(module_path=module_path)
-    cwd = gate_def.cwd.format(module_path=module_path)
+
+    # SECURITY: validate module_path before substitution to prevent injection
+    if not _validate_path_for_substitution(module_path):
+        return QAResult(
+            gate=gate_def.name,
+            passed=False,
+            output=f"Unsafe module path rejected: {module_path!r}",
+            details={"error": "path_validation_failed"},
+        )
+
+    # Use str.replace() instead of str.format() to prevent attribute access
+    command_str = gate_def.command.replace("{module_path}", module_path)
+    cwd = gate_def.cwd.replace("{module_path}", module_path)
+
+    # Use shlex.split + shell=False instead of shell=True
+    try:
+        cmd_args = shlex.split(command_str)
+    except ValueError as exc:
+        return QAResult(
+            gate=gate_def.name,
+            passed=False,
+            output=f"Failed to parse command: {exc}",
+            details={"command": command_str, "error": str(exc)},
+        )
 
     try:
         proc = subprocess.run(
-            command,
-            shell=True,
+            cmd_args,
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -111,14 +145,14 @@ def _run_custom_command_gate(
             gate=gate_def.name,
             passed=False,
             output=f"Command timed out after {gate_def.timeout}s",
-            details={"command": command, "timeout": True},
+            details={"command": command_str, "timeout": True},
         )
     except OSError as exc:
         return QAResult(
             gate=gate_def.name,
             passed=False,
             output=f"Failed to run command: {exc}",
-            details={"command": command, "cwd": cwd, "error": str(exc)},
+            details={"command": command_str, "cwd": cwd, "error": str(exc)},
         )
 
     passed = proc.returncode == 0
@@ -130,7 +164,7 @@ def _run_custom_command_gate(
         gate=gate_def.name,
         passed=passed,
         output=output,
-        details={"exit_code": proc.returncode, "command": command},
+        details={"exit_code": proc.returncode, "command": command_str},
     )
 
 

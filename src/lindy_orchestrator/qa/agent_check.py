@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ..config import DispatcherConfig, ModuleConfig
 from ..models import QAResult
 from . import register
 
@@ -25,9 +26,9 @@ class AgentCheckGate:
         project_root: Path,
         module_name: str = "",
         task_output: str = "",
-        dispatcher_config=None,
-        qa_module=None,
-        **kwargs,
+        dispatcher_config: DispatcherConfig | None = None,
+        qa_module: ModuleConfig | None = None,
+        **kwargs: Any,
     ) -> QAResult:
         description = params.get("description", "Validate task output")
 

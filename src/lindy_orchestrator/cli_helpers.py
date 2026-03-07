@@ -10,10 +10,22 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from .config import CONFIG_FILENAME, load_config
+from typing import Callable
+
+from .config import CONFIG_FILENAME, OrchestratorConfig, load_config
 from .models import TaskPlan
+from .session import SessionManager, SessionState
 
 console = Console()
+
+
+def make_on_progress(con: Console) -> Callable[[str], None]:
+    """Create an on_progress callback that prints to the given console."""
+
+    def on_progress(msg: str) -> None:
+        con.print(msg)
+
+    return on_progress
 
 
 def resolve_goal(goal: str | None, file: str | None) -> str:
@@ -38,7 +50,7 @@ def resolve_goal(goal: str | None, file: str | None) -> str:
     raise typer.Exit(1)
 
 
-def load_cfg(config_path: str | None):
+def load_cfg(config_path: str | None) -> OrchestratorConfig:
     """Load config with error handling."""
     try:
         return load_config(config_path)
@@ -91,3 +103,28 @@ def persist_plan(root: Path, plan: TaskPlan) -> Path:
 
     (plans_dir / "latest.md").write_text("\n".join(md_lines))
     return json_path
+
+
+def finalise_session(
+    session: SessionState,
+    sessions: SessionManager,
+    plan: TaskPlan,
+) -> tuple[list, list]:
+    """Save final plan state to session and mark completed or paused.
+
+    Returns (completed_tasks, failed_tasks) for caller use.
+    """
+    completed = [t for t in plan.tasks if t.status.value == "completed"]
+    failed = [t for t in plan.tasks if t.status.value == "failed"]
+
+    session.plan_json = plan_to_dict(plan)
+    session.completed_tasks = [
+        {"id": t.id, "module": t.module, "description": t.description} for t in completed
+    ]
+    if failed:
+        session.status = "paused"
+        sessions.save(session)
+    else:
+        sessions.complete(session)
+
+    return completed, failed
