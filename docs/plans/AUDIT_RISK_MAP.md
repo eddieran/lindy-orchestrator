@@ -195,12 +195,12 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 | L-03 | `scheduler_helpers.py` | 11-32 | Dead code (candidate) | `ExecutionProgress` dataclass never used; moved from `scheduler.py` to reduce file size. |
 | L-04 | `dashboard.py` | 83-88 | Dead code (candidate) | `update_heartbeat()` never called from production. |
 | L-05 | `discovery/generator.py` | 171-175 | Dead code | `_detect_module_ci()` ignores its `mod` parameter, always returns `"ci.yml"`. |
-| L-06 | `gc.py` | 274-282 | Dead code | `referenced` set built but never used in `_find_orphan_plans`. |
-| L-07 | `qa/ci_check.py` | 55, 69 | Dead code | `last_error` always empty; timeout message shows `Last: `. |
-| L-08 | `trackers/github_issues.py` | 97-99 | Dead code | Runtime `assert isinstance(...)` at import; stripped by `-O`. |
+| L-06 | `gc.py` | 274-282 | ~~Dead code~~ | ~~`referenced` set built but never used in `_find_orphan_plans`.~~ **FIXED** (af/task-2) |
+| L-07 | `qa/ci_check.py` | 55, 69 | ~~Dead code~~ | ~~`last_error` always empty; timeout message shows `Last: `.~~ **FIXED** (af/task-2) |
+| L-08 | `trackers/github_issues.py` | 97-99 | ~~Dead code~~ | ~~Runtime `assert isinstance(...)` at import; stripped by `-O`.~~ **FIXED** (af/task-2) |
 | L-09 | `qa/structural_check.py` + `qa/layer_check.py` | 267-277, 272-282 | Duplication | `_format_violations()` nearly identical in two files. |
 | L-10 | `cli_helpers.py` + `cli.py` | 54-65, 54-58 | Duplication | Triple-indirection wrappers for `plan_to_dict`/`plan_from_dict`. |
-| L-11 | `cli.py`, `cli_ext.py`, `cli_init.py`, `cli_scaffold.py` | various | Unused import | `from typing import Optional` redundant with `__future__` annotations. |
+| L-11 | `cli.py`, `cli_ext.py`, `cli_init.py`, `cli_scaffold.py` | various | ~~Unused import~~ False positive | `from typing import Optional` required at runtime by typer (evaluates annotations via `get_type_hints`). |
 | L-12 | `scheduler.py` | 132-133 | Exception | Checkpoint failure silently swallowed (`except Exception: pass`). |
 | L-13 | `scheduler.py` | 256-257 | Exception | Mailbox injection failure silently swallowed. |
 | L-14 | `session.py` | 83-84 | Exception | `list_sessions` silently skips unreadable files. |

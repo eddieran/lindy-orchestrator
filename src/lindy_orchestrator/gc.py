@@ -270,19 +270,6 @@ def _find_orphan_plans(
     if not plans_dir.exists():
         return []
 
-    # Collect all plan filenames referenced by sessions
-    referenced: set[str] = set()
-    if sessions_path.exists():
-        for session_file in sessions_path.glob("*.json"):
-            try:
-                data = json.loads(session_file.read_text(encoding="utf-8"))
-                if data.get("plan_json"):
-                    # Sessions store plan inline, not as file refs.
-                    # But we can match by goal slug
-                    referenced.add(session_file.stem)
-            except (json.JSONDecodeError, OSError):
-                continue
-
     # Check plan files (skip latest.md which is always overwritten)
     for plan_file in plans_dir.glob("*.json"):
         if plan_file.name == "latest.json":

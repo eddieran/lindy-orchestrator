@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 
-from .base import TrackerIssue, TrackerProvider
+from .base import TrackerIssue
 
 
 class GitHubIssuesProvider:
@@ -92,8 +92,3 @@ class GitHubIssuesProvider:
             check=False,
         )
         return result.returncode == 0
-
-
-# Verify TrackerProvider compliance
-assert isinstance(GitHubIssuesProvider, type)
-_provider_check: TrackerProvider = GitHubIssuesProvider()  # type: ignore[assignment]
