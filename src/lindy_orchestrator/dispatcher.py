@@ -136,6 +136,7 @@ def dispatch_agent(
     prompt: str,
     config: DispatcherConfig,
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    stall_seconds: int | None = None,
 ) -> DispatchResult:
     """Run a Claude Code CLI agent in a module directory.
 
@@ -241,13 +242,26 @@ def dispatch_agent(
                 )
 
             # Stall detection with two-stage escalation: warn → kill
-            escalation = getattr(config, "stall_escalation", None)
-            if escalation:
-                warn_threshold = escalation.warn_after_seconds
-                kill_threshold = escalation.kill_after_seconds
+            # Per-task override takes priority over config
+            if stall_seconds is not None:
+                warn_threshold = stall_seconds // 2
+                kill_threshold = stall_seconds
             else:
-                warn_threshold = config.stall_timeout_seconds // 2
-                kill_threshold = config.stall_timeout_seconds
+                escalation = getattr(config, "stall_escalation", None)
+                if escalation:
+                    warn_threshold = escalation.warn_after_seconds
+                    kill_threshold = escalation.kill_after_seconds
+                else:
+                    warn_threshold = config.stall_timeout_seconds // 2
+                    kill_threshold = config.stall_timeout_seconds
+
+            # Bash-tool-aware: long-running shell commands (builds, tests,
+            # testnet deploys) produce no JSONL events while running.
+            # Give 50% more time when the last tool was Bash.
+            _LONG_RUNNING_TOOLS = {"Bash", "bash", "execute_bash"}
+            if last_tool_use in _LONG_RUNNING_TOOLS:
+                warn_threshold = int(warn_threshold * 1.5)
+                kill_threshold = int(kill_threshold * 1.5)
 
             # Grace period for first event (double thresholds)
             if event_count == 0:

@@ -278,12 +278,28 @@ def _execute_single_task(
             except Exception:
                 pass  # mailbox injection failure should not block dispatch
 
+        # Inject branch delivery instructions so agents push to expected branch
+        branch_name = f"{config.project.branch_prefix}/task-{task.id}"
+        if dispatches == 0:
+            task.prompt = (
+                f"{task.prompt}\n\n"
+                f"## IMPORTANT: Branch delivery requirements\n\n"
+                f"You MUST deliver your work on branch `{branch_name}`.\n"
+                f"Before starting work:\n"
+                f"1. `git checkout -b {branch_name}` (create the branch)\n"
+                f"When done:\n"
+                f"2. `git add` and `git commit` your changes\n"
+                f"3. `git push -u origin {branch_name}` (push to remote)\n"
+                f"Do NOT skip the push step — CI verification depends on it.\n"
+            )
+
         provider = create_provider(config.dispatcher)
         result = provider.dispatch(
             module=task.module,
             working_dir=working_dir,
             prompt=task.prompt,
             on_event=_on_event,
+            stall_seconds=task.stall_seconds,
         )
         dispatches += 1
         task.result = result.output
@@ -328,7 +344,6 @@ def _execute_single_task(
         detail(f"    Output preview: {result.output[:500]}")
 
         # Delivery check: verify branch has commits
-        branch_name = f"{config.project.branch_prefix}/task-{task.id}"
         delivery_ok, delivery_msg = _check_delivery(config.root, branch_name)
         if delivery_ok:
             progress(f"    [green]Delivery check[/]: {delivery_msg}")

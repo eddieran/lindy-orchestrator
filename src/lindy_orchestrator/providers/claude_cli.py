@@ -22,8 +22,11 @@ class ClaudeCLIProvider:
         working_dir: Path,
         prompt: str,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        stall_seconds: int | None = None,
     ) -> DispatchResult:
-        return dispatch_agent(module, working_dir, prompt, self.config, on_event)
+        return dispatch_agent(
+            module, working_dir, prompt, self.config, on_event, stall_seconds=stall_seconds
+        )
 
     def dispatch_simple(
         self,

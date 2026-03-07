@@ -50,7 +50,7 @@ class DispatcherConfig(BaseModel):
 
 
 class CICheckConfig(BaseModel):
-    timeout_seconds: int = 600
+    timeout_seconds: int = 900
     poll_interval: int = 30
 
 
