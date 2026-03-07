@@ -4,13 +4,14 @@
 | Key | Value |
 |-----|-------|
 | module | lindy-orchestrator |
-| last_updated | 2026-03-06 17:30 UTC |
+| last_updated | 2026-03-07 UTC |
 | overall_health | GREEN |
 | agent_session | — |
 
 ## Active Work
 | ID | Task | Status | BlockedBy | Started | Notes |
 |----|------|--------|-----------|---------|-------|
+| 1 | Comprehensive codebase audit | DONE | — | 2026-03-07 | 57 findings across 10 categories; see `docs/plans/AUDIT_RISK_MAP.md` |
 
 ## Completed (Recent)
 | ID | Task | Completed | Outcome |
@@ -30,6 +31,11 @@
 ## Key Metrics
 | Metric | Value |
 |--------|-------|
+| audit_findings_high | 14 |
+| audit_findings_medium | 22 |
+| audit_findings_low | 21 |
+| tests_passing | 505 |
+| ruff_warnings | 0 |
 
 ## Blockers
 - (none)
