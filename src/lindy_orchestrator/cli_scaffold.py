@@ -109,9 +109,7 @@ def parse_scaffold_response(output: str) -> dict:
     return json.loads(cleaned)
 
 
-def scaffold_response_to_context(
-    data: dict, output_dir: str = "."
-) -> DiscoveryContext:
+def scaffold_response_to_context(data: dict, output_dir: str = ".") -> DiscoveryContext:
     """Convert parsed LLM scaffold response into a DiscoveryContext."""
     modules = []
     for m in data.get("modules", []):
@@ -162,18 +160,14 @@ def register_scaffold_command(app: typer.Typer, console) -> None:
 
     @app.command()
     def scaffold(
-        description: Optional[str] = typer.Argument(
-            None, help="Project description text"
-        ),
+        description: Optional[str] = typer.Argument(None, help="Project description text"),
         file: Optional[str] = typer.Option(
             None, "-f", "--file", help="Read description from file (use '-' for stdin)"
         ),
         output_dir: str = typer.Option(
             ".", "-o", "--output-dir", help="Directory to generate files in"
         ),
-        force: bool = typer.Option(
-            False, "--force", help="Overwrite existing files"
-        ),
+        force: bool = typer.Option(False, "--force", help="Overwrite existing files"),
         dry_run: bool = typer.Option(
             False, "--dry-run", help="Show what would be generated without writing"
         ),
@@ -198,9 +192,7 @@ def register_scaffold_command(app: typer.Typer, console) -> None:
         # Check for Claude CLI
         if not find_claude_cli():
             console.print("[red]Error: Claude CLI not found in PATH.[/]")
-            console.print(
-                "Install: https://docs.anthropic.com/en/docs/claude-code"
-            )
+            console.print("Install: https://docs.anthropic.com/en/docs/claude-code")
             raise typer.Exit(1)
 
         out_path = Path(output_dir).resolve()
@@ -248,9 +240,7 @@ def register_scaffold_command(app: typer.Typer, console) -> None:
         if ctx.cross_deps:
             console.print(f"  Cross-module deps: [bold]{len(ctx.cross_deps)}[/]")
             for dep in ctx.cross_deps:
-                console.print(
-                    f"    - {dep.from_module} -> {dep.to_module} ({dep.interface_type})"
-                )
+                console.print(f"    - {dep.from_module} -> {dep.to_module} ({dep.interface_type})")
         console.print(
             f"  Complexity: [bold]{ctx.coordination_complexity}[/] "
             f"({'loose' if ctx.coordination_complexity == 1 else 'moderate' if ctx.coordination_complexity == 2 else 'tight'})"
@@ -287,8 +277,7 @@ def register_scaffold_command(app: typer.Typer, console) -> None:
         written = generate_artifacts(ctx, output_dir=out_path, force=force)
 
         console.print(
-            f"\n[bold green]Scaffold complete![/] "
-            f"{len(written)} files generated in {out_path}"
+            f"\n[bold green]Scaffold complete![/] {len(written)} files generated in {out_path}"
         )
         console.print("\nNext steps:")
         console.print("  1. Review generated files and adjust conventions")

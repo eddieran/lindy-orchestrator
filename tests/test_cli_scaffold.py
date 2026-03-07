@@ -216,9 +216,7 @@ class TestScaffoldCLI:
         assert result.exit_code != 0
 
     def test_scaffold_no_claude_cli(self):
-        with patch(
-            "lindy_orchestrator.cli_scaffold.find_claude_cli", return_value=None
-        ):
+        with patch("lindy_orchestrator.cli_scaffold.find_claude_cli", return_value=None):
             result = runner.invoke(app, ["scaffold", "A test project"])
             assert result.exit_code != 0
             assert "Claude CLI not found" in result.output
@@ -229,9 +227,7 @@ class TestScaffoldCLI:
                 "lindy_orchestrator.cli_scaffold.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch(
-                "lindy_orchestrator.cli_scaffold.create_provider"
-            ) as mock_provider_factory,
+            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
@@ -258,9 +254,7 @@ class TestScaffoldCLI:
                 "lindy_orchestrator.cli_scaffold.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch(
-                "lindy_orchestrator.cli_scaffold.create_provider"
-            ) as mock_provider_factory,
+            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
@@ -299,9 +293,7 @@ class TestScaffoldCLI:
                 "lindy_orchestrator.cli_scaffold.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch(
-                "lindy_orchestrator.cli_scaffold.create_provider"
-            ) as mock_provider_factory,
+            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
@@ -322,18 +314,14 @@ class TestScaffoldCLI:
 
     def test_scaffold_llm_failure(self, tmp_path):
         def _mock_fail(module, working_dir, prompt):
-            return DispatchResult(
-                module=module, success=False, output="Connection error"
-            )
+            return DispatchResult(module=module, success=False, output="Connection error")
 
         with (
             patch(
                 "lindy_orchestrator.cli_scaffold.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch(
-                "lindy_orchestrator.cli_scaffold.create_provider"
-            ) as mock_provider_factory,
+            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_fail
@@ -353,18 +341,14 @@ class TestScaffoldCLI:
 
     def test_scaffold_invalid_json_response(self, tmp_path):
         def _mock_bad_json(module, working_dir, prompt):
-            return DispatchResult(
-                module=module, success=True, output="Not valid JSON at all"
-            )
+            return DispatchResult(module=module, success=True, output="Not valid JSON at all")
 
         with (
             patch(
                 "lindy_orchestrator.cli_scaffold.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch(
-                "lindy_orchestrator.cli_scaffold.create_provider"
-            ) as mock_provider_factory,
+            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_bad_json
@@ -391,9 +375,7 @@ class TestScaffoldCLI:
                 "lindy_orchestrator.cli_scaffold.find_claude_cli",
                 return_value="/usr/bin/claude",
             ),
-            patch(
-                "lindy_orchestrator.cli_scaffold.create_provider"
-            ) as mock_provider_factory,
+            patch("lindy_orchestrator.cli_scaffold.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
             mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
