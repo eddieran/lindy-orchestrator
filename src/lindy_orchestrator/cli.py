@@ -458,8 +458,20 @@ def resume(
         sessions.complete(session)
 
 
+@app.command()
+def version(
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON for scripting"),
+):
+    """Print the current lindy-orchestrator version."""
+    if as_json:
+        console.print_json(json.dumps({"version": __version__}))
+    else:
+        console.print(f"lindy-orchestrator v{__version__}")
+
+
 from .cli_init import register_init_commands  # noqa: E402
 from .cli_ext import register_ext_commands  # noqa: E402
+from .cli_scaffold import register_scaffold_command  # noqa: E402
 
 register_init_commands(app, console)
 register_ext_commands(
@@ -473,3 +485,4 @@ register_ext_commands(
         "resolve_goal": _resolve_goal,
     },
 )
+register_scaffold_command(app, console)
