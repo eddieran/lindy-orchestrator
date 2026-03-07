@@ -11,7 +11,7 @@
 ## Active Work
 | ID | Task | Status | BlockedBy | Started | Notes |
 |----|------|--------|-----------|---------|-------|
-| 1 | Comprehensive codebase audit | DONE | — | 2026-03-07 | 57 findings across 10 categories; see `docs/plans/AUDIT_RISK_MAP.md` |
+| 1 | Comprehensive codebase audit | DONE | — | 2026-03-07 | 57 findings (14H/22M/21L) across 10 categories; see `docs/plans/AUDIT_RISK_MAP.md` + `AUDIT_RISK_MAP_details.md` |
 
 ## Completed (Recent)
 | ID | Task | Completed | Outcome |
