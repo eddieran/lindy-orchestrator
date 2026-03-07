@@ -157,6 +157,21 @@
 - Low priority — non-TTY path is well tested.
 - **Fix:** Add one test calling `update_heartbeat` after `start()`.
 
+### L-24 — Unvalidated deserialization of session data
+
+- **File:** `src/lindy_orchestrator/session.py:91-93`
+- `SessionState(**data)` passes all JSON fields directly to the constructor. A tampered
+  session file could inject unexpected data. `TypeError` on bad types propagates uncaught.
+- **Fix:** Validate loaded data against expected keys. Use explicit allowlist.
+
+### L-25 — LLM output parsed as executable plan without command validation
+
+- **File:** `src/lindy_orchestrator/planner.py:197-245`
+- `_parse_task_plan` creates `TaskItem` objects with `prompt` and `qa_checks` from raw
+  LLM output. `qa_checks.params.command` flows directly to shell execution (H-01, M-01).
+  A prompt injection via the goal text could produce malicious commands.
+- **Fix:** Validate `qa_checks` params against an allowlist of safe commands. Log raw plan.
+
 ---
 
 ## Dependency Version Snapshot

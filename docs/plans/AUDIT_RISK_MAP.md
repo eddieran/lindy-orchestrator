@@ -19,14 +19,14 @@
 | Risk Level | Count |
 |------------|-------|
 | **HIGH** | 14 |
-| **MEDIUM** | 22 |
-| **LOW** | 21 |
-| **Total** | 57 |
+| **MEDIUM** | 27 |
+| **LOW** | 23 |
+| **Total** | 64 |
 
 | Category | H | M | L | Total |
 |----------|---|---|---|-------|
-| Security concerns | 1 | 1 | 1 | 3 |
-| Exception handling gaps | 1 | 3 | 3 | 7 |
+| Security concerns | 1 | 5 | 3 | 9 |
+| Exception handling gaps | 1 | 5 | 3 | 9 |
 | Test coverage gaps | 4 | 6 | 1 | 11 |
 | Logging gaps | 3 | 3 | 2 | 8 |
 | Dependency health | 1 | 3 | 3 | 7 |
@@ -174,6 +174,12 @@
 | M-25 | `pyproject.toml` | 21-26 | Dependency | No upper-bound pins. Pydantic v3 / typer 1.0 = silent breakage. Fix: `pydantic>=2.6,<3`, `typer>=0.12,<1`. |
 | M-26 | `pyproject.toml` | 34-35 | Dependency | `anthropic` optional dep has no upper bound. Fix: `anthropic>=0.40,<1`. |
 | M-27 | `.github/workflows/ci.yml` | 26-27 | Dependency | CI installs `.[dev]` but not `.[dev,api]`. API code path never validated. Fix: `pip install -e '.[dev,api]'`. |
+| M-28 | `qa/__init__.py` + `qa/command_check.py` | 97-98, 42-47 | Security | `str.format()` allows attribute access on passed objects (`{module_path.__class__}`). Fix: use `str.replace()` instead. |
+| M-29 | `config.py` | 48 | Security | Default `permission_mode: bypassPermissions` grants agents full permissions. Fix: default to restricted mode, require opt-in. |
+| M-30 | `session.py` | 52-56 | Security | Path traversal via user-supplied `session_id` (`../../etc/passwd`). Fix: validate pattern + `is_relative_to()`. |
+| M-31 | `mailbox.py` | 45-46 | Security | Path traversal via module name in `_inbox_path()`. Fix: validate alphanumeric + `is_relative_to()`. |
+| M-32 | `logger.py` | 40-41 | Exception | `ActionLogger.log_action` has no exception handling; `OSError` crashes orchestrator. Fix: wrap in `try/except`, fallback to stderr. |
+| M-33 | `hooks.py` | 64-73 | Exception | `HookRegistry.emit()` has no exception protection; one failing handler blocks all subsequent handlers. Fix: wrap each handler call. |
 
 ---
 
@@ -206,6 +212,8 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 | L-21 | `.github/workflows/ci.yml` + `pyproject.toml` | — | Dependency | No `mypy` in CI despite `"Typing :: Typed"` classifier. |
 | L-22 | `.github/workflows/ci.yml` | 10-11 | Dependency | No `timeout-minutes` on CI job (default: 6 hours). |
 | L-23 | `dashboard.py` | 83 | Test coverage | `update_heartbeat` TTY path not exercised in tests. |
+| L-24 | `session.py` | 91-93 | Security | `SessionState(**data)` from untrusted JSON; no schema validation. Fix: validate keys explicitly. |
+| L-25 | `planner.py` | 197-245 | Security | LLM-generated plan parsed as executable tasks without command validation. Fix: sanitize `qa_checks.params`. |
 
 ---
 
@@ -215,11 +223,14 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 
 | Finding | Action |
 |---------|--------|
-| H-01 | Sanitize `module_path` in custom QA gate shell commands |
+| H-01, M-28 | Sanitize `module_path` + replace `str.format()` in QA gate shell commands |
 | M-01 | Default `CommandCheckGate` to `shell=False` |
+| M-29 | Change default `permission_mode` from `bypassPermissions` to restricted |
+| M-30, M-31 | Add path traversal guards to session and mailbox path construction |
 | H-02 | Add error handling to `SessionManager._save`/`_load` |
 | H-03, H-04, H-05 | Add structured logging to `dispatcher.py`, `scheduler.py`, `session.py` |
 | M-02, M-03, M-04 | Fix swallowed exceptions in `dispatcher.py` |
+| M-32, M-33 | Add exception handling to `ActionLogger` and `HookRegistry.emit()` |
 
 ### Phase 2 — Test Coverage (build confidence)
 
@@ -240,4 +251,4 @@ See [AUDIT_RISK_MAP_details.md](AUDIT_RISK_MAP_details.md) for full descriptions
 
 ### Phase 4 — Polish (low urgency)
 
-- L-01 through L-23: Address as part of regular maintenance cycles.
+- L-01 through L-25: Address as part of regular maintenance cycles.
