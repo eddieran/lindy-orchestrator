@@ -6,12 +6,19 @@ from io import StringIO
 
 from rich.console import Console
 
-from lindy_orchestrator.reporter import PlanProgress, print_goal_report, print_status_table
+from lindy_orchestrator.models import QAResult, TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.reporter import (
+    PlanProgress,
+    generate_execution_summary,
+    print_goal_report,
+    print_status_table,
+    save_summary_report,
+)
 
 
-def _make_console() -> Console:
+def _make_console(width: int = 80) -> Console:
     """Create a non-interactive console that writes to a string buffer."""
-    return Console(file=StringIO(), force_terminal=False)
+    return Console(file=StringIO(), force_terminal=False, width=width)
 
 
 def _get_output(console: Console) -> str:
@@ -162,3 +169,165 @@ class TestPrintStatusTable:
         print_status_table(modules, console=con)
         output = _get_output(con)
         assert "BLUE" in output
+
+
+def _make_plan(with_failures: bool = False) -> TaskPlan:
+    """Create a sample TaskPlan for testing."""
+    tasks = [
+        TaskItem(
+            id=1,
+            module="backend",
+            description="Add API endpoint",
+            status=TaskStatus.COMPLETED,
+            result="Created /api/v1/users endpoint",
+            retries=0,
+            started_at="2026-03-07T10:00:00+00:00",
+            completed_at="2026-03-07T10:02:30+00:00",
+            qa_results=[QAResult(gate="command_check", passed=True, output="All tests pass")],
+        ),
+        TaskItem(
+            id=2,
+            module="frontend",
+            description="Build user form",
+            status=TaskStatus.FAILED if with_failures else TaskStatus.COMPLETED,
+            result="Component created but tests failed" if with_failures else "Form component done",
+            retries=2 if with_failures else 0,
+            started_at="2026-03-07T10:02:30+00:00",
+            completed_at="2026-03-07T10:05:00+00:00",
+            depends_on=[1],
+            qa_results=[
+                QAResult(
+                    gate="ci_check",
+                    passed=not with_failures,
+                    output="CI failed on lint" if with_failures else "CI green",
+                ),
+            ],
+        ),
+        TaskItem(
+            id=3,
+            module="docs",
+            description="Update README",
+            status=TaskStatus.SKIPPED if with_failures else TaskStatus.COMPLETED,
+            result="Skipped: dependency failed" if with_failures else "README updated",
+            started_at="2026-03-07T10:05:00+00:00" if not with_failures else None,
+            completed_at="2026-03-07T10:06:00+00:00" if not with_failures else None,
+            depends_on=[2],
+        ),
+    ]
+    return TaskPlan(goal="Build user management feature", tasks=tasks)
+
+
+class TestGenerateExecutionSummary:
+    def test_completed_plan(self):
+        con = _make_console(width=200)
+        plan = _make_plan(with_failures=False)
+        generate_execution_summary(plan, 360.0, "abc12345", console=con)
+        output = _get_output(con)
+        assert "GOAL COMPLETED" in output
+        assert "abc12345" in output
+        assert "backend" in output
+        assert "frontend" in output
+        assert "Add API endpoint" in output
+        assert "Build user form" in output
+
+    def test_failed_plan(self):
+        con = _make_console(width=200)
+        plan = _make_plan(with_failures=True)
+        generate_execution_summary(plan, 300.0, "def67890", console=con)
+        output = _get_output(con)
+        assert "GOAL PAUSED" in output
+        assert "1 failed" in output
+
+    def test_task_details_table(self):
+        con = _make_console(width=200)
+        plan = _make_plan(with_failures=False)
+        generate_execution_summary(plan, 360.0, "abc12345", console=con)
+        output = _get_output(con)
+        assert "Task Details" in output
+        assert "PASS" in output  # status label
+
+    def test_qa_results_shown(self):
+        con = _make_console(width=200)
+        plan = _make_plan(with_failures=False)
+        generate_execution_summary(plan, 360.0, "abc12345", console=con)
+        output = _get_output(con)
+        assert "command_check" in output
+        assert "ci_check" in output
+
+    def test_retries_shown_for_failed(self):
+        con = _make_console(width=200)
+        plan = _make_plan(with_failures=True)
+        generate_execution_summary(plan, 300.0, "x", console=con)
+        output = _get_output(con)
+        assert "2" in output  # retries count
+
+    def test_metrics_table(self):
+        con = _make_console(width=200)
+        plan = _make_plan(with_failures=False)
+        generate_execution_summary(plan, 360.0, "abc12345", console=con)
+        output = _get_output(con)
+        assert "Execution Metrics" in output
+        assert "$6.00" in output  # 3 tasks * $2.00
+
+    def test_duration_formatting(self):
+        con = _make_console(width=200)
+        plan = _make_plan(with_failures=False)
+        generate_execution_summary(plan, 90.0, "abc12345", console=con)
+        output = _get_output(con)
+        assert "1m30s" in output
+
+    def test_default_console(self):
+        plan = _make_plan(with_failures=False)
+        # Should not raise even without explicit console
+        generate_execution_summary(plan, 10.0, "test")
+
+
+class TestSaveSummaryReport:
+    def test_creates_report_file(self, tmp_path):
+        plan = _make_plan(with_failures=False)
+        path = save_summary_report(plan, 360.0, "abc12345", tmp_path)
+        assert path.exists()
+        assert path.name == "abc12345_summary.md"
+
+    def test_report_content_completed(self, tmp_path):
+        plan = _make_plan(with_failures=False)
+        path = save_summary_report(plan, 360.0, "abc12345", tmp_path)
+        content = path.read_text()
+        assert "# Execution Summary" in content
+        assert "COMPLETED" in content
+        assert "abc12345" in content
+        assert "backend" in content
+        assert "Add API endpoint" in content
+
+    def test_report_content_paused(self, tmp_path):
+        plan = _make_plan(with_failures=True)
+        path = save_summary_report(plan, 300.0, "def67890", tmp_path)
+        content = path.read_text()
+        assert "PAUSED" in content
+        assert "1 failed" in content
+
+    def test_report_has_task_table(self, tmp_path):
+        plan = _make_plan(with_failures=False)
+        path = save_summary_report(plan, 360.0, "abc12345", tmp_path)
+        content = path.read_text()
+        assert "| # | Module |" in content
+        assert "| 1 | backend |" in content
+
+    def test_report_has_output_preview(self, tmp_path):
+        plan = _make_plan(with_failures=False)
+        path = save_summary_report(plan, 360.0, "abc12345", tmp_path)
+        content = path.read_text()
+        assert "Output preview" in content
+        assert "Created /api/v1/users endpoint" in content
+
+    def test_report_has_qa_details(self, tmp_path):
+        plan = _make_plan(with_failures=True)
+        path = save_summary_report(plan, 300.0, "x", tmp_path)
+        content = path.read_text()
+        assert "ci_check" in content
+        assert "FAIL" in content
+
+    def test_reports_dir_created(self, tmp_path):
+        plan = _make_plan(with_failures=False)
+        save_summary_report(plan, 10.0, "sess1", tmp_path)
+        assert (tmp_path / ".orchestrator" / "reports").is_dir()
