@@ -13,11 +13,11 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from .config import OrchestratorConfig
-from .scheduler_helpers import _check_delivery
+from .scheduler_helpers import _check_delivery, inject_qa_gates
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
 from .mailbox import Mailbox, format_mailbox_messages
-from .models import QACheck, TaskItem, TaskPlan, TaskStatus, plan_to_dict
+from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import format_qa_feedback
@@ -169,51 +169,7 @@ def _execute_single_task(
 
     Returns the number of dispatches made.
     """
-    # Auto-inject structural check gate
-    has_structural = any(q.gate == "structural_check" for q in task.qa_checks)
-    if not has_structural:
-        sc = config.qa_gates.structural
-        task.qa_checks.append(
-            QACheck(
-                gate="structural_check",
-                params={
-                    "max_file_lines": sc.max_file_lines,
-                    "enforce_module_boundary": sc.enforce_module_boundary,
-                    "sensitive_patterns": sc.sensitive_patterns,
-                },
-            )
-        )
-        progress("    [dim]Auto-injected QA: structural_check[/]")
-
-    # Auto-inject layer_check gate
-    has_layer = any(q.gate == "layer_check" for q in task.qa_checks)
-    arch_path = config.root / "ARCHITECTURE.md"
-    if not has_layer and config.qa_gates.layer_check.enabled and arch_path.exists():
-        task.qa_checks.append(
-            QACheck(
-                gate="layer_check",
-                params={
-                    "enabled": config.qa_gates.layer_check.enabled,
-                    "unknown_file_policy": config.qa_gates.layer_check.unknown_file_policy,
-                },
-            )
-        )
-        progress("    [dim]Auto-injected QA: layer_check[/]")
-
-    # Auto-inject custom command gates if task has no command_check gates
-    has_command = any(q.gate == "command_check" for q in task.qa_checks)
-    if not has_command and config.qa_gates.custom:
-        for gate in config.qa_gates.custom:
-            # Skip if gate is restricted to specific modules and task module doesn't match
-            if gate.modules and task.module not in gate.modules:
-                continue
-            task.qa_checks.append(
-                QACheck(
-                    gate="command_check",
-                    params={"command": gate.command, "cwd": gate.cwd},
-                )
-            )
-            progress(f"    [dim]Auto-injected QA: command_check ({gate.command})[/]")
+    inject_qa_gates(task, config, progress)
 
     dispatches = 0
 
