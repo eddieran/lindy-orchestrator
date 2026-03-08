@@ -15,6 +15,14 @@ from ..models import DispatchResult
 class DispatchProvider(Protocol):
     """Agent dispatch provider interface."""
 
+    def validate(self) -> None:
+        """Pre-flight validation: check that the provider's dependencies are available.
+
+        Raises:
+            RuntimeError: If a required binary or dependency is missing.
+        """
+        ...
+
     def dispatch(
         self,
         module: str,

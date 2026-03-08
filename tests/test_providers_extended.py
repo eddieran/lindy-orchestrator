@@ -12,6 +12,9 @@ from lindy_orchestrator.providers.base import DispatchProvider
 class FakeProvider:
     """A minimal dispatch provider for testing Protocol compliance."""
 
+    def validate(self) -> None:
+        pass
+
     def dispatch(
         self,
         module: str,

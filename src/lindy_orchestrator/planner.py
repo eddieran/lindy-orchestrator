@@ -122,7 +122,14 @@ def _read_all_statuses(config: OrchestratorConfig) -> dict[str, str]:
                 parts.append("Key metrics:")
                 for k, v in list(status.key_metrics.items())[:10]:
                     parts.append(f"  - {k}: {v}")
-            statuses[mod.name] = "\n".join(parts)
+            summary = "\n".join(parts)
+            max_status_chars = 1500
+            if len(summary) > max_status_chars:
+                summary = (
+                    summary[:max_status_chars]
+                    + "\n[... truncated — see STATUS.md for full details ...]\n"
+                )
+            statuses[mod.name] = summary
         else:
             statuses[mod.name] = "(STATUS.md not found)"
     return statuses

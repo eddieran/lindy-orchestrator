@@ -26,7 +26,7 @@ from .logger import ActionLogger
 from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
-from .qa.feedback import format_qa_feedback
+from .qa.feedback import StructuredFeedback, build_retry_prompt, build_structured_feedback
 from .worktree import create_worktree, remove_worktree
 
 log = logging.getLogger(__name__)
@@ -49,6 +49,12 @@ def execute_plan(
 
     Returns the updated plan with task statuses and results.
     """
+    # Pre-flight: validate provider is available before starting execution
+    if not config.safety.dry_run:
+        provider = create_provider(config.dispatcher)
+        if hasattr(provider, "validate"):
+            provider.validate()
+
     max_retries = config.safety.max_retries_per_task
     max_parallel = config.safety.max_parallel
     total_dispatches = 0
@@ -221,6 +227,7 @@ def _dispatch_loop(
 ) -> int:
     """Inner dispatch loop with retry logic. Extracted for worktree cleanup."""
     dispatches = 0
+    original_prompt = task.prompt
 
     while True:
         # Dispatch to module agent
@@ -465,22 +472,19 @@ def _dispatch_loop(
                 )
             )
 
-        # Augment prompt with structured remediation feedback
+        # Build structured feedback for each failed gate
         failed_checks = [r for r in task.qa_results if not r.passed]
-        feedback_parts = []
+        feedback_objs: list[StructuredFeedback] = []
         for r in failed_checks:
-            structured = format_qa_feedback(r.gate, r.output)
-            feedback_parts.append(f"### {r.gate}\n{structured}")
-        failure_detail = "\n\n".join(feedback_parts)
-        task.prompt = (
-            f"{task.prompt}\n\n"
-            f"## IMPORTANT: Previous attempt failed QA verification\n\n"
-            f"{failure_detail}\n\n"
-            f"Fix these issues. Specific instructions:\n"
-            f"- Actually RUN all scripts and commands (do not just create them)\n"
-            f"- Ensure output files are generated before declaring success\n"
-            f"- Verify your changes by running the relevant test/build commands\n"
-            f"- If a CI check failed, check the branch was pushed and CI triggered\n"
+            fb = build_structured_feedback(r.gate, r.output, retry_number=task.retries)
+            feedback_objs.append(fb)
+            task.feedback_history.append(
+                {"retry": task.retries, "gate": r.gate, "category": fb.category.value,
+                 "summary": fb.summary, "errors": fb.specific_errors,
+                 "files": fb.files_to_check, "remediation": fb.remediation_steps}
+            )
+        task.prompt = build_retry_prompt(
+            original_prompt, feedback_objs, task.retries, max_retries
         )
         task.qa_results = []
         progress(

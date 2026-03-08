@@ -45,14 +45,6 @@ Output ONLY valid JSON (no markdown, no explanation) in this exact format:
 
 ## Rules
 
-### Branch-Based Delivery
-Every task MUST instruct the agent to:
-1. Create a branch named `{branch_prefix}/task-{{id}}`
-2. Commit all changes to this branch
-3. Push the branch: `git push origin {branch_prefix}/task-{{id}}`
-
-Include this instruction in every task prompt.
-
 ### Task Prompts
 Each task prompt SHOULD be a structured JSON object (preferred) or a plain string:
 
@@ -192,7 +184,6 @@ def render_plan_prompt(
         module_statuses=module_statuses,
         architecture_section=architecture_section,
         goal=goal,
-        branch_prefix=branch_prefix,
         available_gates=gates_text,
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     )
