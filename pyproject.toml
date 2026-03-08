@@ -1,6 +1,6 @@
 [project]
 name = "lindy-orchestrator"
-version = "0.10.2"
+version = "0.10.3"
 description = "Lightweight, git-native multi-agent orchestration framework for autonomous project execution"
 requires-python = ">=3.11"
 license = "MIT"
