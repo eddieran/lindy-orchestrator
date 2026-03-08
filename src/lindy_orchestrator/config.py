@@ -36,8 +36,8 @@ class PlannerConfig(BaseModel):
 
 
 class StallEscalationConfig(BaseModel):
-    warn_after_seconds: int = 300  # emit warning event after 5 min
-    kill_after_seconds: int = 600  # kill process after 10 min
+    warn_after_seconds: int = 150  # emit warning event after 2.5 min
+    kill_after_seconds: int = 300  # kill process after 5 min
 
 
 class DispatcherConfig(BaseModel):

@@ -172,8 +172,14 @@ def render_plan_prompt(
         ]
     gates_text = "\n".join(gate_lines)
 
-    # Build architecture section if provided
+    # Build architecture section if provided (truncate if too large)
     if architecture:
+        max_arch_chars = 5000
+        if len(architecture) > max_arch_chars:
+            architecture = (
+                architecture[:max_arch_chars]
+                + "\n\n[... truncated — see ARCHITECTURE.md for full details ...]\n"
+            )
         architecture_section = (
             "\n## Architecture (respect these boundaries)\n\n" + architecture + "\n\n"
         )

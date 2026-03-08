@@ -52,15 +52,17 @@ class CICheckGate:
             return quick
 
         deadline = time.monotonic() + timeout_seconds
+        current_interval = min(5, poll_interval)  # Start with short interval
 
         while time.monotonic() < deadline:
-            time.sleep(poll_interval)
+            time.sleep(current_interval)
 
             result = self._query_runs(repo, workflow, branch)
             if result is not None:
                 return result
 
-            # _query_runs returns None when no completed run yet — continue polling
+            # Exponential backoff: 5s → 10s → 20s → ... capped at poll_interval
+            current_interval = min(current_interval * 2, poll_interval)
 
         return QAResult(
             gate="ci_check",

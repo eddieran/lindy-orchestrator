@@ -13,6 +13,16 @@ from .config import OrchestratorConfig
 from .mailbox import Mailbox, format_mailbox_messages
 from .models import QACheck, TaskItem
 
+# re-exported types for scheduler
+__all__ = [
+    "_check_delivery",
+    "inject_qa_gates",
+    "inject_mailbox_messages",
+    "inject_branch_delivery",
+    "_autofill_ci_params",
+    "ExecutionProgress",
+]
+
 log = logging.getLogger(__name__)
 
 
@@ -204,3 +214,24 @@ def inject_branch_delivery(
             f"3. `git push -u origin {branch_name}` (push to remote)\n"
             f"Do NOT skip the push step — CI verification depends on it.\n"
         )
+
+
+def _autofill_ci_params(
+    qa_checks: list[QACheck],
+    branch_name: str,
+    config: OrchestratorConfig,
+    module_name: str,
+) -> None:
+    """Auto-fill ci_check branch/repo params if missing."""
+    for qa in qa_checks:
+        if qa.gate != "ci_check":
+            continue
+        if not qa.params.get("branch"):
+            qa.params["branch"] = branch_name
+        if not qa.params.get("repo"):
+            try:
+                mod_cfg = config.get_module(module_name)
+                if mod_cfg.repo:
+                    qa.params["repo"] = mod_cfg.repo
+            except ValueError:
+                pass

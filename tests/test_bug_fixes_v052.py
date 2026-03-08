@@ -203,8 +203,8 @@ class TestBranchDeliveryInstructions:
 class TestStallDetectionConfig:
     def test_default_stall_escalation(self):
         cfg = StallEscalationConfig()
-        assert cfg.warn_after_seconds == 300
-        assert cfg.kill_after_seconds == 600
+        assert cfg.warn_after_seconds == 150
+        assert cfg.kill_after_seconds == 300
 
     def test_task_stall_seconds_field(self):
         from lindy_orchestrator.models import TaskItem

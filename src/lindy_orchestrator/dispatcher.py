@@ -185,6 +185,9 @@ def dispatch_agent(
     event_count = 0
     last_tool_use = ""
     result_text = ""
+    cost_usd = 0.0
+    input_tokens = 0
+    output_tokens = 0
 
     try:
         proc = subprocess.Popen(
@@ -266,13 +269,13 @@ def dispatch_agent(
                 warn_threshold = int(warn_threshold * 1.5)
                 kill_threshold = int(kill_threshold * 1.5)
 
-            # Grace period for first event (double thresholds)
+            # Grace period for first event (double thresholds for startup)
             if event_count == 0:
-                effective_warn = max(warn_threshold * 2, 300)
-                effective_kill = max(kill_threshold * 2, 600)
+                effective_warn = warn_threshold * 2
+                effective_kill = kill_threshold * 2
             else:
-                effective_warn = max(warn_threshold, 300)
-                effective_kill = max(kill_threshold, 600)
+                effective_warn = warn_threshold
+                effective_kill = kill_threshold
 
             # Stage 1: Warning
             if stall_elapsed >= effective_warn and not stall_warned:
@@ -344,9 +347,14 @@ def dispatch_agent(
                 if tool:
                     last_tool_use = tool
 
-                # Check for result event
+                # Check for result event (includes cost/token data)
                 if event.get("type") == "result":
                     result_text = event.get("result", "")
+                    cost_usd += event.get("total_cost_usd", 0.0) or 0.0
+                    usage = event.get("usage", {})
+                    if isinstance(usage, dict):
+                        input_tokens += usage.get("input_tokens", 0) or 0
+                        output_tokens += usage.get("output_tokens", 0) or 0
 
                 # Fire callback
                 if on_event:
@@ -406,6 +414,9 @@ def dispatch_agent(
         truncated=truncated,
         event_count=event_count,
         last_tool_use=last_tool_use,
+        cost_usd=cost_usd,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )
 
 
