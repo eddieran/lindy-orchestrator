@@ -83,6 +83,10 @@ class TestCodexExtractToolUse:
         assert _extract_tool_use({"type": "system"}) == ""
         assert _extract_tool_use({"type": "result"}) == ""
 
+    def test_codex_nested_function_call(self):
+        event = {"id": "0", "msg": {"type": "function_call", "name": "shell"}}
+        assert _extract_tool_use(event) == "shell"
+
 
 class TestCodexExtractResultFromLines:
     def test_result_event(self):
@@ -103,6 +107,14 @@ class TestCodexExtractResultFromLines:
             '{"type":"message","content":"codex output"}\n',
         ]
         assert _extract_result_from_lines(lines) == "codex output"
+
+    def test_codex_nested_agent_message(self):
+        lines = [
+            '{"id":"0","msg":{"type":"task_started","model_context_window":null}}\n',
+            '{"id":"0","msg":{"type":"agent_message","message":"Hello world"}}\n',
+            '{"id":"0","msg":{"type":"token_count","input_tokens":100}}\n',
+        ]
+        assert _extract_result_from_lines(lines) == "Hello world"
 
     def test_empty_lines(self):
         assert _extract_result_from_lines([]) == ""
@@ -278,6 +290,7 @@ class TestCodexSimpleDispatch:
         assert "exec" in cmd
         assert "--full-auto" in cmd
         assert "--json" in cmd
+        assert "--skip-git-repo-check" in cmd
         assert "test prompt" in cmd
 
     @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
@@ -383,6 +396,7 @@ class TestCodexStreamDispatch:
         assert "exec" in cmd
         assert "--full-auto" in cmd
         assert "--json" in cmd
+        assert "--skip-git-repo-check" in cmd
         assert "test prompt" in cmd
 
     @patch("lindy_orchestrator.codex_dispatcher.subprocess.Popen")
@@ -403,6 +417,21 @@ class TestCodexStreamDispatch:
         )
         assert result.success is True
         assert result.output == "done"
+
+    @patch("lindy_orchestrator.codex_dispatcher.subprocess.Popen")
+    @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
+    def test_codex_nested_agent_message(self, mock_cli, mock_popen, config, tmp_path):
+        """Codex outputs nested events like {"id":"0","msg":{"type":"agent_message",...}}."""
+        lines = _make_stream_lines(
+            {"id": "0", "msg": {"type": "task_started", "model_context_window": None}},
+            {"id": "0", "msg": {"type": "agent_message", "message": "Done!"}},
+            {"id": "0", "msg": {"type": "token_count", "input_tokens": 100}},
+        )
+        fake = FakePopen(lines, returncode=0)
+        mock_popen.return_value = fake
+        result = dispatch_codex_agent("backend", tmp_path, "do stuff", config)
+        assert result.success is True
+        assert result.output == "Done!"
 
     @patch("lindy_orchestrator.codex_dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
