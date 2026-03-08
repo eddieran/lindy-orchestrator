@@ -58,6 +58,7 @@ def dispatch_codex_agent_simple(
         "exec",
         "--full-auto",
         "--json",
+        "--skip-git-repo-check",
         "--cd",
         str(working_dir),
         prompt,
@@ -160,6 +161,7 @@ def dispatch_codex_agent(
         "exec",
         "--full-auto",
         "--json",
+        "--skip-git-repo-check",
         "--cd",
         str(working_dir),
         prompt,
@@ -323,9 +325,16 @@ def dispatch_codex_agent(
                 if tool:
                     last_tool_use = tool
 
-                # Check for result event
+                # Check for result event (Claude format)
                 if event.get("type") == "result":
                     result_text = event.get("result", "")
+
+                # Check for agent_message (Codex nested format)
+                nested = event.get("msg")
+                if isinstance(nested, dict) and nested.get("type") == "agent_message":
+                    msg_text = nested.get("message", "")
+                    if msg_text:
+                        result_text = msg_text
 
                 # Fire callback
                 if on_event:
@@ -423,7 +432,7 @@ def _extract_tool_use(event: dict[str, Any]) -> str:
 
     Handles both Claude-style and Codex-style event formats:
     - Claude: {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "..."}]}}
-    - Codex: {"type": "function_call", "name": "..."} or similar
+    - Codex: {"type": "function_call", "name": "..."} or nested {"msg": {"type": "function_call"}}
     """
     # Claude-style assistant events
     if event.get("type") == "assistant":
@@ -434,20 +443,26 @@ def _extract_tool_use(event: dict[str, Any]) -> str:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     return block.get("name", "")
 
-    # Codex-style function call events
+    # Codex-style function call events (flat)
     if event.get("type") == "function_call":
         return event.get("name", "")
+
+    # Codex nested event format: {"id": "0", "msg": {"type": "function_call", ...}}
+    nested = event.get("msg")
+    if isinstance(nested, dict) and nested.get("type") == "function_call":
+        return nested.get("name", "")
 
     return ""
 
 
 def _extract_result_from_lines(lines: list[str]) -> str:
-    """Extract the final result from stream-json JSONL lines.
+    """Extract the final result from JSONL lines.
 
-    Looks for the last {"type": "result"} event.
-    Falls back to concatenating assistant text blocks.
+    Handles both Claude and Codex output formats:
+    - Claude: {"type": "result", "result": "..."} or assistant text blocks
+    - Codex: {"id": "0", "msg": {"type": "agent_message", "message": "..."}}
     """
-    # First pass: look for result event (last one wins)
+    # First pass: look for result event (last one wins) — Claude format
     for line in reversed(lines):
         event = _parse_event(line)
         if event and event.get("type") == "result":
@@ -455,12 +470,13 @@ def _extract_result_from_lines(lines: list[str]) -> str:
             if result_text:
                 return result_text
 
-    # Fallback: concatenate assistant text blocks (Claude-style)
+    # Second pass: collect text from all supported formats
     text_parts = []
     for line in lines:
         event = _parse_event(line)
         if not event:
             continue
+        # Claude-style assistant text blocks
         if event.get("type") == "assistant":
             msg = event.get("message", {})
             content = msg.get("content", [])
@@ -468,8 +484,14 @@ def _extract_result_from_lines(lines: list[str]) -> str:
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "text":
                         text_parts.append(block.get("text", ""))
-        # Codex-style message events
+        # Codex-style flat message events
         elif event.get("type") == "message" and event.get("content"):
             text_parts.append(str(event["content"]))
+        # Codex nested event format: {"id": "0", "msg": {"type": "agent_message", ...}}
+        nested = event.get("msg")
+        if isinstance(nested, dict) and nested.get("type") == "agent_message":
+            agent_msg = nested.get("message", "")
+            if agent_msg:
+                text_parts.append(agent_msg)
 
     return "\n".join(text_parts) if text_parts else ""
