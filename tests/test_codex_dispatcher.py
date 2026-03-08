@@ -216,11 +216,13 @@ class TestCodexSimpleDispatch:
     @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_success_with_json_result(self, mock_cli, mock_run, config, tmp_path):
+        # codex exec --json outputs JSONL with a result event
+        jsonl_output = json.dumps({"type": "result", "result": "Plan generated!"})
         mock_run.return_value = type(
             "proc",
             (),
             {
-                "stdout": json.dumps({"result": "Plan generated!"}),
+                "stdout": jsonl_output,
                 "stderr": "",
                 "returncode": 0,
             },
@@ -268,16 +270,15 @@ class TestCodexSimpleDispatch:
         mock_run.return_value = type(
             "proc",
             (),
-            {"stdout": '{"result":"ok"}', "stderr": "", "returncode": 0},
+            {"stdout": '{"type":"result","result":"ok"}', "stderr": "", "returncode": 0},
         )()
         dispatch_codex_agent_simple("backend", tmp_path, "test prompt", config)
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "/usr/bin/codex"
-        assert "--prompt" in cmd
-        assert "--approval-mode" in cmd
-        assert "full-auto" in cmd
-        assert "--output-format" in cmd
-        assert "json" in cmd
+        assert "exec" in cmd
+        assert "--full-auto" in cmd
+        assert "--json" in cmd
+        assert "test prompt" in cmd
 
     @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
@@ -379,11 +380,10 @@ class TestCodexStreamDispatch:
         dispatch_codex_agent("backend", tmp_path, "test prompt", config)
         cmd = mock_popen.call_args[0][0]
         assert cmd[0] == "/usr/bin/codex"
-        assert "--prompt" in cmd
-        assert "--approval-mode" in cmd
-        assert "full-auto" in cmd
-        assert "--output-format" in cmd
-        assert "stream-json" in cmd
+        assert "exec" in cmd
+        assert "--full-auto" in cmd
+        assert "--json" in cmd
+        assert "test prompt" in cmd
 
     @patch("lindy_orchestrator.codex_dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")

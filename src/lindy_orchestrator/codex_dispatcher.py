@@ -55,12 +55,12 @@ def dispatch_codex_agent_simple(
 
     cmd = [
         codex_path,
-        "--prompt",
+        "exec",
+        "--full-auto",
+        "--json",
+        "--cd",
+        str(working_dir),
         prompt,
-        "--approval-mode",
-        "full-auto",
-        "--output-format",
-        "json",
     ]
 
     env = os.environ.copy()
@@ -86,14 +86,10 @@ def dispatch_codex_agent_simple(
             output = output[:half] + "\n\n... [TRUNCATED] ...\n\n" + output[-half:]
             truncated = True
 
-        # Parse JSON output to extract result text
-        agent_output = output
-        try:
-            parsed = json.loads(output)
-            if isinstance(parsed, dict) and "result" in parsed:
-                agent_output = parsed["result"]
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # Parse JSONL output to extract result text
+        agent_output = _extract_result_from_lines(output.splitlines())
+        if not agent_output:
+            agent_output = output
 
         if not agent_output.strip() and proc.stderr:
             agent_output = f"[stderr] {proc.stderr[:5000]}"
@@ -161,12 +157,12 @@ def dispatch_codex_agent(
 
     cmd = [
         codex_path,
-        "--prompt",
+        "exec",
+        "--full-auto",
+        "--json",
+        "--cd",
+        str(working_dir),
         prompt,
-        "--approval-mode",
-        "full-auto",
-        "--output-format",
-        "stream-json",
     ]
 
     # Remove CLAUDECODE env var to allow nested sessions
