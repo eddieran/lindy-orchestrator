@@ -167,6 +167,7 @@ def _plan_via_cli(
         working_dir=config.root,
         prompt=prompt,
         on_event=_on_event,
+        stall_seconds=config.dispatcher.timeout_seconds,  # planning has few events; disable stall
     )
     if not result.success:
         raise RuntimeError(f"Planning failed: {result.output[:500]}")
