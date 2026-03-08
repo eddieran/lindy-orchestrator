@@ -18,6 +18,7 @@ from .cli_helpers import (
     persist_plan,
     plan_from_dict,
     plan_to_dict,
+    print_task_list,
     resolve_goal,
 )
 from .dashboard import Dashboard
@@ -171,10 +172,7 @@ def run(
     # Auto-persist plan to .orchestrator/plans/
     _persist_plan(cfg.root, plan)
 
-    console.print(f"\n  [bold]{len(plan.tasks)} tasks planned:[/]")
-    for t in plan.tasks:
-        deps = f" [dim](depends on: {t.depends_on})[/]" if t.depends_on else ""
-        console.print(f"    {t.id}. [bold][{t.module}][/] {t.description}{deps}")
+    print_task_list(console, plan.tasks)
 
     # Step 3: Execute
     console.print("\n[bold cyan][2/3][/] Executing tasks...")
@@ -242,14 +240,7 @@ def plan(
         if progress._live is not None:
             progress.stop()
 
-    console.print(f"\n[bold]{len(plan_result.tasks)} tasks:[/]\n")
-    for t in plan_result.tasks:
-        deps = f" (depends on: {t.depends_on})" if t.depends_on else ""
-        qa = ", ".join(q.gate for q in t.qa_checks) if t.qa_checks else "none"
-        console.print(f"  {t.id}. [{t.module}] {t.description}{deps}")
-        console.print(f"     QA: {qa}")
-        if t.prompt:
-            console.print(f"     Prompt: {t.prompt[:100]}...")
+    print_task_list(console, plan_result.tasks, show_qa=True, show_prompt=True)
 
     # Auto-persist plan
     plan_json_path = _persist_plan(cfg.root, plan_result)

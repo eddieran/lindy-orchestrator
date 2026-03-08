@@ -13,8 +13,14 @@ from rich.console import Console
 from typing import Callable
 
 from .config import CONFIG_FILENAME, OrchestratorConfig, load_config
-from .models import TaskPlan
+from .models import TaskItem, TaskPlan
 from .session import SessionManager, SessionState
+
+# Max tasks to display fully; above this, collapse the middle
+MAX_DISPLAY_TASKS = 8
+# When collapsed: show first N and last N
+_COLLAPSE_HEAD = 3
+_COLLAPSE_TAIL = 2
 
 console = Console()
 
@@ -75,6 +81,45 @@ def plan_from_dict(data: dict) -> TaskPlan:
     from .models import plan_from_dict as _plan_from_dict
 
     return _plan_from_dict(data)
+
+
+def print_task_list(
+    con: Console,
+    tasks: list[TaskItem],
+    *,
+    show_qa: bool = False,
+    show_prompt: bool = False,
+) -> None:
+    """Print a task list, collapsing the middle when there are many tasks.
+
+    Args:
+        con: Rich console to print to.
+        tasks: List of tasks to display.
+        show_qa: Show QA gates per task (used by `plan` command).
+        show_prompt: Show prompt preview per task (used by `plan` command).
+    """
+    total = len(tasks)
+    con.print(f"\n  [bold]{total} tasks planned:[/]")
+
+    def _print_task(t: TaskItem) -> None:
+        deps = f" [dim](depends on: {t.depends_on})[/]" if t.depends_on else ""
+        con.print(f"    {t.id}. [bold][{t.module}][/] {t.description}{deps}")
+        if show_qa:
+            qa = ", ".join(q.gate for q in t.qa_checks) if t.qa_checks else "none"
+            con.print(f"       QA: {qa}")
+        if show_prompt and t.prompt:
+            con.print(f"       Prompt: {t.prompt[:100]}...")
+
+    if total <= MAX_DISPLAY_TASKS:
+        for t in tasks:
+            _print_task(t)
+    else:
+        for t in tasks[:_COLLAPSE_HEAD]:
+            _print_task(t)
+        hidden = total - _COLLAPSE_HEAD - _COLLAPSE_TAIL
+        con.print(f"    [dim]... {hidden} more tasks ...[/]")
+        for t in tasks[-_COLLAPSE_TAIL:]:
+            _print_task(t)
 
 
 def persist_plan(root: Path, plan: TaskPlan) -> Path:
