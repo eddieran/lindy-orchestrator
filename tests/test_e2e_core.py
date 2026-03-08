@@ -222,7 +222,7 @@ class TestE2EMailbox:
 
 
 class TestE2ERun:
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_dry_run(self, mock_plan, mock_exec, mock_cli, cfg_path):
@@ -232,7 +232,7 @@ class TestE2ERun:
         call_args = mock_exec.call_args
         assert call_args[0][1].safety.dry_run is True
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_full_flow(self, mock_plan, mock_exec, mock_cli, cfg_path):
@@ -240,17 +240,17 @@ class TestE2ERun:
         assert result.exit_code == 0
         assert "GOAL COMPLETED" in result.output
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value=None)
+    @patch("shutil.which", return_value=None)
     def test_run_no_claude_cli(self, mock_cli, cfg_path):
         result = runner.invoke(app, ["run", "test goal", "-c", cfg_path])
         assert result.exit_code != 0
-        assert "Claude CLI not found" in result.output
+        assert "Claude CLI" in result.output
 
     def test_run_no_goal(self, cfg_path):
         result = runner.invoke(app, ["run", "-c", cfg_path])
         assert result.exit_code != 0
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     def test_run_from_plan_file(self, mock_exec, mock_cli, project_dir, cfg_path):
         """Run from a saved plan JSON (skip planning step)."""
@@ -266,20 +266,20 @@ class TestE2ERun:
         assert result.exit_code == 0
         assert "Loaded plan from" in result.output
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     def test_run_plan_file_not_found(self, mock_cli, cfg_path):
         result = runner.invoke(app, ["run", "--plan", "/nonexistent/plan.json", "-c", cfg_path])
         assert result.exit_code != 0
         assert "not found" in result.output.lower()
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=RuntimeError("LLM down"))
     def test_run_planner_failure(self, mock_plan, mock_cli, cfg_path):
         result = runner.invoke(app, ["run", "test", "-c", cfg_path])
         assert result.exit_code != 0
         assert "failed" in result.output.lower()
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan")
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_with_failures(self, mock_plan, mock_exec, mock_cli, cfg_path):
@@ -298,7 +298,7 @@ class TestE2ERun:
 
     # --- Execution summary report E2E tests ---
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_shows_execution_summary(self, mock_plan, mock_exec, mock_cli, cfg_path):
@@ -308,7 +308,7 @@ class TestE2ERun:
         assert "Task Details" in result.output
         assert "Execution Metrics" in result.output
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_shows_session_in_summary(self, mock_plan, mock_exec, mock_cli, cfg_path):
@@ -317,7 +317,7 @@ class TestE2ERun:
         assert result.exit_code == 0
         assert "Session" in result.output
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_shows_task_counts(self, mock_plan, mock_exec, mock_cli, cfg_path):
@@ -328,7 +328,7 @@ class TestE2ERun:
         assert "2 passed" in result.output
         assert "0 failed" in result.output
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_saves_report_file(self, mock_plan, mock_exec, mock_cli, project_dir, cfg_path):
@@ -344,7 +344,7 @@ class TestE2ERun:
         assert "# Execution Summary" in content
         assert "COMPLETED" in content
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan")
     @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
     def test_run_failure_report_shows_task_details(self, mock_plan, mock_exec, mock_cli, cfg_path):
@@ -365,7 +365,7 @@ class TestE2ERun:
         assert "1 failed" in result.output
         assert "Task Details" in result.output
 
-    @patch("lindy_orchestrator.cli.find_claude_cli", return_value="/usr/bin/claude")
+    @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
     def test_run_from_plan_file_shows_report(self, mock_exec, mock_cli, project_dir, cfg_path):
         """Run from plan file also produces the execution summary report."""

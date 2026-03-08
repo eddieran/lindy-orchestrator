@@ -219,20 +219,17 @@ class TestOnboardScaffoldCLI:
         # Empty project with no description should fail
         assert result.exit_code != 0
 
-    def test_onboard_scaffold_no_claude_cli(self, tmp_path, monkeypatch):
+    def test_onboard_scaffold_no_cli(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("lindy_orchestrator.cli_onboard.find_claude_cli", return_value=None):
+        with patch("shutil.which", return_value=None):
             result = runner.invoke(app, ["onboard", "A test project", "-y"])
             assert result.exit_code != 0
-            assert "Claude CLI not found" in result.output
+            assert "not found" in result.output.lower()
 
     def test_onboard_scaffold_generates_files(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         with (
-            patch(
-                "lindy_orchestrator.cli_onboard.find_claude_cli",
-                return_value="/usr/bin/claude",
-            ),
+            patch("shutil.which", return_value="/usr/bin/claude"),
             patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
@@ -267,10 +264,7 @@ class TestOnboardScaffoldCLI:
         desc_file.write_text("A microservice project with Go and gRPC")
 
         with (
-            patch(
-                "lindy_orchestrator.cli_onboard.find_claude_cli",
-                return_value="/usr/bin/claude",
-            ),
+            patch("shutil.which", return_value="/usr/bin/claude"),
             patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
@@ -295,10 +289,7 @@ class TestOnboardScaffoldCLI:
             return DispatchResult(module=module, success=False, output="Connection error")
 
         with (
-            patch(
-                "lindy_orchestrator.cli_onboard.find_claude_cli",
-                return_value="/usr/bin/claude",
-            ),
+            patch("shutil.which", return_value="/usr/bin/claude"),
             patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
@@ -322,10 +313,7 @@ class TestOnboardScaffoldCLI:
             return DispatchResult(module=module, success=True, output="Not valid JSON at all")
 
         with (
-            patch(
-                "lindy_orchestrator.cli_onboard.find_claude_cli",
-                return_value="/usr/bin/claude",
-            ),
+            patch("shutil.which", return_value="/usr/bin/claude"),
             patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
@@ -349,10 +337,7 @@ class TestOnboardScaffoldCLI:
         (tmp_path / "README.md").write_text("just a readme")
 
         with (
-            patch(
-                "lindy_orchestrator.cli_onboard.find_claude_cli",
-                return_value="/usr/bin/claude",
-            ),
+            patch("shutil.which", return_value="/usr/bin/claude"),
             patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
         ):
             mock_provider = mock_provider_factory.return_value
@@ -370,6 +355,23 @@ class TestOnboardScaffoldCLI:
             assert result.exit_code == 0
             # Files should be created
             assert (tmp_path / "orchestrator.yaml").exists()
+
+    def test_onboard_scaffold_with_codex_provider(self, tmp_path, monkeypatch):
+        """--provider codex_cli should use codex provider."""
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch("shutil.which", return_value="/usr/bin/codex"),
+            patch("lindy_orchestrator.cli_onboard.create_provider") as mock_provider_factory,
+        ):
+            mock_provider = mock_provider_factory.return_value
+            mock_provider.dispatch_simple.side_effect = _mock_dispatch_simple
+
+            result = runner.invoke(
+                app,
+                ["onboard", "A test project", "--provider", "codex_cli", "-y"],
+            )
+            assert result.exit_code == 0
+            assert "Onboarding complete" in result.output
 
 
 class TestOnboardInitCLI:
@@ -402,3 +404,7 @@ class TestOldCommandsRemoved:
         result = runner.invoke(app, ["onboard", "--help"])
         assert result.exit_code == 0
         assert "onboard" in result.output.lower()
+
+    def test_onboard_has_provider_option(self):
+        result = runner.invoke(app, ["onboard", "--help"])
+        assert "--provider" in result.output

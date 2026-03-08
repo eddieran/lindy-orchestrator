@@ -16,7 +16,7 @@ import typer
 from rich.console import Console
 
 from . import __version__
-from .cli_helpers import resolve_goal
+from .cli_helpers import resolve_goal, validate_provider
 from .cli_onboard_helpers import (
     _build_scaffold_prompt,
     _has_config,
@@ -26,7 +26,6 @@ from .cli_onboard_helpers import (
     scaffold_response_to_context,
 )
 from .config import CONFIG_FILENAME, DispatcherConfig
-from .dispatcher import find_claude_cli
 from .providers import create_provider
 
 
@@ -42,14 +41,10 @@ def _run_scaffold_mode(
     file: str | None,
     force: bool,
     non_interactive: bool,
+    provider_name: str = "claude_cli",
 ) -> None:
     """Scaffold mode: LLM-driven generation for empty projects."""
     desc = resolve_goal(description, file)
-
-    if not find_claude_cli():
-        console.print("[red]Error: Claude CLI not found in PATH.[/]")
-        console.print("Install: https://docs.anthropic.com/en/docs/claude-code")
-        raise typer.Exit(1)
 
     console.print(f"Description: [dim]{desc[:200]}{'...' if len(desc) > 200 else ''}[/]\n")
 
@@ -60,6 +55,7 @@ def _run_scaffold_mode(
     dispatcher_config = DispatcherConfig(
         timeout_seconds=120,
         permission_mode="bypassPermissions",
+        provider=provider_name,
     )
     provider = create_provider(dispatcher_config)
     result = provider.dispatch_simple(
@@ -283,6 +279,9 @@ def register_onboard_command(app: typer.Typer, console: Console) -> None:
             False, "--non-interactive", "-y", help="Skip confirmation prompts, use defaults"
         ),
         force: bool = typer.Option(False, "--force", help="Overwrite existing files"),
+        provider: Optional[str] = typer.Option(
+            None, "--provider", help="Dispatch provider: claude_cli (default) or codex_cli"
+        ),
     ):
         """Onboard a project into lindy-orchestrator.
 
@@ -299,6 +298,11 @@ def register_onboard_command(app: typer.Typer, console: Console) -> None:
 
         has_config = _has_config(cwd)
         has_sources = _has_source_files(cwd)
+
+        # Validate provider for scaffold mode (only mode that dispatches to LLM)
+        resolved_provider = "claude_cli"
+        if not has_config and not has_sources:
+            resolved_provider = validate_provider(provider)
 
         if has_config:
             # Already onboarded → re-onboard/optimize
@@ -321,5 +325,11 @@ def register_onboard_command(app: typer.Typer, console: Console) -> None:
                 )
                 raise typer.Exit(1)
             _run_scaffold_mode(
-                console, cwd, description, file, force=force, non_interactive=non_interactive
+                console,
+                cwd,
+                description,
+                file,
+                force=force,
+                non_interactive=non_interactive,
+                provider_name=resolved_provider,
             )

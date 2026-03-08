@@ -12,8 +12,9 @@ from rich.console import Console
 
 from typing import Callable
 
-from .config import CONFIG_FILENAME, OrchestratorConfig, load_config
+from .config import CONFIG_FILENAME, DispatcherConfig, OrchestratorConfig, load_config
 from .models import TaskItem, TaskPlan
+from .providers import create_provider
 from .session import SessionManager, SessionState
 
 # Max tasks to display fully; above this, collapse the middle
@@ -120,6 +121,33 @@ def print_task_list(
         con.print(f"    [dim]... {hidden} more tasks ...[/]")
         for t in tasks[-_COLLAPSE_TAIL:]:
             _print_task(t)
+
+
+def validate_provider(provider_name: str | None = None) -> str:
+    """Validate the dispatch provider is available.
+
+    Args:
+        provider_name: Provider name (e.g. 'claude_cli', 'codex_cli').
+                       If None, defaults to 'claude_cli'.
+
+    Returns:
+        The resolved provider name.
+
+    Raises:
+        typer.Exit: If the provider binary is not found.
+    """
+    name = provider_name or "claude_cli"
+    try:
+        provider = create_provider(DispatcherConfig(provider=name))
+        if hasattr(provider, "validate"):
+            provider.validate()
+    except RuntimeError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1)
+    except ValueError as e:
+        console.print(f"[red]{e}[/]")
+        raise typer.Exit(1)
+    return name
 
 
 def persist_plan(root: Path, plan: TaskPlan) -> Path:

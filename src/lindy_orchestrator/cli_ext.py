@@ -9,7 +9,7 @@ from typing import Any, Optional
 import typer
 from rich.console import Console
 
-from .cli_helpers import finalise_session, make_on_progress
+from .cli_helpers import finalise_session, make_on_progress, print_task_list, validate_provider
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
 from .reporter import PlanProgress, print_goal_report
@@ -216,6 +216,9 @@ def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str,
         config: Optional[str] = typer.Option(None, "-c", "--config"),
         dry_run: bool = typer.Option(False, "--dry-run", help="Plan only, don't execute"),
         verbose: bool = typer.Option(False, "-v", "--verbose"),
+        provider: Optional[str] = typer.Option(
+            None, "--provider", help="Dispatch provider: claude_cli (default) or codex_cli"
+        ),
     ):
         """Fetch an issue from the tracker and execute it as a goal."""
         from .planner import generate_plan
@@ -223,6 +226,11 @@ def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str,
         from .trackers import create_tracker
 
         cfg = _load_cfg(config)
+
+        # Override provider from CLI flag if specified
+        if provider:
+            cfg.dispatcher.provider = provider
+        validate_provider(cfg.dispatcher.provider)
 
         if not cfg.tracker.enabled:
             console.print("[yellow]Tracker is disabled.[/] Set tracker.enabled: true in config.")
@@ -247,10 +255,6 @@ def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str,
 
         if dry_run:
             cfg.safety.dry_run = True
-
-        if not find_claude_cli():
-            console.print("[red]Error: Claude CLI not found in PATH.[/]")
-            raise typer.Exit(1)
 
         logger = ActionLogger(cfg.log_path)
         sessions = SessionManager(cfg.sessions_path)
@@ -284,10 +288,7 @@ def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str,
         sessions.save(session)
         _persist_plan(cfg.root, plan_result)
 
-        console.print(f"\n  [bold]{len(plan_result.tasks)} tasks planned:[/]")
-        for t in plan_result.tasks:
-            deps = f" [dim](depends on: {t.depends_on})[/]" if t.depends_on else ""
-            console.print(f"    {t.id}. [bold][{t.module}][/] {t.description}{deps}")
+        print_task_list(console, plan_result.tasks)
 
         console.print("\n[bold cyan][2/3][/] Executing tasks...")
         plan_result = execute_plan(
