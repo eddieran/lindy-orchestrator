@@ -25,7 +25,7 @@ class TestStallThresholdDefaults:
     def test_reduced_defaults(self):
         cfg = StallEscalationConfig()
         assert cfg.warn_after_seconds == 150
-        assert cfg.kill_after_seconds == 300
+        assert cfg.kill_after_seconds == 600
 
     def test_custom_override_respected(self):
         cfg = StallEscalationConfig(warn_after_seconds=60, kill_after_seconds=120)
