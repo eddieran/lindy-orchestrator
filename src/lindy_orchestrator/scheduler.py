@@ -15,6 +15,7 @@ from typing import Callable
 
 from .config import OrchestratorConfig
 from .scheduler_helpers import (
+    _autofill_ci_params,
     _check_delivery,
     inject_branch_delivery,
     inject_mailbox_messages,
@@ -292,6 +293,7 @@ def _dispatch_loop(
         )
         dispatches += 1
         task.result = result.output
+        task.cost_usd += result.cost_usd
 
         logger.log_dispatch(
             task.module,
@@ -302,6 +304,7 @@ def _dispatch_loop(
                 "exit_code": result.exit_code,
                 "event_count": result.event_count,
                 "last_tool_use": result.last_tool_use,
+                "cost_usd": result.cost_usd,
             },
         )
 
@@ -345,54 +348,47 @@ def _dispatch_loop(
                 output=delivery_msg,
             )
 
-        # Run QA gates (sequentially per task)
-        all_qa_passed = True
-        for qa in task.qa_checks:
-            # Auto-fill ci_check branch/repo if missing
-            if qa.gate == "ci_check":
-                if not qa.params.get("branch"):
-                    qa.params["branch"] = branch_name
-                if not qa.params.get("repo"):
-                    try:
-                        mod_cfg = config.get_module(task.module)
-                        if mod_cfg.repo:
-                            qa.params["repo"] = mod_cfg.repo
-                    except ValueError:
-                        pass
-            progress(f"    Running QA: [bold]{qa.gate}[/]...")
+        # Auto-fill ci_check params before parallel execution
+        _autofill_ci_params(task.qa_checks, branch_name, config, task.module)
 
-            qa_result = run_qa_gate(
+        # Run QA gates in parallel
+        qa_root = worktree_path or config.root
+        qa_mod = config.qa_module()
+        gate_count = len(task.qa_checks)
+        progress(
+            f"    Running {gate_count} QA gate(s){'  in parallel' if gate_count > 1 else ''}..."
+        )
+
+        def _run_gate(qa):
+            return qa, run_qa_gate(
                 check=qa,
-                project_root=worktree_path or config.root,
+                project_root=qa_root,
                 module_name=task.module,
                 task_output=task.result,
                 custom_gates=config.qa_gates.custom,
                 dispatcher_config=config.dispatcher,
-                qa_module=config.qa_module(),
+                qa_module=qa_mod,
                 module_path=module_dir,
             )
-            task.qa_results.append(qa_result)
-            logger.log_qa(qa.gate, qa_result.passed, qa_result.output)
 
-            if qa_result.passed:
-                progress(f"      [green]PASS[/]: {qa_result.output[:100]}")
+        all_qa_passed = True
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(gate_count, 4)) as qa_pool:
+            futs = {qa_pool.submit(_run_gate, qa): qa for qa in task.qa_checks}
+            for fut in concurrent.futures.as_completed(futs):
+                qa, qa_result = fut.result()
+                task.qa_results.append(qa_result)
+                logger.log_qa(qa.gate, qa_result.passed, qa_result.output)
+                evt_type = EventType.QA_PASSED if qa_result.passed else EventType.QA_FAILED
+                if qa_result.passed:
+                    progress(f"      [green]PASS[/]: {qa.gate} — {qa_result.output[:100]}")
+                else:
+                    progress(f"      [red]FAIL[/]: {qa.gate} — {qa_result.output[:200]}")
+                    detail(f"      Full output: {qa_result.output}")
+                    all_qa_passed = False
                 if hooks:
                     hooks.emit(
                         Event(
-                            type=EventType.QA_PASSED,
-                            task_id=task.id,
-                            module=task.module,
-                            data={"gate": qa.gate, "output": qa_result.output[:200]},
-                        )
-                    )
-            else:
-                progress(f"      [red]FAIL[/]: {qa_result.output[:200]}")
-                detail(f"      Full output: {qa_result.output}")
-                all_qa_passed = False
-                if hooks:
-                    hooks.emit(
-                        Event(
-                            type=EventType.QA_FAILED,
+                            type=evt_type,
                             task_id=task.id,
                             module=task.module,
                             data={"gate": qa.gate, "output": qa_result.output[:200]},

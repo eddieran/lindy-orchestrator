@@ -125,6 +125,7 @@ class TaskItem:
     completed_at: str | None = None
     timeout_seconds: int | None = None  # per-task override
     stall_seconds: int | None = None  # per-task stall override
+    cost_usd: float = 0.0  # actual cost from dispatch provider
 
 
 @dataclass
@@ -226,6 +227,7 @@ def plan_from_dict(data: dict) -> TaskPlan:
                 completed_at=t.get("completed_at"),
                 timeout_seconds=t.get("timeout_seconds"),
                 stall_seconds=t.get("stall_seconds"),
+                cost_usd=t.get("cost_usd", 0.0),
             )
         )
     return TaskPlan(goal=data["goal"], tasks=tasks)
@@ -247,6 +249,9 @@ class DispatchResult:
     error: str | None = None
     event_count: int = 0
     last_tool_use: str = ""
+    cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 # ---------------------------------------------------------------------------

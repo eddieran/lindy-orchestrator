@@ -277,12 +277,14 @@ def generate_execution_summary(
     table.add_column("Status", width=6, justify="center")
     table.add_column("Duration", width=8, justify="right")
     table.add_column("Retries", width=7, justify="center")
+    table.add_column("Cost", width=7, justify="right")
     table.add_column("QA Results", min_width=16)
     table.add_column("Output", min_width=20, max_width=40)
 
     for task in plan.tasks:
         style, label = _STATUS_STYLE.get(task.status, ("white", "?"))
         dur = _task_duration(task)
+        cost = f"${task.cost_usd:.2f}" if task.cost_usd > 0 else "-"
         output_preview = (task.result or "")[:120].replace("\n", " ")
         if len(task.result or "") > 120:
             output_preview += "..."
@@ -293,6 +295,7 @@ def generate_execution_summary(
             f"[{style}]{label}[/]",
             _format_duration(dur),
             str(task.retries) if task.retries else "-",
+            cost,
             _qa_summary(task),
             output_preview or "-",
         )
@@ -308,7 +311,11 @@ def generate_execution_summary(
     metrics.add_row("Failed", f"[red]{len(failed)}[/]" if failed else "0")
     metrics.add_row("Skipped", str(len(skipped)))
     metrics.add_row("Total duration", _format_duration(duration))
-    metrics.add_row("Est. cost", f"${len(plan.tasks) * 2.0:.2f}")
+    total_cost = sum(t.cost_usd for t in plan.tasks)
+    if total_cost > 0:
+        metrics.add_row("Cost", f"${total_cost:.2f}")
+    else:
+        metrics.add_row("Est. cost", f"${len(plan.tasks) * 2.0:.2f}")
     con.print(metrics)
 
 
@@ -328,6 +335,8 @@ def save_summary_report(
     skipped = [t for t in plan.tasks if t.status == TaskStatus.SKIPPED]
 
     status_word = "PAUSED" if failed else "COMPLETED"
+    total_cost = sum(t.cost_usd for t in plan.tasks)
+    cost_str = f"${total_cost:.2f}" if total_cost > 0 else f"~${len(plan.tasks) * 2.0:.2f} (est.)"
     lines = [
         "# Execution Summary",
         "",
@@ -335,13 +344,14 @@ def save_summary_report(
         f"- **Status**: {status_word}",
         f"- **Session**: {session_id}",
         f"- **Duration**: {_format_duration(duration)}",
+        f"- **Cost**: {cost_str}",
         f"- **Tasks**: {len(completed)} passed, {len(failed)} failed, "
         f"{len(skipped)} skipped / {len(plan.tasks)} total",
         "",
         "## Task Details",
         "",
-        "| # | Module | Description | Status | Duration | Retries | QA |",
-        "|---|--------|-------------|--------|----------|---------|-----|",
+        "| # | Module | Description | Status | Duration | Cost | Retries | QA |",
+        "|---|--------|-------------|--------|----------|------|---------|-----|",
     ]
 
     for task in plan.tasks:
@@ -349,9 +359,10 @@ def save_summary_report(
         dur = _format_duration(_task_duration(task))
         qa = _qa_summary(task)
         retries = str(task.retries) if task.retries else "-"
+        cost = f"${task.cost_usd:.2f}" if task.cost_usd > 0 else "-"
         lines.append(
             f"| {task.id} | {task.module} | {task.description} "
-            f"| {label} | {dur} | {retries} | {qa} |"
+            f"| {label} | {dur} | {cost} | {retries} | {qa} |"
         )
 
     lines.append("")

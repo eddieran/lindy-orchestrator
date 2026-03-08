@@ -141,7 +141,7 @@ def run(
     session = sessions.create(goal=goal)
     console.print(f"Session: {session.session_id}\n")
 
-    start = time.monotonic()
+    start = time.time()  # wall-clock time (monotonic skips macOS sleep)
     on_progress = make_on_progress(console)
 
     logger.log_action("session_start", details={"goal": goal, "dry_run": cfg.safety.dry_run})
@@ -193,7 +193,7 @@ def run(
 
     # Step 4: Report
     console.print("\n[bold cyan][3/3][/] Generating report...")
-    duration = round(time.monotonic() - start, 1)
+    duration = round(time.time() - start, 1)
 
     generate_execution_summary(plan, duration, session.session_id, console=console)
     report_path = save_summary_report(plan, duration, session.session_id, cfg.root)
@@ -344,7 +344,7 @@ def resume(
 
     # Execute remaining
     logger = ActionLogger(cfg.log_path)
-    start = time.monotonic()
+    start = time.time()  # wall-clock time (monotonic skips macOS sleep)
     on_progress = make_on_progress(console)
 
     console.print("\n[bold cyan]Resuming execution...[/]")
@@ -360,7 +360,7 @@ def resume(
             plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
         )
 
-    duration = round(time.monotonic() - start, 1)
+    duration = round(time.time() - start, 1)
 
     generate_execution_summary(plan, duration, session.session_id, console=console)
     report_path = save_summary_report(plan, duration, session.session_id, cfg.root)
