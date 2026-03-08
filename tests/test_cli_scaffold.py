@@ -407,4 +407,8 @@ class TestOldCommandsRemoved:
 
     def test_onboard_has_provider_option(self):
         result = runner.invoke(app, ["onboard", "--help"])
-        assert "--provider" in result.output
+        # Strip ANSI escape codes before checking
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--provider" in clean
