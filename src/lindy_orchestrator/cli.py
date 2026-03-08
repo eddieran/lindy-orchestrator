@@ -20,10 +20,9 @@ from .cli_helpers import (
     plan_to_dict,
     print_task_list,
     resolve_goal,
+    validate_provider,
 )
 from .dashboard import Dashboard
-from .codex_dispatcher import find_codex_cli
-from .dispatcher import find_claude_cli
 from .hooks import HookRegistry
 from .logger import ActionLogger
 from .models import TaskStatus
@@ -103,19 +102,7 @@ def run(
     # Override provider from CLI flag if specified
     if provider:
         cfg.dispatcher.provider = provider
-
-    # Verify the selected CLI exists
-    selected_provider = cfg.dispatcher.provider
-    if selected_provider == "codex_cli":
-        if not find_codex_cli():
-            console.print("[red]Error: Codex CLI not found in PATH.[/]")
-            console.print("Install: https://github.com/openai/codex")
-            raise typer.Exit(1)
-    else:
-        if not find_claude_cli():
-            console.print("[red]Error: Claude CLI not found in PATH.[/]")
-            console.print("Install: https://docs.anthropic.com/en/docs/claude-code")
-            raise typer.Exit(1)
+    validate_provider(cfg.dispatcher.provider)
 
     # Load plan from file or generate from goal
     if plan_file:

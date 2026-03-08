@@ -253,7 +253,7 @@ class TestE2EOnboard:
             )
 
         with (
-            patch("lindy_orchestrator.cli_onboard.find_claude_cli", return_value="/usr/bin/claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
             patch("lindy_orchestrator.cli_onboard.create_provider") as mock_pf,
         ):
             mock_pf.return_value.dispatch_simple.side_effect = mock_dispatch
@@ -289,10 +289,10 @@ class TestE2EOnboard:
 
     def test_onboard_scaffold_no_claude_cli(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        with patch("lindy_orchestrator.cli_onboard.find_claude_cli", return_value=None):
+        with patch("shutil.which", return_value=None):
             result = runner.invoke(app, ["onboard", "A project", "-y"])
             assert result.exit_code != 0
-            assert "Claude CLI not found" in result.output
+            assert "Claude CLI" in result.output
 
     def test_onboard_scaffold_from_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -307,7 +307,7 @@ class TestE2EOnboard:
             )
 
         with (
-            patch("lindy_orchestrator.cli_onboard.find_claude_cli", return_value="/usr/bin/claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
             patch("lindy_orchestrator.cli_onboard.create_provider") as mock_pf,
         ):
             mock_pf.return_value.dispatch_simple.side_effect = mock_dispatch
