@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import tempfile
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -101,7 +103,21 @@ class SessionManager:
     def _save(self, state: SessionState) -> None:
         path = self.sessions_dir / f"{state.session_id}.json"
         try:
-            path.write_text(json.dumps(asdict(state), indent=2, default=str))
+            # Write to temp file then atomically rename to prevent corruption
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.sessions_dir, suffix=".tmp", prefix=f"{state.session_id}_"
+            )
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(asdict(state), f, indent=2, default=str)
+                os.replace(tmp_path, path)
+            except BaseException:
+                # Clean up temp file on any failure
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except OSError:
             log.exception("Failed to save session %s to %s", state.session_id, path)
             raise

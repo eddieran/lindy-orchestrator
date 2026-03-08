@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -15,6 +16,14 @@ class CodexCLIProvider:
 
     def __init__(self, config: DispatcherConfig):
         self.config = config
+
+    def validate(self) -> None:
+        """Check that the codex CLI binary is installed and on PATH."""
+        if not shutil.which("codex"):
+            raise RuntimeError(
+                "Codex CLI binary 'codex' not found on PATH. "
+                "Install it from https://github.com/openai/codex"
+            )
 
     def dispatch(
         self,

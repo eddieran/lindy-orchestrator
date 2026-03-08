@@ -47,13 +47,15 @@ class TestRenderPlanPrompt:
         )
         assert "my-project" in result
 
-    def test_branch_prefix_substituted(self):
+    def test_branch_prefix_accepted(self):
+        """branch_prefix param is accepted (used by scheduler at dispatch time, not in template)."""
         result = render_plan_prompt(
             goal="Goal",
             module_summaries={"x": "y"},
             branch_prefix="feature",
         )
-        assert "feature/task-" in result
+        # Branch delivery instructions are injected at dispatch time, not in the planning template
+        assert "Goal" in result
 
     def test_with_architecture(self):
         result = render_plan_prompt(

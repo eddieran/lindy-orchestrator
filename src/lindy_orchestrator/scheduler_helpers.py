@@ -146,10 +146,14 @@ def inject_qa_gates(
         )
         progress("    [dim]Auto-injected QA: layer_check[/]")
 
-    # Auto-inject custom command gates if task has no command_check gates
-    has_command = any(q.gate == "command_check" for q in task.qa_checks)
-    if not has_command and config.qa_gates.custom:
+    # Auto-inject custom command gates, skipping commands already present
+    if config.qa_gates.custom:
+        existing_commands = {
+            q.params.get("command") for q in task.qa_checks if q.gate == "command_check"
+        }
         for gate in config.qa_gates.custom:
+            if gate.command in existing_commands:
+                continue
             if gate.modules and task.module not in gate.modules:
                 continue
             task.qa_checks.append(
