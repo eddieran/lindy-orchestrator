@@ -479,13 +479,17 @@ def _dispatch_loop(
             fb = build_structured_feedback(r.gate, r.output, retry_number=task.retries)
             feedback_objs.append(fb)
             task.feedback_history.append(
-                {"retry": task.retries, "gate": r.gate, "category": fb.category.value,
-                 "summary": fb.summary, "errors": fb.specific_errors,
-                 "files": fb.files_to_check, "remediation": fb.remediation_steps}
+                {
+                    "retry": task.retries,
+                    "gate": r.gate,
+                    "category": fb.category.value,
+                    "summary": fb.summary,
+                    "errors": fb.specific_errors,
+                    "files": fb.files_to_check,
+                    "remediation": fb.remediation_steps,
+                }
             )
-        task.prompt = build_retry_prompt(
-            original_prompt, feedback_objs, task.retries, max_retries
-        )
+        task.prompt = build_retry_prompt(original_prompt, feedback_objs, task.retries, max_retries)
         task.qa_results = []
         progress(
             f"    [yellow]QA failed, retrying with feedback[/] ({task.retries}/{max_retries})..."
