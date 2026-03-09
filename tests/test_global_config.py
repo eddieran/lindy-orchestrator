@@ -145,6 +145,7 @@ class TestLoadConfigMergesGlobal:
 
         with patch("lindy_orchestrator.config.GLOBAL_CONFIG_PATH", global_cfg_file):
             from lindy_orchestrator.config import load_config
+
             cfg = load_config(yaml_file)
 
         assert cfg.dispatcher.provider == "codex_cli"
@@ -161,6 +162,7 @@ class TestLoadConfigMergesGlobal:
 
         with patch("lindy_orchestrator.config.GLOBAL_CONFIG_PATH", global_cfg_file):
             from lindy_orchestrator.config import load_config
+
             cfg = load_config(yaml_file)
 
         assert cfg.dispatcher.provider == "claude_cli"

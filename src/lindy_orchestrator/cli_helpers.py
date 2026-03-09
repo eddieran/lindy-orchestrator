@@ -12,7 +12,13 @@ from rich.console import Console
 
 from typing import Callable
 
-from .config import CONFIG_FILENAME, DispatcherConfig, OrchestratorConfig, load_config, load_global_config
+from .config import (
+    CONFIG_FILENAME,
+    DispatcherConfig,
+    OrchestratorConfig,
+    load_config,
+    load_global_config,
+)
 from .models import TaskItem, TaskPlan
 from .providers import create_provider
 from .session import SessionManager, SessionState

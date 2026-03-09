@@ -11,7 +11,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import GLOBAL_CONFIG_PATH, VALID_PROVIDERS, GlobalConfig, load_global_config, save_global_config
+from .config import (
+    GLOBAL_CONFIG_PATH,
+    VALID_PROVIDERS,
+    GlobalConfig,
+    load_global_config,
+    save_global_config,
+)
 
 SETTABLE_KEYS = {"provider"}
 
@@ -39,9 +45,7 @@ def register_config_commands(app: typer.Typer, console: Console) -> None:
         console.print(table)
         console.print()
         console.print(f"Valid providers: [dim]{', '.join(sorted(VALID_PROVIDERS))}[/dim]")
-        console.print(
-            "\nTo change: [bold]lindy-orchestrate config set provider <name>[/bold]"
-        )
+        console.print("\nTo change: [bold]lindy-orchestrate config set provider <name>[/bold]")
 
     @config_app.command("set")
     def config_set(
@@ -67,4 +71,6 @@ def register_config_commands(app: typer.Typer, console: Console) -> None:
             cfg = load_global_config()
             cfg = GlobalConfig(provider=value)
             save_global_config(cfg)
-            console.print(f"[green]✓[/] provider = [bold]{value}[/]  (saved to {GLOBAL_CONFIG_PATH})")
+            console.print(
+                f"[green]✓[/] provider = [bold]{value}[/]  (saved to {GLOBAL_CONFIG_PATH})"
+            )
