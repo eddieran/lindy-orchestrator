@@ -89,7 +89,8 @@ class TestArchitectureDrift:
         assert "not found" in findings[0].description
 
     def test_missing_declared_module(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text("## Module Topology\n\n- **backend/** → Python\n- **ghost/** → ???\n")
         (tmp_path / "backend").mkdir()
         cfg = _make_config(tmp_path)
@@ -98,7 +99,8 @@ class TestArchitectureDrift:
         assert len(missing) == 1
 
     def test_undeclared_config_module(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text("## Module Topology\n\n- **backend/** → Python\n")
         (tmp_path / "backend").mkdir()
         (tmp_path / "frontend").mkdir()
@@ -110,7 +112,8 @@ class TestArchitectureDrift:
         assert len(undeclared) == 1
 
     def test_clean_architecture(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text("## Module Topology\n\n- **backend/** → Python\n- **frontend/** → React\n")
         (tmp_path / "backend").mkdir()
         (tmp_path / "frontend").mkdir()
@@ -120,7 +123,8 @@ class TestArchitectureDrift:
         assert errors == []
 
     def test_missing_layer_directory(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
@@ -152,7 +156,8 @@ class TestContractCompliance:
         assert "no CONTRACTS.md" in findings[0].description
 
     def test_missing_section(self, tmp_path: Path):
-        contracts = tmp_path / "CONTRACTS.md"
+        contracts = tmp_path / ".orchestrator" / "contracts.md"
+        contracts.parent.mkdir(parents=True, exist_ok=True)
         contracts.write_text("# Contracts\n\nSome content but no sections.\n")
         cfg = _make_config(tmp_path)
         findings = _check_contract_compliance(cfg)
@@ -160,7 +165,8 @@ class TestContractCompliance:
         assert len(missing) >= 1
 
     def test_complete_contracts(self, tmp_path: Path):
-        contracts = tmp_path / "CONTRACTS.md"
+        contracts = tmp_path / ".orchestrator" / "contracts.md"
+        contracts.parent.mkdir(parents=True, exist_ok=True)
         contracts.write_text(
             "# Contracts\n\n"
             "## API Contracts\n\n"
@@ -175,7 +181,8 @@ class TestContractCompliance:
         assert section_findings == []
 
     def test_module_not_referenced(self, tmp_path: Path):
-        contracts = tmp_path / "CONTRACTS.md"
+        contracts = tmp_path / ".orchestrator" / "contracts.md"
+        contracts.parent.mkdir(parents=True, exist_ok=True)
         contracts.write_text(
             "# Contracts\n\n## API Contracts\n\nbackend stuff\n\n## Change Protocol\n\nSteps.\n"
         )
@@ -202,9 +209,10 @@ class TestStatusConsistency:
         assert len(missing) == 2
 
     def test_invalid_health_value(self, tmp_path: Path):
-        be = tmp_path / "backend"
-        be.mkdir()
-        status = be / "STATUS.md"
+        (tmp_path / "backend").mkdir(exist_ok=True)
+        status_dir = tmp_path / ".orchestrator" / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        status = status_dir / "backend.md"
         status.write_text("| Key | Value |\n| Overall Health | PURPLE |\n")
         cfg = _make_config(tmp_path, modules=[ModuleConfig(name="backend", path="backend")])
         findings = _check_status_consistency(cfg)
@@ -213,10 +221,11 @@ class TestStatusConsistency:
         assert "PURPLE" in invalid[0].description
 
     def test_valid_health_values(self, tmp_path: Path):
+        status_dir = tmp_path / ".orchestrator" / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
         for health in ("GREEN", "YELLOW", "RED"):
-            be = tmp_path / f"mod_{health}"
-            be.mkdir()
-            status = be / "STATUS.md"
+            (tmp_path / f"mod_{health}").mkdir(exist_ok=True)
+            status = status_dir / f"mod_{health}.md"
             status.write_text(f"| Key | Value |\n| Overall Health | {health} |\n")
             cfg = _make_config(
                 tmp_path,
@@ -227,9 +236,10 @@ class TestStatusConsistency:
             assert invalid == [], f"Health {health} should be valid"
 
     def test_stale_status_md(self, tmp_path: Path):
-        be = tmp_path / "backend"
-        be.mkdir()
-        status = be / "STATUS.md"
+        (tmp_path / "backend").mkdir(exist_ok=True)
+        status_dir = tmp_path / ".orchestrator" / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        status = status_dir / "backend.md"
         status.write_text("| Key | Value |\n| Overall Health | GREEN |\n")
         # Make the file look old
         old_time = time.time() - (20 * 86400)  # 20 days ago
@@ -414,7 +424,8 @@ class TestRunScan:
             assert g.module == "backend"
 
     def test_scan_with_architecture(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text("## Module Topology\n\n- **backend/** → Python\n- **frontend/** → React\n")
         (tmp_path / "backend").mkdir()
         (tmp_path / "frontend").mkdir()

@@ -45,22 +45,30 @@ def project_dir(tmp_path: Path) -> Path:
         ],
         "mailbox": {"enabled": True, "dir": ".orchestrator/mailbox"},
     }
-    (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
+    orch_dir = tmp_path / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "config.yaml").write_text(yaml.dump(config))
+
+    # Create new layout dirs
+    (orch_dir / "claude").mkdir(parents=True, exist_ok=True)
+    (orch_dir / "status").mkdir(parents=True, exist_ok=True)
+    (orch_dir / "docs").mkdir(parents=True, exist_ok=True)
 
     for mod in ("backend", "frontend"):
-        mod_dir = tmp_path / mod
-        mod_dir.mkdir()
-        (mod_dir / "STATUS.md").write_text(MINIMAL_STATUS_MD.format(name=mod))
+        (tmp_path / mod).mkdir(exist_ok=True)
+        (orch_dir / "status" / f"{mod}.md").write_text(
+            MINIMAL_STATUS_MD.format(name=mod)
+        )
 
-    (tmp_path / ".orchestrator" / "mailbox").mkdir(parents=True)
-    (tmp_path / ".orchestrator" / "logs").mkdir(parents=True)
-    (tmp_path / ".orchestrator" / "sessions").mkdir(parents=True)
+    (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
+    (orch_dir / "logs").mkdir(parents=True, exist_ok=True)
+    (orch_dir / "sessions").mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
 @pytest.fixture()
 def cfg_path(project_dir: Path) -> str:
-    return str(project_dir / "orchestrator.yaml")
+    return str(project_dir / ".orchestrator" / "config.yaml")
 
 
 @pytest.fixture()

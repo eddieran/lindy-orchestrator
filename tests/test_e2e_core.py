@@ -110,11 +110,12 @@ class TestE2EStatus:
             "project": {"name": "test"},
             "modules": [{"name": "api", "path": "api/"}],
         }
-        (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
         (tmp_path / "api").mkdir()
 
         result = runner.invoke(
-            app, ["status", "-c", str(tmp_path / "orchestrator.yaml"), "--status-only"]
+            app, ["status", "-c", str(tmp_path / ".orchestrator" / "config.yaml"), "--status-only"]
         )
         assert result.exit_code == 0
         assert "api" in result.output
@@ -202,9 +203,10 @@ class TestE2EMailbox:
             "modules": [{"name": "x", "path": "x/"}],
             "mailbox": {"enabled": False},
         }
-        (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
         (tmp_path / "x").mkdir()
-        result = runner.invoke(app, ["mailbox", "-c", str(tmp_path / "orchestrator.yaml")])
+        result = runner.invoke(app, ["mailbox", "-c", str(tmp_path / ".orchestrator" / "config.yaml")])
         assert "disabled" in result.output.lower()
 
     def test_mailbox_summary_with_messages(self, project_dir, cfg_path):

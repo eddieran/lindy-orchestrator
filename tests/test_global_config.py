@@ -216,8 +216,9 @@ class TestConfigCli:
 
 class TestLoadConfigMergesGlobal:
     def test_global_provider_applied_when_not_in_yaml(self, tmp_path):
-        """When orchestrator.yaml has no dispatcher.provider, use global config."""
-        yaml_file = tmp_path / "orchestrator.yaml"
+        """When config has no dispatcher.provider, use global config."""
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        yaml_file = tmp_path / ".orchestrator" / "config.yaml"
         yaml_file.write_text("project:\n  name: test\nmodules: []\n")
 
         global_cfg_file = tmp_path / "global_config.yaml"
@@ -231,8 +232,9 @@ class TestLoadConfigMergesGlobal:
         assert cfg.dispatcher.provider == "codex_cli"
 
     def test_yaml_provider_overrides_global(self, tmp_path):
-        """When orchestrator.yaml explicitly sets dispatcher.provider, it wins."""
-        yaml_file = tmp_path / "orchestrator.yaml"
+        """When config explicitly sets dispatcher.provider, it wins."""
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        yaml_file = tmp_path / ".orchestrator" / "config.yaml"
         yaml_file.write_text(
             "project:\n  name: test\nmodules: []\ndispatcher:\n  provider: claude_cli\n"
         )

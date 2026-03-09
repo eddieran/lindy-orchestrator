@@ -38,7 +38,7 @@ def test_generates_orchestrator_yaml(tmp_path):
     ctx = _make_ctx(tmp_path)
     generate_artifacts(ctx, tmp_path, force=True)
 
-    config = tmp_path / "orchestrator.yaml"
+    config = tmp_path / ".orchestrator" / "config.yaml"
     assert config.exists()
     content = config.read_text()
     assert "test-project" in content
@@ -51,7 +51,7 @@ def test_generates_root_claude_md(tmp_path):
     ctx = _make_ctx(tmp_path)
     generate_artifacts(ctx, tmp_path, force=True)
 
-    claude_md = tmp_path / "CLAUDE.md"
+    claude_md = tmp_path / ".orchestrator" / "claude" / "root.md"
     assert claude_md.exists()
     content = claude_md.read_text()
     assert "Orchestrator" in content
@@ -64,7 +64,7 @@ def test_generates_module_claude_md(tmp_path):
     ctx = _make_ctx(tmp_path)
     generate_artifacts(ctx, tmp_path, force=True)
 
-    mod_claude = tmp_path / "backend" / "CLAUDE.md"
+    mod_claude = tmp_path / ".orchestrator" / "claude" / "backend.md"
     assert mod_claude.exists()
     content = mod_claude.read_text()
     assert "FIRST ACTION" in content
@@ -78,7 +78,7 @@ def test_generates_module_status_md(tmp_path):
     ctx = _make_ctx(tmp_path)
     generate_artifacts(ctx, tmp_path, force=True)
 
-    status = tmp_path / "backend" / "STATUS.md"
+    status = tmp_path / ".orchestrator" / "status" / "backend.md"
     assert status.exists()
     content = status.read_text()
     assert "Active Work" in content
@@ -106,7 +106,7 @@ def test_generates_contracts_md_when_complex(tmp_path):
     )
     generate_artifacts(ctx, tmp_path, force=True)
 
-    contracts = tmp_path / "CONTRACTS.md"
+    contracts = tmp_path / ".orchestrator" / "contracts.md"
     assert contracts.exists()
     assert "API Contracts" in contracts.read_text()
 
@@ -117,7 +117,7 @@ def test_no_contracts_when_simple(tmp_path):
     ctx = _make_ctx(tmp_path, coordination_complexity=1)
     generate_artifacts(ctx, tmp_path, force=True)
 
-    contracts = tmp_path / "CONTRACTS.md"
+    contracts = tmp_path / ".orchestrator" / "contracts.md"
     assert not contracts.exists()
 
 
@@ -135,15 +135,16 @@ def test_creates_orchestrator_dir(tmp_path):
 def test_skip_existing_files_without_force(tmp_path):
     """Existing files are not overwritten without --force."""
     (tmp_path / "backend").mkdir()
-    config = tmp_path / "orchestrator.yaml"
+    config = tmp_path / ".orchestrator" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text("original content")
 
     ctx = _make_ctx(tmp_path)
     written = generate_artifacts(ctx, tmp_path, force=False)
 
-    # orchestrator.yaml should NOT be in written list (skipped)
+    # config.yaml should NOT be in written list (skipped)
     written_names = {p.name for p in written}
-    assert "orchestrator.yaml" not in written_names
+    assert "config.yaml" not in written_names
     assert config.read_text() == "original content"
 
 
@@ -156,7 +157,7 @@ def test_qa_gates_in_config(tmp_path):
     )
     generate_artifacts(ctx, tmp_path, force=True)
 
-    content = (tmp_path / "orchestrator.yaml").read_text()
+    content = (tmp_path / ".orchestrator" / "config.yaml").read_text()
     assert "qa_gates:" in content
     assert "pytest" in content
     assert "ruff" in content

@@ -14,7 +14,7 @@ runner = CliRunner()
 
 
 def _setup_project(tmp_path: Path, mailbox_enabled: bool = True) -> Path:
-    """Create a minimal project with orchestrator.yaml."""
+    """Create a minimal project with .orchestrator/config.yaml."""
     config = {
         "project": {"name": "test-project", "branch_prefix": "af"},
         "modules": [
@@ -26,13 +26,14 @@ def _setup_project(tmp_path: Path, mailbox_enabled: bool = True) -> Path:
             "dir": ".orchestrator/mailbox",
         },
     }
-    config_path = tmp_path / "orchestrator.yaml"
-    config_path.write_text(yaml.dump(config))
+    orch_dir = tmp_path / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    (orch_dir / "config.yaml").write_text(yaml.dump(config))
 
     # Create module dirs
     (tmp_path / "backend").mkdir()
     (tmp_path / "frontend").mkdir()
-    (tmp_path / ".orchestrator" / "mailbox").mkdir(parents=True)
+    (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
 
     return tmp_path
 
@@ -40,12 +41,12 @@ def _setup_project(tmp_path: Path, mailbox_enabled: bool = True) -> Path:
 class TestMailboxCLI:
     def test_mailbox_disabled_warning(self, tmp_path):
         project = _setup_project(tmp_path, mailbox_enabled=False)
-        result = runner.invoke(app, ["mailbox", "-c", str(project / "orchestrator.yaml")])
+        result = runner.invoke(app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")])
         assert "disabled" in result.output.lower()
 
     def test_mailbox_summary_empty(self, tmp_path):
         project = _setup_project(tmp_path)
-        result = runner.invoke(app, ["mailbox", "-c", str(project / "orchestrator.yaml")])
+        result = runner.invoke(app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")])
         assert result.exit_code == 0
         assert "no pending messages" in result.output.lower() or "Mailbox Summary" in result.output
 
@@ -62,7 +63,7 @@ class TestMailboxCLI:
                 "-m",
                 "Need API endpoint",
                 "-c",
-                str(project / "orchestrator.yaml"),
+                str(project / ".orchestrator" / "config.yaml"),
             ],
         )
         assert result.exit_code == 0
@@ -83,7 +84,7 @@ class TestMailboxCLI:
                 "--send-to",
                 "backend",
                 "-c",
-                str(project / "orchestrator.yaml"),
+                str(project / ".orchestrator" / "config.yaml"),
             ],
         )
         assert result.exit_code == 1
@@ -95,7 +96,7 @@ class TestMailboxCLI:
 
         result = runner.invoke(
             app,
-            ["mailbox", "backend", "-c", str(project / "orchestrator.yaml")],
+            ["mailbox", "backend", "-c", str(project / ".orchestrator" / "config.yaml")],
         )
         assert result.exit_code == 0
         assert "Ready to integrate" in result.output
@@ -105,7 +106,7 @@ class TestMailboxCLI:
         project = _setup_project(tmp_path)
         result = runner.invoke(
             app,
-            ["mailbox", "backend", "-c", str(project / "orchestrator.yaml")],
+            ["mailbox", "backend", "-c", str(project / ".orchestrator" / "config.yaml")],
         )
         assert result.exit_code == 0
         assert "no pending" in result.output.lower()
@@ -117,7 +118,7 @@ class TestMailboxCLI:
 
         result = runner.invoke(
             app,
-            ["mailbox", "backend", "--json", "-c", str(project / "orchestrator.yaml")],
+            ["mailbox", "backend", "--json", "-c", str(project / ".orchestrator" / "config.yaml")],
         )
         assert result.exit_code == 0
         assert "test json" in result.output
@@ -133,7 +134,7 @@ class TestMailboxCLI:
                 "-m",
                 "From CLI",
                 "-c",
-                str(project / "orchestrator.yaml"),
+                str(project / ".orchestrator" / "config.yaml"),
             ],
         )
         assert result.exit_code == 0
@@ -148,6 +149,6 @@ class TestMailboxCLI:
         mb.send(Message(from_module="a", to_module="backend", content="msg1"))
         mb.send(Message(from_module="b", to_module="backend", content="msg2"))
 
-        result = runner.invoke(app, ["mailbox", "-c", str(project / "orchestrator.yaml")])
+        result = runner.invoke(app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")])
         assert result.exit_code == 0
         assert "2 pending" in result.output

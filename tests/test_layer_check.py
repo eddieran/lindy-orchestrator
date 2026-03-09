@@ -22,7 +22,8 @@ from lindy_orchestrator.qa.structural_check import Violation
 
 class TestParseArchitectureLayers:
     def test_fastapi_layers(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
@@ -32,7 +33,8 @@ class TestParseArchitectureLayers:
         assert result.layers == ["models", "schemas", "services", "routes", "main"]
 
     def test_react_layers(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **frontend/**: types → hooks → components → pages → app\n"
         )
@@ -41,7 +43,8 @@ class TestParseArchitectureLayers:
         assert result.layers == ["types", "hooks", "components", "pages", "app"]
 
     def test_django_layers(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **api/**: models → serializers → views → urls → wsgi\n"
         )
@@ -54,7 +57,8 @@ class TestParseArchitectureLayers:
         assert result is None
 
     def test_no_matching_module(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **frontend/**: types → hooks → components → pages → app\n"
         )
@@ -62,7 +66,8 @@ class TestParseArchitectureLayers:
         assert result is None
 
     def test_multiple_modules(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n"
             "- **backend/**: models → schemas → services → routes → main\n"
@@ -76,7 +81,8 @@ class TestParseArchitectureLayers:
         assert fe.layers[0] == "types"
 
     def test_ascii_arrow(self, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n"
             "- **backend/**: models -> schemas -> services -> routes -> main\n"
@@ -397,7 +403,8 @@ class TestLayerCheckGate:
     @patch("lindy_orchestrator.qa.layer_check._get_staged_files")
     def test_pass_valid_imports(self, mock_staged, tmp_path: Path):
         # Create ARCHITECTURE.md
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
@@ -421,7 +428,8 @@ class TestLayerCheckGate:
     @patch("lindy_orchestrator.qa.layer_check._get_staged_files")
     def test_fail_invalid_imports(self, mock_staged, tmp_path: Path):
         # Create ARCHITECTURE.md
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
@@ -445,7 +453,8 @@ class TestLayerCheckGate:
 
     @patch("lindy_orchestrator.qa.layer_check._get_staged_files")
     def test_qa_result_has_layers_detail(self, mock_staged, tmp_path: Path):
-        arch = tmp_path / "ARCHITECTURE.md"
+        arch = tmp_path / ".orchestrator" / "architecture.md"
+        arch.parent.mkdir(parents=True, exist_ok=True)
         arch.write_text(
             "## Layer Structure\n\n- **backend/**: models → schemas → services → routes → main\n"
         )
