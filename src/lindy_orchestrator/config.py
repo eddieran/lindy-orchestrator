@@ -172,6 +172,38 @@ class OrchestratorConfig(BaseModel):
     def sessions_path(self) -> Path:
         return self._config_dir / self.logging.session_dir
 
+    # -- .orchestrator/ scaffold paths --------------------------------------
+
+    @property
+    def orch_dir(self) -> Path:
+        """Return the resolved path to the ``.orchestrator/`` directory."""
+        return (self._config_dir / ORCH_DIR).resolve()
+
+    @property
+    def orch_config_path(self) -> Path:
+        """Return the resolved path to ``.orchestrator/config.yaml``."""
+        return (self._config_dir / NEW_CONFIG_FILENAME).resolve()
+
+    def orch_status_path(self, name: str) -> Path:
+        """Return the module status file under ``.orchestrator/status/``."""
+        mod = self.get_module(name)
+        return (self._config_dir / ORCH_DIR / "status" / f"{mod.name}.yaml").resolve()
+
+    @property
+    def orch_log_path(self) -> Path:
+        """Return the resolved path to ``.orchestrator/logs/actions.jsonl``."""
+        return (self._config_dir / ORCH_DIR / "logs" / self.logging.log_file).resolve()
+
+    @property
+    def orch_sessions_path(self) -> Path:
+        """Return the resolved path to ``.orchestrator/sessions/``."""
+        return (self._config_dir / ORCH_DIR / "sessions").resolve()
+
+    @property
+    def orch_mailbox_path(self) -> Path:
+        """Return the resolved path to ``.orchestrator/mailbox/``."""
+        return (self._config_dir / ORCH_DIR / "mailbox").resolve()
+
 
 # ---------------------------------------------------------------------------
 # Loading
@@ -179,15 +211,24 @@ class OrchestratorConfig(BaseModel):
 
 
 CONFIG_FILENAME = "orchestrator.yaml"
+ORCH_DIR = ".orchestrator"
+NEW_CONFIG_FILENAME = f"{ORCH_DIR}/config.yaml"
 
 
 def find_config(start: Path | None = None) -> Path | None:
-    """Walk up from start to find orchestrator.yaml."""
+    """Walk up from *start* to find the orchestrator config file.
+
+    Checks ``.orchestrator/config.yaml`` first, then falls back to the
+    legacy ``orchestrator.yaml`` for backward compatibility.
+    """
     candidate = (start or Path.cwd()).resolve()
     for _ in range(10):
-        cfg = candidate / CONFIG_FILENAME
-        if cfg.exists():
-            return cfg
+        new_cfg = candidate / NEW_CONFIG_FILENAME
+        if new_cfg.exists():
+            return new_cfg
+        legacy_cfg = candidate / CONFIG_FILENAME
+        if legacy_cfg.exists():
+            return legacy_cfg
         parent = candidate.parent
         if parent == candidate:
             break
@@ -209,7 +250,12 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
     raw = _load_yaml(path)
     _normalize_qa_gates(raw)
     cfg = OrchestratorConfig.model_validate(raw)
-    cfg._config_dir = path.parent
+    # When loaded from .orchestrator/config.yaml, _config_dir must be the
+    # project root (grandparent), not the .orchestrator/ directory.
+    if path.parent.name == ORCH_DIR:
+        cfg._config_dir = path.parent.parent
+    else:
+        cfg._config_dir = path.parent
     return cfg
 
 
