@@ -87,17 +87,21 @@ def _run_scaffold_mode(
         tech = ", ".join(mod.tech_stack) or "unknown"
         modules_info.append(f"[bold]{mod.name}[/] ({tech})")
 
-    files_to_create = ["orchestrator.yaml", "CLAUDE.md (root)", "ARCHITECTURE.md"]
+    files_to_create = [
+        ".orchestrator/config.yaml",
+        ".orchestrator/claude/root.md",
+        ".orchestrator/architecture.md",
+    ]
     for mod in ctx.modules:
-        files_to_create.append(f"{mod.path}/CLAUDE.md")
-        files_to_create.append(f"{mod.path}/STATUS.md")
+        files_to_create.append(f".orchestrator/claude/{mod.name}.md")
+        files_to_create.append(f".orchestrator/status/{mod.name}.md")
     if ctx.coordination_complexity >= 2:
-        files_to_create.append("CONTRACTS.md")
+        files_to_create.append(".orchestrator/contracts.md")
     files_to_create.extend(
         [
-            "docs/agents/protocol.md",
-            "docs/agents/conventions.md",
-            "docs/agents/boundaries.md",
+            ".orchestrator/docs/protocol.md",
+            ".orchestrator/docs/conventions.md",
+            ".orchestrator/docs/boundaries.md",
         ]
     )
 
@@ -151,15 +155,19 @@ def _run_init_onboard_mode(
         tech = ", ".join(mod.tech_stack) or "unknown"
         modules_info.append(f"[bold]{mod.name}[/] ({tech})")
 
-    files_to_create = ["orchestrator.yaml", "CLAUDE.md (root)", "ARCHITECTURE.md"]
+    files_to_create = [
+        ".orchestrator/config.yaml",
+        ".orchestrator/claude/root.md",
+        ".orchestrator/architecture.md",
+    ]
     for mod in profile.modules:
-        files_to_create.append(f"{mod.path}/CLAUDE.md")
-        files_to_create.append(f"{mod.path}/STATUS.md")
+        files_to_create.append(f".orchestrator/claude/{mod.name}.md")
+        files_to_create.append(f".orchestrator/status/{mod.name}.md")
     files_to_create.extend(
         [
-            "docs/agents/protocol.md",
-            "docs/agents/conventions.md",
-            "docs/agents/boundaries.md",
+            ".orchestrator/docs/protocol.md",
+            ".orchestrator/docs/conventions.md",
+            ".orchestrator/docs/boundaries.md",
             ".orchestrator/ (logs, sessions)",
             ".gitignore (update)",
         ]
@@ -204,8 +212,9 @@ def _run_re_onboard_mode(
     from .discovery.generator import generate_artifacts
     from .discovery.interview import run_interview
 
-    # Load existing config
-    cfg = load_config(cwd / CONFIG_FILENAME)
+    # Load existing config (prefer new path, fall back to legacy)
+    new_cfg_path = cwd / ".orchestrator" / "config.yaml"
+    cfg = load_config(new_cfg_path if new_cfg_path.exists() else cwd / CONFIG_FILENAME)
     console.print(f"  Project: [bold]{cfg.project.name}[/]")
     console.print(f"  Modules: [bold]{len(cfg.modules)}[/]")
     for mod in cfg.modules:
@@ -229,18 +238,18 @@ def _run_re_onboard_mode(
         modules_info.append(f"[bold]{mod.name}[/] ({tech}){label}")
 
     files_to_create = [
-        "orchestrator.yaml",
-        "CLAUDE.md (root)",
-        "ARCHITECTURE.md",
+        ".orchestrator/config.yaml",
+        ".orchestrator/claude/root.md",
+        ".orchestrator/architecture.md",
     ]
     for mod in profile.modules:
-        files_to_create.append(f"{mod.path}/CLAUDE.md")
-        files_to_create.append(f"{mod.path}/STATUS.md")
+        files_to_create.append(f".orchestrator/claude/{mod.name}.md")
+        files_to_create.append(f".orchestrator/status/{mod.name}.md")
     files_to_create.extend(
         [
-            "docs/agents/protocol.md",
-            "docs/agents/conventions.md",
-            "docs/agents/boundaries.md",
+            ".orchestrator/docs/protocol.md",
+            ".orchestrator/docs/conventions.md",
+            ".orchestrator/docs/boundaries.md",
         ]
     )
 
