@@ -6,9 +6,11 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Lightweight, git-native multi-agent orchestration framework for autonomous project execution.
+**The harness engineer for your AI coding agents.**
 
-Decomposes natural-language goals into dependency-ordered task DAGs, dispatches them to AI coding agents in isolated module directories, validates through pluggable QA gates, and coordinates via markdown and git. No database, no shared memory — just git and your existing project.
+lindy-orchestrator acts as the _harness engineer_ of your codebase: it never writes code itself, but it wires everything together — decomposing goals into dependency-ordered task DAGs, dispatching AI coding agents to isolated module directories, validating their output through pluggable QA gates, and coordinating the whole pipeline via markdown and git.
+
+Just as a harness engineer in a factory connects every subsystem without owning any of them, lindy-orchestrator sits above your agents and keeps them on track. No database, no shared memory — just git and your existing project.
 
 ---
 
@@ -443,6 +445,8 @@ Reports include: goal status, per-task metrics (module, status, duration, retrie
 ---
 
 ## Key Concepts
+
+**Harness Engineer** — lindy-orchestrator's core philosophy. It never writes production code directly; it _harnesses_ AI coding agents (Claude Code, Codex) by: (1) decomposing goals into precise task DAGs, (2) dispatching agents to isolated module directories, (3) validating their output through QA gates, and (4) retrying with structured remediation feedback on failure. Think of it as the conductor who keeps every instrument playing in time without picking up an instrument itself.
 
 **Modules** — Independent directories (services, packages). Auto-detected by markers: `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`, `pom.xml`, `build.gradle`, `CMakeLists.txt`, `Makefile`. Special names `root` and `*` refer to the project root.
 
