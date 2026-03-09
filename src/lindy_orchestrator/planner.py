@@ -50,7 +50,7 @@ def generate_plan(
     modules_info = [{"name": m.name, "path": m.path} for m in config.modules]
 
     # Read ARCHITECTURE.md if it exists
-    arch_path = config.root / "ARCHITECTURE.md"
+    arch_path = config.root / ".orchestrator" / "architecture.md"
     architecture = arch_path.read_text(encoding="utf-8") if arch_path.exists() else None
 
     # Collect available gates

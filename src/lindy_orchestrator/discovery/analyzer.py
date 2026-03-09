@@ -168,7 +168,7 @@ def _enrich_module(root: Path, mod: ModuleProfile) -> None:
     mod.lint_commands = lint_cmds
 
     # Existing docs
-    mod.existing_docs = _read_existing_docs(mod_path)
+    mod.existing_docs = _read_existing_docs(mod_path, root=root, module_name=mod.name)
 
     # Detected patterns
     mod.detected_patterns = _detect_patterns(mod_path, mod.dependencies)
@@ -265,17 +265,33 @@ def _detect_entry_points(path: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _read_existing_docs(path: Path) -> str:
-    """Read existing documentation files (README, CLAUDE.md)."""
+def _read_existing_docs(
+    path: Path, root: Path | None = None, module_name: str = ""
+) -> str:
+    """Read existing documentation files (README, .orchestrator/claude/)."""
     docs = []
-    for name in ("CLAUDE.md", "README.md"):
-        fp = path / name
-        if fp.exists():
-            try:
-                content = fp.read_text(encoding="utf-8")[:3000]
-                docs.append(f"=== {name} ===\n{content}")
-            except OSError:
-                pass
+
+    # Read CLAUDE docs from .orchestrator/claude/ directory
+    if root is not None:
+        claude_dir = root / ".orchestrator" / "claude"
+        for name in ("root.md", f"{module_name}.md"):
+            fp = claude_dir / name
+            if fp.exists():
+                try:
+                    content = fp.read_text(encoding="utf-8")[:3000]
+                    docs.append(f"=== .orchestrator/claude/{name} ===\n{content}")
+                except OSError:
+                    pass
+
+    # Keep README.md reading from module path
+    readme = path / "README.md"
+    if readme.exists():
+        try:
+            content = readme.read_text(encoding="utf-8")[:3000]
+            docs.append(f"=== README.md ===\n{content}")
+        except OSError:
+            pass
+
     return "\n\n".join(docs)
 
 
