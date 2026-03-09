@@ -87,6 +87,14 @@ class TestCodexExtractToolUse:
         event = {"id": "0", "msg": {"type": "function_call", "name": "shell"}}
         assert _extract_tool_use(event) == "shell"
 
+    def test_codex_v2_item_started_command_execution(self):
+        event = {"type": "item.started", "item": {"type": "command_execution", "command": "ls"}}
+        assert _extract_tool_use(event) == "shell"
+
+    def test_codex_v2_item_completed_command_execution(self):
+        event = {"type": "item.completed", "item": {"type": "command_execution"}}
+        assert _extract_tool_use(event) == "shell"
+
 
 class TestCodexExtractResultFromLines:
     def test_result_event(self):
@@ -115,6 +123,29 @@ class TestCodexExtractResultFromLines:
             '{"id":"0","msg":{"type":"token_count","input_tokens":100}}\n',
         ]
         assert _extract_result_from_lines(lines) == "Hello world"
+
+    def test_codex_v2_item_completed_agent_message(self):
+        """Codex v2 uses item.completed events with agent_message type."""
+        lines = _make_stream_lines(
+            {"type": "thread.started", "thread_id": "abc"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"id": "item_0", "type": "agent_message", "text": "Preamble..."},
+            },
+            {
+                "type": "item.started",
+                "item": {"id": "item_1", "type": "command_execution", "command": "ls"},
+            },
+            {"type": "item.completed", "item": {"id": "item_1", "type": "command_execution"}},
+            {
+                "type": "item.completed",
+                "item": {"id": "item_2", "type": "agent_message", "text": "Final result"},
+            },
+        )
+        result = _extract_result_from_lines(lines)
+        assert "Final result" in result
+        assert "Preamble" in result  # all agent messages collected
 
     def test_empty_lines(self):
         assert _extract_result_from_lines([]) == ""
@@ -417,6 +448,32 @@ class TestCodexStreamDispatch:
         )
         assert result.success is True
         assert result.output == "done"
+
+    @patch("lindy_orchestrator.codex_dispatcher.subprocess.Popen")
+    @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
+    def test_codex_v2_item_completed_streaming(self, mock_cli, mock_popen, config, tmp_path):
+        """Codex v2 item.completed events are parsed in streaming dispatch."""
+        lines = _make_stream_lines(
+            {"type": "thread.started", "thread_id": "abc"},
+            {"type": "turn.started"},
+            {
+                "type": "item.completed",
+                "item": {"id": "item_0", "type": "agent_message", "text": "Analyzing..."},
+            },
+            {
+                "type": "item.started",
+                "item": {"id": "item_1", "type": "command_execution", "command": "ls"},
+            },
+            {
+                "type": "item.completed",
+                "item": {"id": "item_2", "type": "agent_message", "text": "Final answer"},
+            },
+        )
+        fake = FakePopen(lines, returncode=0)
+        mock_popen.return_value = fake
+        result = dispatch_codex_agent("backend", tmp_path, "do stuff", config)
+        assert result.success is True
+        assert result.output == "Final answer"
 
     @patch("lindy_orchestrator.codex_dispatcher.subprocess.Popen")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
