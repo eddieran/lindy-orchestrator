@@ -1,0 +1,144 @@
+name: Config E2E
+
+# End-to-end tests for the config command (no LLM required — purely mechanical).
+# Tests both global (~/.lindy/config.yaml) and project-local (orchestrator.yaml) config.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  config-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install lindy-orchestrate
+        run: pip install -e '.[dev]'
+
+      # -----------------------------------------------------------------------
+      # 1. Default state — no config file
+      # -----------------------------------------------------------------------
+      - name: Show config (default, no file)
+        run: |
+          lindy-orchestrate config show
+          lindy-orchestrate config show | grep -q "claude_cli"
+          echo "✓ Default provider is claude_cli"
+
+      # -----------------------------------------------------------------------
+      # 2. Global config: set → show → verify file
+      # -----------------------------------------------------------------------
+      - name: Set global provider to codex_cli
+        run: |
+          lindy-orchestrate config set provider codex_cli
+          test -f ~/.lindy/config.yaml
+          grep -q "codex_cli" ~/.lindy/config.yaml
+          echo "✓ ~/.lindy/config.yaml written"
+
+      - name: Show global config reflects codex_cli
+        run: |
+          lindy-orchestrate config show | grep -q "codex_cli"
+          echo "✓ config show reflects codex_cli"
+
+      - name: Switch global provider back to claude_cli
+        run: |
+          lindy-orchestrate config set provider claude_cli
+          grep -q "claude_cli" ~/.lindy/config.yaml
+          echo "✓ Switched back to claude_cli"
+
+      # -----------------------------------------------------------------------
+      # 3. Invalid provider is rejected
+      # -----------------------------------------------------------------------
+      - name: Reject invalid provider
+        run: |
+          if lindy-orchestrate config set provider invalid_provider 2>&1; then
+            echo "ERROR: should have failed"
+            exit 1
+          fi
+          echo "✓ Invalid provider correctly rejected"
+
+      - name: Reject unknown key
+        run: |
+          if lindy-orchestrate config set unknown_key value 2>&1; then
+            echo "ERROR: should have failed"
+            exit 1
+          fi
+          echo "✓ Unknown key correctly rejected"
+
+      # -----------------------------------------------------------------------
+      # 4. Project-local config: set --local → verify orchestrator.yaml
+      # -----------------------------------------------------------------------
+      - name: Set local provider (creates orchestrator.yaml)
+        working-directory: /tmp
+        run: |
+          mkdir -p localtest && cd localtest
+          lindy-orchestrate config set --local provider codex_cli
+          test -f orchestrator.yaml
+          grep -q "codex_cli" orchestrator.yaml
+          echo "✓ orchestrator.yaml created with codex_cli"
+
+      - name: Local provider preserved after global change
+        working-directory: /tmp/localtest
+        run: |
+          # Global: claude_cli, Local: codex_cli → effective = codex_cli
+          lindy-orchestrate config set provider claude_cli
+          lindy-orchestrate config show | grep -q "codex_cli"
+          echo "✓ Local provider (codex_cli) shown alongside global (claude_cli)"
+
+      - name: Set local provider to claude_cli (override)
+        working-directory: /tmp/localtest
+        run: |
+          lindy-orchestrate config set --local provider claude_cli
+          grep -q "claude_cli" orchestrator.yaml
+          echo "✓ Local provider updated to claude_cli"
+
+      # -----------------------------------------------------------------------
+      # 5. Existing orchestrator.yaml: local set preserves other keys
+      # -----------------------------------------------------------------------
+      - name: Existing yaml keys preserved on local set
+        run: |
+          TMPDIR=$(mktemp -d)
+          cat > "$TMPDIR/orchestrator.yaml" <<'YAML'
+          project:
+            name: myapp
+          modules: []
+          YAML
+          cd "$TMPDIR"
+          lindy-orchestrate config set --local provider codex_cli
+          python3 -c "
+          import yaml
+          d = yaml.safe_load(open('orchestrator.yaml'))
+          assert d['project']['name'] == 'myapp', 'project.name lost!'
+          assert d['dispatcher']['provider'] == 'codex_cli', 'provider not set!'
+          print('✓ Existing keys preserved')
+          "
+
+      # -----------------------------------------------------------------------
+      # 6. Global config respected by load_config (no --provider flag)
+      # -----------------------------------------------------------------------
+      - name: Global config applied to project without explicit provider
+        run: |
+          TMPDIR=$(mktemp -d)
+          cat > "$TMPDIR/orchestrator.yaml" <<'YAML'
+          project:
+            name: noconfig
+          modules: []
+          YAML
+          lindy-orchestrate config set provider codex_cli
+          python3 -c "
+          import os, sys
+          sys.path.insert(0, 'src')
+          from lindy_orchestrator.config import load_config
+          cfg = load_config('$TMPDIR/orchestrator.yaml')
+          assert cfg.dispatcher.provider == 'codex_cli', f'Expected codex_cli, got {cfg.dispatcher.provider}'
+          print('✓ Global config (codex_cli) applied to project yaml')
+          "
+          # Reset
+          lindy-orchestrate config set provider claude_cli
