@@ -329,12 +329,22 @@ def dispatch_codex_agent(
                 if event.get("type") == "result":
                     result_text = event.get("result", "")
 
-                # Check for agent_message (Codex nested format)
+                # Check for agent_message — Codex v1 nested format:
+                # {"id":"0","msg":{"type":"agent_message","message":"..."}}
                 nested = event.get("msg")
                 if isinstance(nested, dict) and nested.get("type") == "agent_message":
                     msg_text = nested.get("message", "")
                     if msg_text:
                         result_text = msg_text
+
+                # Check for agent_message — Codex v2 item.completed format:
+                # {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
+                if event.get("type") == "item.completed":
+                    item = event.get("item", {})
+                    if isinstance(item, dict) and item.get("type") == "agent_message":
+                        msg_text = item.get("text", "")
+                        if msg_text:
+                            result_text = msg_text
 
                 # Fire callback
                 if on_event:
@@ -447,10 +457,16 @@ def _extract_tool_use(event: dict[str, Any]) -> str:
     if event.get("type") == "function_call":
         return event.get("name", "")
 
-    # Codex nested event format: {"id": "0", "msg": {"type": "function_call", ...}}
+    # Codex v1 nested format: {"id":"0","msg":{"type":"function_call",...}}
     nested = event.get("msg")
     if isinstance(nested, dict) and nested.get("type") == "function_call":
         return nested.get("name", "")
+
+    # Codex v2 item.started format: {"type":"item.started","item":{"type":"command_execution",...}}
+    if event.get("type") in ("item.started", "item.completed"):
+        item = event.get("item", {})
+        if isinstance(item, dict) and item.get("type") == "command_execution":
+            return "shell"
 
     return ""
 
@@ -487,11 +503,20 @@ def _extract_result_from_lines(lines: list[str]) -> str:
         # Codex-style flat message events
         elif event.get("type") == "message" and event.get("content"):
             text_parts.append(str(event["content"]))
-        # Codex nested event format: {"id": "0", "msg": {"type": "agent_message", ...}}
+        # Codex v1 nested format: {"id":"0","msg":{"type":"agent_message","message":"..."}}
         nested = event.get("msg")
         if isinstance(nested, dict) and nested.get("type") == "agent_message":
             agent_msg = nested.get("message", "")
             if agent_msg:
                 text_parts.append(agent_msg)
+
+        # Codex v2 item.completed format:
+        # {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
+        if event.get("type") == "item.completed":
+            item = event.get("item", {})
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                agent_msg = item.get("text", "")
+                if agent_msg:
+                    text_parts.append(agent_msg)
 
     return "\n".join(text_parts) if text_parts else ""
