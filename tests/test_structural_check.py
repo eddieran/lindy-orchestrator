@@ -1,7 +1,7 @@
 """Tests for the structural lint gate."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from lindy_orchestrator.config import StructuralCheckConfig
 from lindy_orchestrator.qa.structural_check import (
@@ -10,6 +10,7 @@ from lindy_orchestrator.qa.structural_check import (
     _check_import_boundary,
     _check_sensitive_files,
     _format_violations,
+    _get_staged_files,
     run_structural_check,
 )
 
@@ -114,6 +115,92 @@ class TestRunStructuralCheck:
         assert len(file_size_v) == 1
         assert "847 lines" in file_size_v[0].message
         assert "Split into" in file_size_v[0].remediation
+
+
+def _fake_run(returncode=0, stdout="", stderr=""):
+    proc = MagicMock()
+    proc.returncode = returncode
+    proc.stdout = stdout
+    proc.stderr = stderr
+    return proc
+
+
+class TestGetStagedFiles:
+    """Tests for the _get_staged_files function and its fallback strategies."""
+
+    @patch("lindy_orchestrator.qa.structural_check.subprocess.run")
+    def test_strategy1_staged_files(self, mock_run):
+        """When staged files exist, return them directly."""
+        mock_run.return_value = _fake_run(stdout="src/main.py\nsrc/utils.py")
+        files = _get_staged_files(Path("/project"), "src/")
+        assert files == ["src/main.py", "src/utils.py"]
+        # Only one call needed (git diff --cached)
+        assert mock_run.call_count == 1
+
+    @patch("lindy_orchestrator.qa.structural_check.subprocess.run")
+    def test_strategy2_branch_diff_after_commit(self, mock_run):
+        """When nothing is staged (agent committed), fall back to branch diff."""
+        mock_run.side_effect = [
+            # Strategy 1: git diff --cached → empty
+            _fake_run(stdout=""),
+            # Strategy 2: git merge-base main HEAD → sha
+            _fake_run(stdout="abc123"),
+            # Strategy 2: git diff --name-only abc123..HEAD
+            _fake_run(stdout="src/modified.py\ndocs/README.md"),
+        ]
+        files = _get_staged_files(Path("/project"), "src/")
+        assert files == ["src/modified.py"]
+        assert mock_run.call_count == 3
+
+    @patch("lindy_orchestrator.qa.structural_check.subprocess.run")
+    def test_strategy2_tries_master_if_main_fails(self, mock_run):
+        """When 'main' branch doesn't exist, try 'master'."""
+        mock_run.side_effect = [
+            # Strategy 1: git diff --cached → empty
+            _fake_run(stdout=""),
+            # Strategy 2: git merge-base main HEAD → fails (no 'main')
+            _fake_run(returncode=1),
+            # Strategy 2: git merge-base master HEAD → sha
+            _fake_run(stdout="def456"),
+            # Strategy 2: git diff --name-only def456..HEAD
+            _fake_run(stdout="backend/api.py"),
+        ]
+        files = _get_staged_files(Path("/project"), "backend/")
+        assert files == ["backend/api.py"]
+
+    @patch("lindy_orchestrator.qa.structural_check.subprocess.run")
+    def test_strategy3_fallback_all_tracked(self, mock_run):
+        """When both staged and branch diff fail, fall back to all tracked."""
+        mock_run.side_effect = [
+            # Strategy 1: empty
+            _fake_run(stdout=""),
+            # Strategy 2 (main): merge-base fails
+            _fake_run(returncode=1),
+            # Strategy 2 (master): merge-base fails
+            _fake_run(returncode=1),
+            # Strategy 3: git ls-files
+            _fake_run(stdout="a.py\nb.py\nc.py"),
+        ]
+        files = _get_staged_files(Path("/project"), "")
+        assert files == ["a.py", "b.py", "c.py"]
+
+    @patch("lindy_orchestrator.qa.structural_check.subprocess.run")
+    def test_strategy2_branch_diff_empty_falls_through(self, mock_run):
+        """When branch diff returns empty (on main itself), fall back to ls-files."""
+        mock_run.side_effect = [
+            # Strategy 1: empty
+            _fake_run(stdout=""),
+            # Strategy 2 (main): merge-base succeeds
+            _fake_run(stdout="abc123"),
+            # Strategy 2 (main): diff returns empty (HEAD = main)
+            _fake_run(stdout=""),
+            # Strategy 2 (master): merge-base fails
+            _fake_run(returncode=1),
+            # Strategy 3: git ls-files
+            _fake_run(stdout="x.py"),
+        ]
+        files = _get_staged_files(Path("/project"), "")
+        assert files == ["x.py"]
 
 
 class TestFormatViolations:

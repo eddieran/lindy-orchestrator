@@ -199,11 +199,26 @@ def _check_import_boundary(
 
 
 def _get_staged_files(project_root: Path, file_prefix: str = "") -> list[str]:
-    """Get git staged files, scoped to module by file_prefix.
+    """Get files changed by the agent, scoped to module by file_prefix.
+
+    Tries in order:
+    1. Staged but uncommitted files (git diff --cached)
+    2. Files changed on the current branch vs main/master (git diff merge-base)
+    3. Fallback: all tracked files
+
+    Strategy 2 is critical because agents are instructed to commit + push,
+    so by the time QA runs there are typically no staged files.
 
     Args:
         file_prefix: Relative path prefix (e.g. "backend/" or "" for all files).
     """
+
+    def _filter(files: list[str]) -> list[str]:
+        if file_prefix:
+            return [f for f in files if f.startswith(file_prefix)]
+        return files
+
+    # Strategy 1: staged but uncommitted files
     try:
         result = subprocess.run(
             ["git", "diff", "--cached", "--name-only"],
@@ -213,14 +228,37 @@ def _get_staged_files(project_root: Path, file_prefix: str = "") -> list[str]:
             timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():
-            files = result.stdout.strip().splitlines()
-            if file_prefix:
-                return [f for f in files if f.startswith(file_prefix)]
-            return files
+            return _filter(result.stdout.strip().splitlines())
     except (subprocess.TimeoutExpired, OSError):
         pass
 
-    # Fallback: list tracked files
+    # Strategy 2: files changed on branch vs main/master
+    # The agent commits before QA runs, so we need to diff against base branch.
+    for base in ("main", "master"):
+        try:
+            merge_base = subprocess.run(
+                ["git", "merge-base", base, "HEAD"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if merge_base.returncode != 0:
+                continue
+            base_sha = merge_base.stdout.strip()
+            result = subprocess.run(
+                ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return _filter(result.stdout.strip().splitlines())
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    # Strategy 3 fallback: all tracked files (last resort)
     try:
         result = subprocess.run(
             ["git", "ls-files"],
@@ -230,10 +268,7 @@ def _get_staged_files(project_root: Path, file_prefix: str = "") -> list[str]:
             timeout=10,
         )
         if result.returncode == 0:
-            files = result.stdout.strip().splitlines()
-            if file_prefix:
-                return [f for f in files if f.startswith(file_prefix)]
-            return files
+            return _filter(result.stdout.strip().splitlines())
     except (subprocess.TimeoutExpired, OSError):
         pass
 
