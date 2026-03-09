@@ -180,6 +180,62 @@ class OrchestratorConfig(BaseModel):
 
 CONFIG_FILENAME = "orchestrator.yaml"
 
+# ---------------------------------------------------------------------------
+# Global user config  (~/.lindy/config.yaml)
+# ---------------------------------------------------------------------------
+
+GLOBAL_CONFIG_DIR = Path.home() / ".lindy"
+GLOBAL_CONFIG_PATH = GLOBAL_CONFIG_DIR / "config.yaml"
+
+VALID_PROVIDERS = {"claude_cli", "codex_cli"}
+
+
+class GlobalConfig(BaseModel):
+    """User-level defaults that apply across all projects.
+
+    Priority (highest → lowest):
+      CLI --provider flag > orchestrator.yaml dispatcher.provider > GlobalConfig > built-in default
+    """
+
+    provider: str = "claude_cli"
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.provider not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid provider {self.provider!r}. Valid options: {sorted(VALID_PROVIDERS)}"
+            )
+
+
+def load_global_config() -> GlobalConfig:
+    """Load ~/.lindy/config.yaml; return defaults if missing."""
+    if not GLOBAL_CONFIG_PATH.exists():
+        return GlobalConfig()
+    try:
+        raw = yaml.safe_load(GLOBAL_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        return GlobalConfig.model_validate(raw)
+    except Exception:
+        return GlobalConfig()
+
+
+def save_global_config(cfg: GlobalConfig) -> None:
+    """Atomically write ~/.lindy/config.yaml."""
+    import os
+    import tempfile
+
+    GLOBAL_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    data = cfg.model_dump()
+    fd, tmp = tempfile.mkstemp(dir=GLOBAL_CONFIG_DIR, suffix=".tmp", prefix="config_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+        os.replace(tmp, GLOBAL_CONFIG_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
 
 def find_config(start: Path | None = None) -> Path | None:
     """Walk up from start to find orchestrator.yaml."""
@@ -208,6 +264,12 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
     path = Path(config_path).resolve()
     raw = _load_yaml(path)
     _normalize_qa_gates(raw)
+
+    # Apply global config as defaults — only when project yaml doesn't explicitly set provider
+    if "provider" not in raw.get("dispatcher", {}):
+        global_cfg = load_global_config()
+        raw.setdefault("dispatcher", {})["provider"] = global_cfg.provider
+
     cfg = OrchestratorConfig.model_validate(raw)
     cfg._config_dir = path.parent
     return cfg
