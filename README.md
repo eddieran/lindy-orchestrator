@@ -1,6 +1,7 @@
 # lindy-orchestrator
 
 [![CI](https://github.com/eddieran/lindy-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/eddieran/lindy-orchestrator/actions/workflows/ci.yml)
+[![Config E2E](https://github.com/eddieran/lindy-orchestrator/actions/workflows/config-e2e.yml/badge.svg)](https://github.com/eddieran/lindy-orchestrator/actions/workflows/config-e2e.yml)
 [![PyPI](https://img.shields.io/pypi/v/lindy-orchestrator.svg)](https://pypi.org/project/lindy-orchestrator/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -19,6 +20,7 @@ Decomposes natural-language goals into dependency-ordered task DAGs, dispatches 
 - [CLI Reference](#cli-reference)
 - [Configuration](#configuration)
 - [Provider System](#provider-system)
+- [Global Config](#global-config)
 - [QA Gates](#qa-gates)
 - [Hook / Event System](#hook--event-system)
 - [Live DAG Dashboard](#live-dag-dashboard)
@@ -51,10 +53,13 @@ pip install -e ".[dev]"                   # from source
 ## Quick Start
 
 ```bash
+# Choose your provider once, globally
+lindy-orchestrate config set provider codex_cli        # or claude_cli (default)
+
 lindy-orchestrate onboard                              # detect modules, generate config
 lindy-orchestrate plan "Add user authentication"       # preview task plan
 lindy-orchestrate run "Add user authentication"        # execute with full orchestration
-lindy-orchestrate run "Add auth" --provider codex_cli  # use Codex CLI instead of Claude
+lindy-orchestrate run "Add auth" --provider codex_cli  # per-command override
 ```
 
 ---
@@ -84,6 +89,7 @@ All commands accept `-c path/to/orchestrator.yaml` to specify a config file.
 | `resume` | Resume a previous session from checkpoint |
 | `onboard` | Unified onboarding (scaffold / init+onboard / re-onboard) |
 | `init` | Quick scaffold: detect modules, generate config |
+| `config` | Manage global and project-local settings (provider, etc.) |
 | `status` | Module health, mailbox summary, recent logs |
 | `logs` | Alias for `status --logs-only` |
 | `validate` | Validate config, module paths, CLI availability |
@@ -151,6 +157,7 @@ lindy-orchestrate onboard --depth 2 -y --force      # deep scan, non-interactive
 | `--depth` | | Module scan depth (default: 1) |
 | `--non-interactive` | `-y` | Skip prompts, use defaults |
 | `--force` | | Overwrite existing files |
+| `--provider` | | Override dispatch provider for this command |
 
 ### `init`
 
@@ -252,6 +259,45 @@ lindy-orchestrate mailbox --send-to backend -m "Need API" -p high      # send me
 | `logging` | `dir`, `session_dir`, `log_file` |
 
 See [docs/REFERENCE.md](docs/REFERENCE.md) for the complete annotated YAML schema with all defaults and module-scoped QA gate normalization.
+
+---
+
+## Global Config
+
+`~/.lindy/config.yaml` stores user-level defaults that apply across all projects. No LLM required — purely reads and writes YAML files.
+
+**Priority chain (highest → lowest):**
+
+```
+CLI --provider flag  >  orchestrator.yaml dispatcher.provider  >  ~/.lindy/config.yaml  >  default (claude_cli)
+```
+
+### `config show`
+
+```bash
+lindy-orchestrate config show
+```
+
+Displays both global (`~/.lindy/config.yaml`) and local (`orchestrator.yaml`) provider settings, plus the effective provider.
+
+### `config set`
+
+```bash
+# Set globally (all projects, persists in ~/.lindy/config.yaml)
+lindy-orchestrate config set provider codex_cli
+lindy-orchestrate config set provider claude_cli
+
+# Set locally (this project only, writes to ./orchestrator.yaml)
+lindy-orchestrate config set --local provider codex_cli
+```
+
+| Flag | Description |
+|------|-------------|
+| `--local` | Write to `./orchestrator.yaml` instead of `~/.lindy/config.yaml` |
+
+Valid providers: `claude_cli`, `codex_cli`.
+
+> **Tip:** During `onboard` of an empty project, the tool picks up the global config automatically — no `--provider` flag needed if you've set it with `config set`.
 
 ---
 
@@ -420,6 +466,7 @@ src/lindy_orchestrator/
 |-- cli_status.py                # Status and logs commands
 |-- cli_onboard.py               # Unified onboard command (scaffold/init/re-onboard)
 |-- cli_init.py                  # Quick init + legacy onboard commands
+|-- cli_config.py                # Config management commands (config show/set)
 |-- cli_helpers.py               # Shared CLI utilities
 |-- cli_onboard_helpers.py       # Onboard-specific helpers
 |-- cli_scaffold.py              # Scaffold mode helpers
