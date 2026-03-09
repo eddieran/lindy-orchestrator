@@ -358,6 +358,7 @@ def version(
         console.print(f"lindy-orchestrator v{__version__}")
 
 
+from .cli_clear import register_clear_command  # noqa: E402
 from .cli_config import register_config_commands  # noqa: E402
 from .cli_ext import register_ext_commands  # noqa: E402
 from .cli_onboard import register_onboard_command  # noqa: E402
@@ -376,4 +377,5 @@ register_ext_commands(
     },
 )
 register_onboard_command(app, console)
+register_clear_command(app, console)
 register_status_commands(app, console, _load_cfg)
