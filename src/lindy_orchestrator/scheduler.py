@@ -17,8 +17,10 @@ from .config import OrchestratorConfig
 from .scheduler_helpers import (
     _check_delivery,
     inject_branch_delivery,
+    inject_claude_md,
     inject_mailbox_messages,
     inject_qa_gates,
+    inject_status_content,
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
@@ -275,6 +277,11 @@ def _dispatch_loop(
                 tool_hint = f", last tool: {_hb_last_tool}" if _hb_last_tool else ""
                 progress(f"    [dim]⋯ {_hb_count} events, {mins}m{secs:02d}s{tool_hint}[/]")
                 _hb_last_print = now
+
+        # Inject STATUS.md and CLAUDE.md content on first dispatch
+        if dispatches == 0:
+            inject_status_content(task, config, progress)
+            inject_claude_md(task, config, progress)
 
         # Inject pending mailbox messages if enabled
         inject_mailbox_messages(task, config, progress)

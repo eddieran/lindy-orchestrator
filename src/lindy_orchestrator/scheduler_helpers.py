@@ -15,6 +15,15 @@ from .models import QACheck, TaskItem
 
 log = logging.getLogger(__name__)
 
+__all__ = [
+    "ExecutionProgress",
+    "inject_branch_delivery",
+    "inject_claude_md",
+    "inject_mailbox_messages",
+    "inject_qa_gates",
+    "inject_status_content",
+]
+
 
 @dataclass
 class ExecutionProgress:
@@ -123,7 +132,7 @@ def inject_qa_gates(
 
     # Auto-inject layer_check gate
     has_layer = any(q.gate == "layer_check" for q in task.qa_checks)
-    arch_path = config.root / "ARCHITECTURE.md"
+    arch_path = config.root / ".orchestrator" / "architecture.md"
     if not has_layer and config.qa_gates.layer_check.enabled and arch_path.exists():
         task.qa_checks.append(
             QACheck(
@@ -170,6 +179,45 @@ def inject_mailbox_messages(
             progress(f"    [dim]Injected {len(pending)} mailbox message(s)[/]")
     except Exception:
         log.warning("Mailbox injection failed for %s", task.module, exc_info=True)
+
+
+def inject_claude_md(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    progress: Callable[[str], None],
+) -> None:
+    """Inject CLAUDE.md instructions (root + module-specific) into task prompt."""
+    base = config._config_dir / ".orchestrator" / "claude"
+    sections: list[str] = []
+    for name in ("root.md", f"{task.module}.md"):
+        path = base / name
+        if path.exists():
+            try:
+                sections.append(path.read_text())
+            except Exception:
+                log.warning("Failed to read %s", path, exc_info=True)
+    if sections:
+        header = "## CLAUDE.md Instructions\n\n" + "\n\n".join(sections)
+        task.prompt = f"{header}\n\n{task.prompt}"
+        progress("    [dim]Injected CLAUDE.md instructions[/]")
+
+
+def inject_status_content(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    progress: Callable[[str], None],
+) -> None:
+    """Inject STATUS.md content for the task's module into the prompt."""
+    path = config._config_dir / ".orchestrator" / "status" / f"{task.module}.md"
+    if not path.exists():
+        return
+    try:
+        content = path.read_text()
+    except Exception:
+        log.warning("Failed to read %s", path, exc_info=True)
+        return
+    task.prompt = f"## Current STATUS.md\n\n{content}\n\n{task.prompt}"
+    progress(f"    [dim]Injected STATUS.md for {task.module}[/]")
 
 
 def inject_branch_delivery(
