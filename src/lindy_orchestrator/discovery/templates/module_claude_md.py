@@ -31,7 +31,7 @@ def _header(module: ModuleProfile) -> str:
 
 def _boot_sequence() -> str:
     return """\
-> **FIRST ACTION ON EVERY SESSION:** Read `STATUS.md` in this directory.
+> **FIRST ACTION ON EVERY SESSION:** Read the STATUS.md content injected into your prompt.
 > Check "Cross-Module Requests" for OPEN items — those are your assigned tasks.
 > Check "Active Work" for in-progress items from previous sessions.
 > Do this BEFORE anything else.
