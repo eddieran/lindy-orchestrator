@@ -78,7 +78,8 @@ class TestResolveGoal:
 
 class TestLoadCfg:
     def test_valid_config(self, tmp_path):
-        cfg_file = tmp_path / "orchestrator.yaml"
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        cfg_file = tmp_path / ".orchestrator" / "config.yaml"
         cfg_file.write_text("project:\n  name: test\nmodules:\n  - name: mod1\n    path: mod1/\n")
         cfg = load_cfg(str(cfg_file))
         assert cfg.project.name == "test"
@@ -88,7 +89,8 @@ class TestLoadCfg:
             load_cfg(str(tmp_path / "nonexistent.yaml"))
 
     def test_invalid_yaml_exits(self, tmp_path):
-        cfg_file = tmp_path / "orchestrator.yaml"
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        cfg_file = tmp_path / ".orchestrator" / "config.yaml"
         cfg_file.write_text("{{invalid yaml")
         with pytest.raises(click.exceptions.Exit):
             load_cfg(str(cfg_file))

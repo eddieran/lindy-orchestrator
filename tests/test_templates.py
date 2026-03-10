@@ -67,9 +67,9 @@ class TestRootClaudeMd:
         ctx = _make_ctx()
         result = render_root_claude_md(ctx)
         assert "Key Files" in result
-        assert "docs/agents/protocol.md" in result
-        assert "docs/agents/conventions.md" in result
-        assert "docs/agents/boundaries.md" in result
+        assert ".orchestrator/docs/protocol.md" in result
+        assert ".orchestrator/docs/conventions.md" in result
+        assert ".orchestrator/docs/boundaries.md" in result
 
     def test_slim_under_50_lines(self):
         mod = _make_module()
