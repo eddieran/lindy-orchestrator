@@ -36,10 +36,10 @@ Thumbs.db
 *.pfx
 
 # lindy-orchestrator runtime
-.orchestrator/logs/
-.orchestrator/sessions/
-.orchestrator/plans/
 
 # Caches
 .ruff_cache/
 .mypy_cache/
+
+# lindy-orchestrator
+.orchestrator/
