@@ -39,7 +39,7 @@ def _parse_architecture_layers(project_root: Path, module_name: str) -> LayerDef
     Looks for patterns like:
         - **backend/**: models → schemas → services → routes → main
     """
-    arch_path = project_root / "ARCHITECTURE.md"
+    arch_path = project_root / ".orchestrator" / "architecture.md"
     if not arch_path.exists():
         return None
 
