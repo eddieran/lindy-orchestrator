@@ -7,18 +7,14 @@ class TestClaudeEvents:
     def test_tool_use(self):
         event = {
             "type": "assistant",
-            "message": {
-                "content": [{"type": "tool_use", "name": "Bash", "input": {}}]
-            },
+            "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]},
         }
         assert extract_event_info(event) == ("Bash", "")
 
     def test_thinking(self):
         event = {
             "type": "assistant",
-            "message": {
-                "content": [{"type": "thinking", "text": "reasoning about the problem"}]
-            },
+            "message": {"content": [{"type": "thinking", "text": "reasoning about the problem"}]},
         }
         assert extract_event_info(event) == ("", "reasoning about the problem")
 
