@@ -165,6 +165,18 @@ class TestGeneratorOutputPaths:
         generate_artifacts(ctx, tmp_path, force=True)
         assert (tmp_path / ORCH_DIR / "claude" / "backend.md").exists()
 
+    def test_codex_root_md_created(self, tmp_path):
+        (tmp_path / "backend").mkdir()
+        ctx = _make_ctx(tmp_path)
+        generate_artifacts(ctx, tmp_path, force=True)
+        assert (tmp_path / ORCH_DIR / "codex" / "root.md").exists()
+
+    def test_codex_module_md_created(self, tmp_path):
+        (tmp_path / "backend").mkdir()
+        ctx = _make_ctx(tmp_path)
+        generate_artifacts(ctx, tmp_path, force=True)
+        assert (tmp_path / ORCH_DIR / "codex" / "backend.md").exists()
+
     def test_architecture_md_created(self, tmp_path):
         (tmp_path / "backend").mkdir()
         ctx = _make_ctx(tmp_path)

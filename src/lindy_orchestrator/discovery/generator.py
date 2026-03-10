@@ -47,6 +47,12 @@ def generate_artifacts(
         mod_claude = render_module_claude_md(ctx, mod)
         written.extend(_write_file(orch_dir / "claude" / f"{mod.name}.md", mod_claude, force))
 
+    # 3b. Codex mirror: .orchestrator/codex/ (identical content for codex_cli provider)
+    written.extend(_write_file(orch_dir / "codex" / "root.md", root_claude, force))
+    for mod in ctx.modules:
+        mod_claude = render_module_claude_md(ctx, mod)
+        written.extend(_write_file(orch_dir / "codex" / f"{mod.name}.md", mod_claude, force))
+
     # 4. CONTRACTS.md → .orchestrator/contracts.md (only for moderate+ complexity)
     if ctx.coordination_complexity >= 2:
         contracts = render_contracts_md(ctx)
