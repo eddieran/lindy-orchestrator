@@ -127,8 +127,10 @@ class TestStatusDrift:
     def test_detects_stale_status(self, tmp_path: Path):
         cfg = _make_config(tmp_path)
 
-        # Create a STATUS.md and backdate it
-        status_file = tmp_path / "backend" / "STATUS.md"
+        # Create a status file and backdate it
+        status_dir = tmp_path / ".orchestrator" / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        status_file = status_dir / "backend.md"
         status_file.write_text("# STATUS\n")
         # Set mtime to 10 days ago
         old_time = time.time() - (10 * 86400)
@@ -144,7 +146,9 @@ class TestStatusDrift:
     def test_fresh_status_ok(self, tmp_path: Path):
         cfg = _make_config(tmp_path)
 
-        status_file = tmp_path / "backend" / "STATUS.md"
+        status_dir = tmp_path / ".orchestrator" / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        status_file = status_dir / "backend.md"
         status_file.write_text("# STATUS\n")
         # mtime is now (fresh)
 

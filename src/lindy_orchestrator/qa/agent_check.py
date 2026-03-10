@@ -48,7 +48,7 @@ class AgentCheckGate:
 
         # Build QA prompt
         prompt = (
-            "Read your STATUS.md first.\n\n"
+            "Read the STATUS.md content provided above.\n\n"
             f"## Task: {description}\n\n"
             "Steps:\n"
             "1. Analyze the relevant files and outputs\n"

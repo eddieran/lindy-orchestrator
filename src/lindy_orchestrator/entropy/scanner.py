@@ -51,16 +51,16 @@ def run_scan(config: OrchestratorConfig, module_filter: str | None = None) -> Sc
 def _check_architecture_drift(config: OrchestratorConfig) -> list[ScanFinding]:
     """Compare ARCHITECTURE.md declarations against actual filesystem."""
     findings: list[ScanFinding] = []
-    arch_path = config.root / "ARCHITECTURE.md"
+    arch_path = config.root / ".orchestrator" / "architecture.md"
 
     if not arch_path.exists():
         findings.append(
             ScanFinding(
                 category="architecture_drift",
                 severity="warning",
-                description="ARCHITECTURE.md not found",
+                description=".orchestrator/architecture.md not found",
                 file_path=str(arch_path),
-                remediation="Run `lindy-orchestrate onboard` to generate ARCHITECTURE.md",
+                remediation="Run `lindy-orchestrate onboard` to generate .orchestrator/architecture.md",
             )
         )
         return findings
@@ -85,7 +85,7 @@ def _check_architecture_drift(config: OrchestratorConfig) -> list[ScanFinding]:
                     severity="error",
                     description=f"Declared module `{mod_name}/` does not exist on filesystem",
                     file_path=str(mod_path),
-                    remediation=f"Create `{mod_name}/` directory or update ARCHITECTURE.md",
+                    remediation=f"Create `{mod_name}/` directory or update .orchestrator/architecture.md",
                 )
             )
 
@@ -100,10 +100,10 @@ def _check_architecture_drift(config: OrchestratorConfig) -> list[ScanFinding]:
                         severity="warning",
                         description=(
                             f"Config module `{mod.name}` exists but is not "
-                            f"declared in ARCHITECTURE.md"
+                            f"declared in .orchestrator/architecture.md"
                         ),
                         file_path=str(arch_path),
-                        remediation="Regenerate ARCHITECTURE.md or add the module manually",
+                        remediation="Regenerate .orchestrator/architecture.md or add the module manually",
                     )
                 )
 
@@ -146,15 +146,15 @@ def _check_contract_compliance(config: OrchestratorConfig) -> list[ScanFinding]:
     if len(config.modules) < 2:
         return findings
 
-    contracts_path = config.root / "CONTRACTS.md"
+    contracts_path = config.root / ".orchestrator" / "contracts.md"
     if not contracts_path.exists():
         findings.append(
             ScanFinding(
                 category="contract_violation",
                 severity="warning",
-                description="Multi-module project has no CONTRACTS.md",
+                description="Multi-module project has no .orchestrator/contracts.md",
                 file_path=str(contracts_path),
-                remediation="Run `lindy-orchestrate onboard` to generate CONTRACTS.md",
+                remediation="Run `lindy-orchestrate onboard` to generate .orchestrator/contracts.md",
             )
         )
         return findings
@@ -172,9 +172,9 @@ def _check_contract_compliance(config: OrchestratorConfig) -> list[ScanFinding]:
                 ScanFinding(
                     category="contract_violation",
                     severity="warning",
-                    description=f"CONTRACTS.md missing required section: {section}",
+                    description=f".orchestrator/contracts.md missing required section: {section}",
                     file_path=str(contracts_path),
-                    remediation=f"Add a ## {section} section to CONTRACTS.md",
+                    remediation=f"Add a ## {section} section to .orchestrator/contracts.md",
                 )
             )
 
@@ -186,9 +186,9 @@ def _check_contract_compliance(config: OrchestratorConfig) -> list[ScanFinding]:
                 ScanFinding(
                     category="contract_violation",
                     severity="info",
-                    description=f"Module `{mod.name}` not referenced in CONTRACTS.md",
+                    description=f"Module `{mod.name}` not referenced in .orchestrator/contracts.md",
                     file_path=str(contracts_path),
-                    remediation=f"Add interface definitions for `{mod.name}` to CONTRACTS.md",
+                    remediation=f"Add interface definitions for `{mod.name}` to .orchestrator/contracts.md",
                 )
             )
 

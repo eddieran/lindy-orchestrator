@@ -32,52 +32,51 @@ def generate_artifacts(
     output_dir = output_dir.resolve()
     written: list[Path] = []
 
-    # 1. orchestrator.yaml
+    orch_dir = output_dir / ".orchestrator"
+
+    # 1. orchestrator.yaml → .orchestrator/config.yaml
     config_content = _render_config(ctx)
-    written.extend(_write_file(output_dir / "orchestrator.yaml", config_content, force))
+    written.extend(_write_file(orch_dir / "config.yaml", config_content, force))
 
-    # 2. Root CLAUDE.md
+    # 2. Root CLAUDE.md → .orchestrator/claude/root.md
     root_claude = render_root_claude_md(ctx)
-    written.extend(_write_file(output_dir / "CLAUDE.md", root_claude, force))
+    written.extend(_write_file(orch_dir / "claude" / "root.md", root_claude, force))
 
-    # 3. Per-module CLAUDE.md
+    # 3. Per-module CLAUDE.md → .orchestrator/claude/{mod.name}.md
     for mod in ctx.modules:
         mod_claude = render_module_claude_md(ctx, mod)
-        mod_path = output_dir / mod.path / "CLAUDE.md"
-        mod_path.parent.mkdir(parents=True, exist_ok=True)
-        written.extend(_write_file(mod_path, mod_claude, force))
+        written.extend(_write_file(orch_dir / "claude" / f"{mod.name}.md", mod_claude, force))
 
-    # 4. CONTRACTS.md (only for moderate+ complexity)
+    # 4. CONTRACTS.md → .orchestrator/contracts.md (only for moderate+ complexity)
     if ctx.coordination_complexity >= 2:
         contracts = render_contracts_md(ctx)
-        written.extend(_write_file(output_dir / "CONTRACTS.md", contracts, force))
+        written.extend(_write_file(orch_dir / "contracts.md", contracts, force))
 
-    # 5. ARCHITECTURE.md — structural map with boundaries
+    # 5. ARCHITECTURE.md → .orchestrator/architecture.md
     architecture = render_architecture_md(ctx)
-    written.extend(_write_file(output_dir / "ARCHITECTURE.md", architecture, force))
+    written.extend(_write_file(orch_dir / "architecture.md", architecture, force))
 
-    # 6. docs/agents/ — detailed agent reference documents
+    # 6. docs/agents/ → .orchestrator/docs/
     agent_docs = render_agent_docs(ctx)
-    agents_dir = output_dir / "docs" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
+    docs_dir = orch_dir / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
     for filename, content in agent_docs.items():
-        written.extend(_write_file(agents_dir / filename, content, force))
+        written.extend(_write_file(docs_dir / filename, content, force))
 
-    # 7. Per-module STATUS.md
+    # 7. Per-module STATUS.md → .orchestrator/status/{mod.name}.md
     for mod in ctx.modules:
-        status_path = output_dir / mod.path / "STATUS.md"
+        status_path = orch_dir / "status" / f"{mod.name}.md"
         if not status_path.exists() or force:
             status_path.parent.mkdir(parents=True, exist_ok=True)
             content = generate_status_md(mod.name)
             written.extend(_write_file(status_path, content, force))
 
-    # 7. .orchestrator/ directory
-    orch_dir = output_dir / ".orchestrator"
+    # 8. Runtime directories
     (orch_dir / "logs").mkdir(parents=True, exist_ok=True)
     (orch_dir / "sessions").mkdir(parents=True, exist_ok=True)
     (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
 
-    # 8. Update .gitignore
+    # 9. Update .gitignore
     _update_gitignore(output_dir)
 
     return written
@@ -229,20 +228,17 @@ def _write_file(path: Path, content: str, force: bool) -> list[Path]:
 
 
 def _update_gitignore(root: Path) -> None:
-    """Ensure .gitignore has orchestrator entries."""
+    """Ensure .gitignore has orchestrator entry."""
     gitignore = root / ".gitignore"
-    entries = [".orchestrator/logs/", ".orchestrator/sessions/"]
+    entry = ".orchestrator/"
 
     if gitignore.exists():
         existing = gitignore.read_text(encoding="utf-8")
-        to_add = [e for e in entries if e not in existing]
-        if to_add:
+        if entry not in existing:
             with gitignore.open("a", encoding="utf-8") as f:
-                f.write("\n# lindy-orchestrator\n")
-                for entry in to_add:
-                    f.write(f"{entry}\n")
+                f.write(f"\n# lindy-orchestrator\n{entry}\n")
     else:
         gitignore.write_text(
-            "# lindy-orchestrator\n" + "\n".join(entries) + "\n",
+            f"# lindy-orchestrator\n{entry}\n",
             encoding="utf-8",
         )

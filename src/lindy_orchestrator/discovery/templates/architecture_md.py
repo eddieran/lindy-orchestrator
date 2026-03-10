@@ -60,7 +60,7 @@ def render_architecture_md(ctx: DiscoveryContext) -> str:
     if ctx.coordination_complexity >= 2:
         sections.append("## Shared Definitions")
         sections.append("")
-        sections.append("- Shared types and interfaces are defined in `CONTRACTS.md`")
+        sections.append("- Shared types and interfaces are defined in `.orchestrator/contracts.md`")
         sections.append("- Never duplicate type definitions across modules")
         sections.append("")
 
@@ -105,7 +105,7 @@ def _infer_boundaries(ctx: DiscoveryContext) -> list[str]:
                 boundaries.append(
                     f"`{mod.name}/` does NOT import from "
                     + ", ".join(f"`{n}/`" for n in other_names)
-                    + " — use CONTRACTS.md interfaces"
+                    + " — use .orchestrator/contracts.md interfaces"
                 )
 
     # Tech-specific boundaries

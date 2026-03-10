@@ -246,17 +246,17 @@ class TestOnboardScaffoldCLI:
             assert result.exit_code == 0
             assert "Onboarding complete" in result.output
 
-            # Key files should exist
-            assert (tmp_path / "orchestrator.yaml").exists()
-            assert (tmp_path / "CLAUDE.md").exists()
-            assert (tmp_path / "ARCHITECTURE.md").exists()
+            # Key files should exist under .orchestrator/
+            assert (tmp_path / ".orchestrator" / "config.yaml").exists()
+            assert (tmp_path / ".orchestrator" / "claude" / "root.md").exists()
+            assert (tmp_path / ".orchestrator" / "architecture.md").exists()
 
-            # Module dirs and STATUS.md
-            assert (tmp_path / "backend" / "STATUS.md").exists()
-            assert (tmp_path / "frontend" / "STATUS.md").exists()
+            # Module status files under .orchestrator/status/
+            assert (tmp_path / ".orchestrator" / "status" / "backend.md").exists()
+            assert (tmp_path / ".orchestrator" / "status" / "frontend.md").exists()
 
-            # CONTRACTS.md should exist (complexity >= 2)
-            assert (tmp_path / "CONTRACTS.md").exists()
+            # contracts.md should exist (complexity >= 2)
+            assert (tmp_path / ".orchestrator" / "contracts.md").exists()
 
     def test_onboard_scaffold_from_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -354,7 +354,7 @@ class TestOnboardScaffoldCLI:
             )
             assert result.exit_code == 0
             # Files should be created
-            assert (tmp_path / "orchestrator.yaml").exists()
+            assert (tmp_path / ".orchestrator" / "config.yaml").exists()
 
     def test_onboard_scaffold_with_codex_provider(self, tmp_path, monkeypatch):
         """--provider codex_cli should use codex provider."""

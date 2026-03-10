@@ -171,7 +171,8 @@ class TestNormalizeQaGates:
                 ],
             },
         }
-        config_file = tmp_path / "orchestrator.yaml"
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        config_file = tmp_path / ".orchestrator" / "config.yaml"
         config_file.write_text(yaml.dump(config_data))
         cfg = load_config(config_file)
         assert len(cfg.qa_gates.custom) == 1

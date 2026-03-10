@@ -79,10 +79,10 @@ Single-package Python project:
           | models.py          |        |  scanner_helpers|
           +--------------------+        +-----------------+
 
-          +--------------------+
-          |    GC              |
-          | gc.py              |
-          +--------------------+
+          +--------------------+        +-----------------+
+          |    Worktree        |        |   GC            |
+          | worktree.py        |        | gc.py           |
+          +--------------------+        +-----------------+
 ```
 
 ## Data Flow
@@ -98,18 +98,21 @@ Single-package Python project:
    independent tasks in parallel (up to `safety.max_parallel` workers) using
    `concurrent.futures.ThreadPoolExecutor`.
 
-4. **Dispatch** -- Each task is sent to an agent subprocess via a `DispatchProvider`
+4. **Worktree Isolation** -- Each parallel task gets its own git worktree via
+   `worktree.py`, preventing checkout race conditions between concurrent agents.
+
+5. **Dispatch** -- Each task is sent to an agent subprocess via a `DispatchProvider`
    (`providers/claude_cli.py` or `providers/codex_cli.py`). The dispatcher streams JSONL
    events, monitors heartbeat/stall, and collects the result.
 
-5. **QA Verification** -- After each dispatch, QA gates run sequentially against the
+6. **QA Verification** -- After each dispatch, QA gates run sequentially against the
    task output. On failure, `qa/feedback.py` formats structured remediation and the task
    is re-dispatched (up to `safety.max_retries_per_task`).
 
-6. **Reporting** -- `reporter.py` prints per-task results and saves a Markdown summary
+7. **Reporting** -- `reporter.py` prints per-task results and saves a Markdown summary
    to `.orchestrator/reports/`.
 
-7. **Session Persistence** -- `session.py` checkpoints the plan state after each task
+8. **Session Persistence** -- `session.py` checkpoints the plan state after each task
    resolves. The `resume` command reloads a session and retries failed tasks.
 
 ## Layer Structure per Package
@@ -161,7 +164,15 @@ DAG-based parallel task execution with retry logic.
 | File | Responsibility |
 |------|---------------|
 | `scheduler.py` | `execute_plan()`: topological dispatch, QA gate orchestration, retry loop |
-| `scheduler_helpers.py` | Branch delivery check, QA gate injection |
+| `scheduler_helpers.py` | Branch delivery check, QA gate injection, mailbox injection, branch delivery injection |
+
+### worktree
+
+Git worktree management for parallel task isolation.
+
+| File | Responsibility |
+|------|---------------|
+| `worktree.py` | `create_worktree()`, `remove_worktree()`, `cleanup_all_worktrees()`: isolated working directories per parallel task |
 
 ### providers
 
@@ -317,6 +328,9 @@ Garbage collection for agent-generated artifacts.
 
 7. **Hook events, not callbacks** -- Subsystems emit `Event` objects via `HookRegistry`.
    The dashboard, progress display, and future integrations subscribe to events.
+
+8. **Worktree isolation** -- Parallel tasks run in isolated git worktrees via `worktree.py`.
+   Agents must not switch branches; the worktree is pre-configured on the delivery branch.
 
 ## Sensitive Paths (DO NOT commit)
 

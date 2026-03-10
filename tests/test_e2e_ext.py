@@ -190,8 +190,11 @@ class TestE2EValidate:
             "project": {"name": "test"},
             "modules": [{"name": "missing_mod", "path": "missing_mod/"}],
         }
-        (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
-        result = runner.invoke(app, ["validate", "-c", str(tmp_path / "orchestrator.yaml")])
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
+        result = runner.invoke(
+            app, ["validate", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code != 0
         assert "Module path missing" in result.output
 
@@ -261,7 +264,7 @@ class TestE2EOnboard:
             assert result.exit_code == 0
             assert "scaffold mode" in result.output.lower()
             assert "Onboarding complete" in result.output
-            assert (tmp_path / "orchestrator.yaml").exists()
+            assert (tmp_path / ".orchestrator" / "config.yaml").exists()
 
     def test_onboard_init_mode(self, tmp_path, monkeypatch):
         """Existing project without config triggers init+onboard mode."""
@@ -274,13 +277,14 @@ class TestE2EOnboard:
         assert "init+onboard" in result.output.lower() or result.exit_code == 0
 
     def test_onboard_re_onboard_mode(self, tmp_path, monkeypatch):
-        """Project with existing orchestrator.yaml triggers re-onboard mode."""
+        """Project with existing config triggers re-onboard mode."""
         monkeypatch.chdir(tmp_path)
         config = {
             "project": {"name": "existing"},
             "modules": [{"name": "app", "path": "app/"}],
         }
-        (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
         (tmp_path / "app").mkdir()
         (tmp_path / "app" / "pyproject.toml").write_text('[project]\nname = "app"')
 
@@ -352,14 +356,17 @@ class TestE2EEdgeCases:
 
     def test_invalid_config_yaml(self, tmp_path):
         """Malformed YAML should fail gracefully."""
-        bad = tmp_path / "orchestrator.yaml"
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        bad = tmp_path / ".orchestrator" / "config.yaml"
         bad.write_text("invalid: yaml: [broken")
         result = runner.invoke(app, ["status", "-c", str(bad)])
         assert result.exit_code != 0
 
     def test_empty_project_dir_validate(self, tmp_path):
         """Validate on an empty dir with no config should fail."""
-        result = runner.invoke(app, ["validate", "-c", str(tmp_path / "orchestrator.yaml")])
+        result = runner.invoke(
+            app, ["validate", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code != 0
 
     def test_no_args_shows_help(self):
@@ -381,9 +388,10 @@ class TestE2EEdgeCases:
     def test_config_with_no_modules(self, tmp_path):
         """Config with empty modules list — status still works."""
         config = {"project": {"name": "empty"}, "modules": []}
-        (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
         result = runner.invoke(
-            app, ["status", "-c", str(tmp_path / "orchestrator.yaml"), "--status-only"]
+            app, ["status", "-c", str(tmp_path / ".orchestrator" / "config.yaml"), "--status-only"]
         )
         assert result.exit_code == 0
 
@@ -441,7 +449,8 @@ class TestE2EIssues:
             "modules": [{"name": "x", "path": "x/"}],
             "tracker": {"enabled": True, "repo": "org/repo"},
         }
-        (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
         (tmp_path / "x").mkdir()
 
         mock_tracker = MagicMock()
@@ -450,7 +459,9 @@ class TestE2EIssues:
         ]
         mock_create.return_value = mock_tracker
 
-        result = runner.invoke(app, ["issues", "-c", str(tmp_path / "orchestrator.yaml")])
+        result = runner.invoke(
+            app, ["issues", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code == 0
         assert "#42" in result.output
         assert "Fix bug" in result.output
@@ -464,7 +475,8 @@ class TestE2EIssues:
             "modules": [{"name": "x", "path": "x/"}],
             "tracker": {"enabled": True, "repo": "org/repo"},
         }
-        (tmp_path / "orchestrator.yaml").write_text(yaml.dump(config))
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
         (tmp_path / "x").mkdir()
 
         mock_tracker = MagicMock()
@@ -473,7 +485,9 @@ class TestE2EIssues:
         ]
         mock_create.return_value = mock_tracker
 
-        result = runner.invoke(app, ["issues", "-c", str(tmp_path / "orchestrator.yaml"), "--json"])
+        result = runner.invoke(
+            app, ["issues", "-c", str(tmp_path / ".orchestrator" / "config.yaml"), "--json"]
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert len(data) == 1

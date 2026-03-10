@@ -13,8 +13,10 @@ runner = CliRunner()
 
 
 def _write_config(tmp_path, extra=""):
-    """Create a minimal orchestrator.yaml in tmp_path."""
-    cfg = tmp_path / "orchestrator.yaml"
+    """Create a minimal config in .orchestrator/config.yaml."""
+    orch_dir = tmp_path / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    cfg = orch_dir / "config.yaml"
     cfg.write_text(
         "project:\n  name: testproject\nmodules:\n  - name: backend\n    path: backend/\n" + extra,
         encoding="utf-8",
@@ -24,8 +26,10 @@ def _write_config(tmp_path, extra=""):
 
 
 def _write_status_md(tmp_path):
-    """Create a valid STATUS.md for the backend module."""
-    (tmp_path / "backend" / "STATUS.md").write_text(
+    """Create a valid status file for the backend module."""
+    status_dir = tmp_path / ".orchestrator" / "status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    (status_dir / "backend.md").write_text(
         "# Backend Status\n\n"
         "## Meta\n"
         "| Key | Value |\n"
@@ -69,8 +73,10 @@ def _write_log_file(tmp_path, entries=None):
 class TestValidateCommand:
     def test_validate_valid_config(self, tmp_path):
         cfg_path = _write_config(tmp_path)
-        # Create the module directory and STATUS.md
-        (tmp_path / "backend" / "STATUS.md").write_text(
+        # Create the module status file
+        status_dir = tmp_path / ".orchestrator" / "status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        (status_dir / "backend.md").write_text(
             "# Backend Status\n\n"
             "## Meta\n"
             "| Key | Value |\n"
@@ -102,7 +108,8 @@ class TestValidateCommand:
         assert result.exit_code != 0
 
     def test_validate_missing_module_path(self, tmp_path):
-        cfg = tmp_path / "orchestrator.yaml"
+        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+        cfg = tmp_path / ".orchestrator" / "config.yaml"
         cfg.write_text(
             "project:\n  name: test\nmodules:\n  - name: missing_mod\n    path: missing_mod/\n"
         )

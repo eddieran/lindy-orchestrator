@@ -3,7 +3,7 @@
 Usage:
   lindy-orchestrate config show                          # show global + local
   lindy-orchestrate config set provider codex_cli        # set globally
-  lindy-orchestrate config set --local provider codex_cli  # set in ./orchestrator.yaml
+  lindy-orchestrate config set --local provider codex_cli  # set in .orchestrator/config.yaml
 """
 
 from __future__ import annotations
@@ -28,8 +28,10 @@ SETTABLE_KEYS = {"provider"}
 
 
 def _read_local_provider(cwd: Path) -> str | None:
-    """Read dispatcher.provider from ./orchestrator.yaml, or None if absent."""
-    cfg_file = cwd / CONFIG_FILENAME
+    """Read dispatcher.provider from .orchestrator/config.yaml (or legacy orchestrator.yaml)."""
+    new_cfg = cwd / ".orchestrator" / "config.yaml"
+    legacy_cfg = cwd / CONFIG_FILENAME
+    cfg_file = new_cfg if new_cfg.exists() else legacy_cfg
     if not cfg_file.exists():
         return None
     try:
@@ -40,14 +42,16 @@ def _read_local_provider(cwd: Path) -> str | None:
 
 
 def _write_local_provider(cwd: Path, provider: str) -> None:
-    """Set dispatcher.provider in ./orchestrator.yaml (atomic write).
+    """Set dispatcher.provider in .orchestrator/config.yaml (atomic write).
 
-    Creates a minimal orchestrator.yaml if it does not exist yet.
+    Creates .orchestrator/ directory and config.yaml if they do not exist yet.
     """
     import os
     import tempfile
 
-    cfg_file = cwd / CONFIG_FILENAME
+    orch_dir = cwd / ".orchestrator"
+    orch_dir.mkdir(parents=True, exist_ok=True)
+    cfg_file = orch_dir / "config.yaml"
     if cfg_file.exists():
         raw = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
     else:
@@ -55,7 +59,7 @@ def _write_local_provider(cwd: Path, provider: str) -> None:
 
     raw.setdefault("dispatcher", {})["provider"] = provider
 
-    fd, tmp = tempfile.mkstemp(dir=cwd, suffix=".tmp", prefix="orchestrator_")
+    fd, tmp = tempfile.mkstemp(dir=orch_dir, suffix=".tmp", prefix="orchestrator_")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml.dump(raw, f, default_flow_style=False, allow_unicode=True)
@@ -90,11 +94,11 @@ def register_config_commands(app: typer.Typer, console: Console) -> None:
         global_source = str(GLOBAL_CONFIG_PATH) if GLOBAL_CONFIG_PATH.exists() else "default"
         table.add_row("global", "provider", global_cfg.provider, global_source)
 
+        local_cfg_display = str(cwd / ".orchestrator" / "config.yaml")
         if local_provider:
-            local_source = str(cwd / CONFIG_FILENAME)
-            table.add_row("local", "provider", local_provider, local_source)
+            table.add_row("local", "provider", local_provider, local_cfg_display)
         else:
-            table.add_row("local", "provider", "(not set)", str(cwd / CONFIG_FILENAME))
+            table.add_row("local", "provider", "(not set)", local_cfg_display)
 
         console.print()
         console.print(table)
@@ -117,7 +121,7 @@ def register_config_commands(app: typer.Typer, console: Console) -> None:
         local: bool = typer.Option(
             False,
             "--local",
-            help="Write to ./orchestrator.yaml instead of ~/.lindy/config.yaml",
+            help="Write to .orchestrator/config.yaml instead of ~/.lindy/config.yaml",
         ),
     ) -> None:
         """Set a configuration value (global by default, use --local for project scope).
@@ -141,7 +145,7 @@ def register_config_commands(app: typer.Typer, console: Console) -> None:
             if local:
                 cwd = Path.cwd()
                 _write_local_provider(cwd, value)
-                dest = cwd / CONFIG_FILENAME
+                dest = cwd / ".orchestrator" / "config.yaml"
                 console.print(f"[green]✓[/] provider = [bold]{value}[/]  (saved to {dest})")
             else:
                 cfg = GlobalConfig(provider=value)

@@ -67,9 +67,9 @@ class TestRootClaudeMd:
         ctx = _make_ctx()
         result = render_root_claude_md(ctx)
         assert "Key Files" in result
-        assert "docs/agents/protocol.md" in result
-        assert "docs/agents/conventions.md" in result
-        assert "docs/agents/boundaries.md" in result
+        assert ".orchestrator/docs/protocol.md" in result
+        assert ".orchestrator/docs/conventions.md" in result
+        assert ".orchestrator/docs/boundaries.md" in result
 
     def test_slim_under_50_lines(self):
         mod = _make_module()
@@ -81,7 +81,7 @@ class TestRootClaudeMd:
     def test_contracts_pointer_when_complex(self):
         ctx = _make_ctx(coordination_complexity=2)
         result = render_root_claude_md(ctx)
-        assert "CONTRACTS.md" in result
+        assert ".orchestrator/contracts.md" in result
 
     def test_contains_quick_rules(self):
         ctx = _make_ctx()
@@ -218,13 +218,12 @@ class TestAgentDocs:
     def test_protocol_contracts_when_complex(self):
         ctx = _make_ctx(coordination_complexity=2)
         docs = render_agent_docs(ctx)
-        assert "CONTRACTS.md" in docs["protocol.md"]
+        assert ".orchestrator/contracts.md" in docs["protocol.md"]
 
     def test_protocol_no_contracts_when_simple(self):
         ctx = _make_ctx(coordination_complexity=1)
         docs = render_agent_docs(ctx)
-        # The word CONTRACTS.md should only appear in the generic ARCHITECTURE.md ref
-        assert "CONTRACTS.md" not in docs["protocol.md"]
+        assert ".orchestrator/contracts.md" not in docs["protocol.md"]
 
     def test_conventions_python(self):
         mod = _make_module(

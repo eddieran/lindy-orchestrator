@@ -119,8 +119,8 @@ Rules:
 
 
 def _has_config(cwd: Path) -> bool:
-    """Check if orchestrator.yaml exists."""
-    return (cwd / CONFIG_FILENAME).exists()
+    """Check if config exists (new .orchestrator/config.yaml or legacy orchestrator.yaml)."""
+    return (cwd / ".orchestrator" / "config.yaml").exists() or (cwd / CONFIG_FILENAME).exists()
 
 
 def _has_source_files(cwd: Path) -> bool:
