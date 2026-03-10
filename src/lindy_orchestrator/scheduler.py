@@ -17,6 +17,7 @@ from .config import OrchestratorConfig
 from .scheduler_helpers import (
     _autofill_ci_params,
     _check_delivery,
+    extract_event_info,
     inject_branch_delivery,
     inject_claude_md,
     inject_mailbox_messages,
@@ -260,25 +261,14 @@ def _dispatch_loop(
             nonlocal _hb_count, _hb_last_tool, _hb_last_print, _hb_last_reasoning
             _hb_count += 1
 
-            tool_name = ""
-            reasoning_text = ""
-            content = event.get("message", {}).get("content", [{}])
-            if isinstance(content, list):
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    block_type = block.get("type", "")
-                    if block_type == "tool_use":
-                        tool_name = block.get("name", "?")
-                        _hb_last_tool = tool_name
-                        _hb_recent_tools.append(tool_name)
-                        if len(_hb_recent_tools) > 5:
-                            _hb_recent_tools.pop(0)
-                        detail(f"      [dim]tool: {tool_name}[/]")
-                    elif block_type in ("thinking", "text"):
-                        snippet = block.get("text", "")
-                        if snippet:
-                            reasoning_text = snippet
+            tool_name, reasoning_text = extract_event_info(event)
+
+            if tool_name:
+                _hb_last_tool = tool_name
+                _hb_recent_tools.append(tool_name)
+                if len(_hb_recent_tools) > 5:
+                    _hb_recent_tools.pop(0)
+                detail(f"      [dim]tool: {tool_name}[/]")
 
             if reasoning_text:
                 _hb_last_reasoning = reasoning_text

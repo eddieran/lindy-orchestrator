@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lindy_orchestrator.config import ModuleConfig, OrchestratorConfig, ProjectConfig
+from lindy_orchestrator.config import (
+    DispatcherConfig,
+    ModuleConfig,
+    OrchestratorConfig,
+    ProjectConfig,
+)
 from lindy_orchestrator.models import TaskItem, TaskStatus
 from lindy_orchestrator.scheduler_helpers import inject_claude_md, inject_status_content
 
@@ -136,6 +141,62 @@ class TestInjectClaudeMd:
         inject_claude_md(task, cfg, _noop_progress)
 
         assert "CLAUDE.md" in task.prompt or "Instructions" in task.prompt
+
+    # --- Provider-aware tests ---
+
+    def test_codex_reads_from_codex_dir(self, tmp_path: Path):
+        """With codex_cli provider, reads from .orchestrator/codex/."""
+        cfg = _make_config(tmp_path)
+        cfg.dispatcher = DispatcherConfig(provider="codex_cli")
+        codex_dir = tmp_path / ".orchestrator" / "codex"
+        codex_dir.mkdir(parents=True, exist_ok=True)
+        (codex_dir / "root.md").write_text("Codex root instructions")
+
+        task = _make_task(module="backend", prompt="Original")
+        inject_claude_md(task, cfg, _noop_progress)
+
+        assert "Codex root instructions" in task.prompt
+        assert "Original" in task.prompt
+
+    def test_codex_falls_back_to_claude_dir(self, tmp_path: Path):
+        """With codex_cli provider, falls back to claude/ when codex/ missing."""
+        cfg = _make_config(tmp_path)
+        cfg.dispatcher = DispatcherConfig(provider="codex_cli")
+        claude_dir = tmp_path / ".orchestrator" / "claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "root.md").write_text("Claude fallback instructions")
+
+        task = _make_task(module="backend", prompt="Original")
+        inject_claude_md(task, cfg, _noop_progress)
+
+        assert "Claude fallback instructions" in task.prompt
+
+    def test_codex_header_label(self, tmp_path: Path):
+        """With codex_cli provider, header says CODEX.md Instructions."""
+        cfg = _make_config(tmp_path)
+        cfg.dispatcher = DispatcherConfig(provider="codex_cli")
+        codex_dir = tmp_path / ".orchestrator" / "codex"
+        codex_dir.mkdir(parents=True, exist_ok=True)
+        (codex_dir / "root.md").write_text("Codex stuff")
+
+        task = _make_task(module="backend", prompt="Original")
+        inject_claude_md(task, cfg, _noop_progress)
+
+        assert "CODEX.md Instructions" in task.prompt
+
+    def test_claude_provider_unchanged(self, tmp_path: Path):
+        """With claude_cli provider (default), behavior is unchanged."""
+        cfg = _make_config(tmp_path)
+        # Default provider is claude_cli
+        claude_dir = tmp_path / ".orchestrator" / "claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "root.md").write_text("Claude instructions")
+
+        task = _make_task(module="backend", prompt="Original")
+        inject_claude_md(task, cfg, _noop_progress)
+
+        assert "CLAUDE.md Instructions" in task.prompt
+        assert "Claude instructions" in task.prompt
 
 
 # ---------------------------------------------------------------------------
