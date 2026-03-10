@@ -163,7 +163,7 @@ def _task_id_conventions(ctx: DiscoveryContext) -> str:
     return f"""\
 ## Task ID Conventions
 
-Each module uses a unique prefix for task IDs to ensure traceability across STATUS.md files.
+Each module uses a unique prefix for task IDs to ensure traceability across `.orchestrator/status/` files.
 
 | Module | Prefix | Example |
 |--------|--------|---------|
@@ -195,7 +195,7 @@ def _status_md_schema() -> str:
     return """\
 ## STATUS.md Schema
 
-All module STATUS.md files MUST follow this normative schema:
+All module STATUS.md files (at `.orchestrator/status/{{module}}.md`) MUST follow this normative schema:
 
 ```markdown
 ## Meta
@@ -240,7 +240,7 @@ def _footer() -> str:
 
 ## Change Protocol
 
-1. Propose changes in a Cross-Module Request (STATUS.md)
+1. Propose changes in a Cross-Module Request (`.orchestrator/status/{{module}}.md`)
 2. Get approval from affected module owners
 3. Update this file FIRST, then update implementations
 4. Run integration tests to verify contract compliance

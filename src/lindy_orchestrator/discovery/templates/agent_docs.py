@@ -27,9 +27,9 @@ def _render_protocol(ctx: DiscoveryContext) -> str:
     if ctx.coordination_complexity >= 2:
         contracts_note = (
             "\n## CONTRACTS.md\n\n"
-            "Shared interface definitions live in `CONTRACTS.md` at the project root.\n"
+            "Shared interface definitions live in `.orchestrator/contracts.md`.\n"
             "All cross-module data shapes, API contracts, and shared types are defined there.\n"
-            "Never duplicate type definitions across modules — reference CONTRACTS.md.\n"
+            "Never duplicate type definitions across modules — reference `.orchestrator/contracts.md`.\n"
         )
 
     return f"""\
@@ -40,7 +40,7 @@ def _render_protocol(ctx: DiscoveryContext) -> str:
 
 ## STATUS.md as Message Bus
 
-Each module has a `STATUS.md` file that tracks:
+Each module has a STATUS.md file at `.orchestrator/status/{{module}}.md` that tracks:
 - **Module Metadata**: health (GREEN/YELLOW/RED), last update, session ID
 - **Active Work**: current tasks with status and blockers
 - **Completed (Recent)**: recently finished tasks
@@ -77,7 +77,7 @@ Maximum retries: configurable per project (default: 2).
 ## Cross-Module Request Protocol
 
 When you need work from another module:
-1. Add an entry to your STATUS.md "Cross-Module Requests" table
+1. Add an entry to your `.orchestrator/status/{{module}}.md` "Cross-Module Requests" table
 2. Set status to OPEN
 3. Include priority (P0=critical, P1=high, P2=normal)
 4. The orchestrator will pick it up in the next planning cycle
@@ -86,13 +86,13 @@ Do NOT directly modify files in other modules.
 {contracts_note}
 ## ARCHITECTURE.md
 
-The structural map at the project root defines:
+The structural map at `.orchestrator/architecture.md` defines:
 - Module topology and tech stacks
 - Dependency directions between modules
 - Negative boundaries (what does NOT belong where)
 - Layer structure per module
 
-Read ARCHITECTURE.md before planning any cross-module work.
+Read `.orchestrator/architecture.md` before planning any cross-module work.
 """
 
 
@@ -193,8 +193,8 @@ def _render_boundaries(ctx: DiscoveryContext) -> str:
         sections.append("## Cross-Module Communication")
         sections.append("")
         sections.append(
-            "All cross-module communication goes through STATUS.md requests "
-            "and CONTRACTS.md interfaces."
+            "All cross-module communication goes through `.orchestrator/status/` requests "
+            "and `.orchestrator/contracts.md` interfaces."
         )
         sections.append("Direct file access across module boundaries is prohibited.")
         sections.append("")

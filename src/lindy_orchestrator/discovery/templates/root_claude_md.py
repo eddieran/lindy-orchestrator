@@ -23,13 +23,13 @@ def render_root_claude_md(ctx: DiscoveryContext) -> str:
 
     # Key files
     key_files = [
-        "- `ARCHITECTURE.md` — module topology, layer structure, boundaries",
-        "- `docs/agents/protocol.md` — full coordination protocol",
-        "- `docs/agents/conventions.md` — coding standards per module",
-        "- `docs/agents/boundaries.md` — negative constraints and exceptions",
+        "- `.orchestrator/architecture.md` — module topology, layer structure, boundaries",
+        "- `.orchestrator/docs/protocol.md` — full coordination protocol",
+        "- `.orchestrator/docs/conventions.md` — coding standards per module",
+        "- `.orchestrator/docs/boundaries.md` — negative constraints and exceptions",
     ]
     if ctx.coordination_complexity >= 2:
-        key_files.insert(1, "- `CONTRACTS.md` — shared interface definitions")
+        key_files.insert(1, "- `.orchestrator/contracts.md` — shared interface definitions")
     key_files_str = "\n".join(key_files)
 
     # Quick rules
