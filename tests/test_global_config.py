@@ -97,24 +97,35 @@ class TestLocalConfigHelpers:
         assert _read_local_provider(tmp_path) is None
 
     def test_read_returns_none_when_no_dispatcher(self, tmp_path):
+        # Legacy path — _read_local_provider checks both new and old
         (tmp_path / CONFIG_FILENAME).write_text("project:\n  name: test\n")
         assert _read_local_provider(tmp_path) is None
 
     def test_read_returns_provider(self, tmp_path):
+        orch = tmp_path / ".orchestrator"
+        orch.mkdir(parents=True, exist_ok=True)
+        (orch / "config.yaml").write_text("dispatcher:\n  provider: codex_cli\n")
+        assert _read_local_provider(tmp_path) == "codex_cli"
+
+    def test_read_returns_provider_legacy(self, tmp_path):
+        """Falls back to legacy orchestrator.yaml when .orchestrator/ absent."""
         (tmp_path / CONFIG_FILENAME).write_text("dispatcher:\n  provider: codex_cli\n")
         assert _read_local_provider(tmp_path) == "codex_cli"
 
     def test_write_creates_yaml_when_missing(self, tmp_path):
         _write_local_provider(tmp_path, "codex_cli")
-        raw = yaml.safe_load((tmp_path / CONFIG_FILENAME).read_text())
+        cfg_file = tmp_path / ".orchestrator" / "config.yaml"
+        raw = yaml.safe_load(cfg_file.read_text())
         assert raw["dispatcher"]["provider"] == "codex_cli"
 
     def test_write_updates_existing_yaml(self, tmp_path):
-        (tmp_path / CONFIG_FILENAME).write_text(
+        orch = tmp_path / ".orchestrator"
+        orch.mkdir(parents=True, exist_ok=True)
+        (orch / "config.yaml").write_text(
             "project:\n  name: myapp\ndispatcher:\n  provider: claude_cli\n"
         )
         _write_local_provider(tmp_path, "codex_cli")
-        raw = yaml.safe_load((tmp_path / CONFIG_FILENAME).read_text())
+        raw = yaml.safe_load((orch / "config.yaml").read_text())
         assert raw["dispatcher"]["provider"] == "codex_cli"
         # Existing keys preserved
         assert raw["project"]["name"] == "myapp"
@@ -194,18 +205,18 @@ class TestConfigCli:
         assert "codex_cli" in result.output  # local shown
 
     def test_config_set_local_updates_yaml(self, tmp_path):
-        """--local flag writes dispatcher.provider to orchestrator.yaml."""
+        """--local flag writes dispatcher.provider to .orchestrator/config.yaml."""
         import os
 
         orig_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            (tmp_path / CONFIG_FILENAME).write_text("project:\n  name: test\nmodules: []\n")
             runner.invoke(app, ["config", "set", "--local", "provider", "codex_cli"])
         finally:
             os.chdir(orig_cwd)
 
-        raw = yaml.safe_load((tmp_path / CONFIG_FILENAME).read_text())
+        cfg_file = tmp_path / ".orchestrator" / "config.yaml"
+        raw = yaml.safe_load(cfg_file.read_text())
         assert raw["dispatcher"]["provider"] == "codex_cli"
 
 

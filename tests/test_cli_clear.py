@@ -96,7 +96,7 @@ def _setup_legacy_project(tmp_path: Path) -> Path:
         mod_dir = tmp_path / mod
         mod_dir.mkdir(exist_ok=True)
         (mod_dir / "STATUS.md").write_text(f"# {mod} Status\n")
-        (mod_dir / "CLAUDE.md").write_text(f"# {mod} CLAUDE.md\n")
+        (mod_dir / "CLAUDE.md").write_text(f"# {mod.title()} Agent\n\nPython module.\n")
 
     return tmp_path
 

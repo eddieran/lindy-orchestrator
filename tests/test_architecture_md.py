@@ -124,7 +124,7 @@ def test_shared_definitions_when_complex():
     result = render_architecture_md(ctx)
 
     assert "## Shared Definitions" in result
-    assert "CONTRACTS.md" in result
+    assert ".orchestrator/contracts.md" in result
 
 
 def test_no_shared_definitions_when_simple():

@@ -71,7 +71,12 @@ def generate_artifacts(
             content = generate_status_md(mod.name)
             written.extend(_write_file(status_path, content, force))
 
-    # 8. Update .gitignore
+    # 8. Runtime directories
+    (orch_dir / "logs").mkdir(parents=True, exist_ok=True)
+    (orch_dir / "sessions").mkdir(parents=True, exist_ok=True)
+    (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
+
+    # 9. Update .gitignore
     _update_gitignore(output_dir)
 
     return written

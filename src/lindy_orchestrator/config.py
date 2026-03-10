@@ -155,6 +155,10 @@ class OrchestratorConfig(BaseModel):
 
     def status_path(self, name: str) -> Path:
         mod = self.get_module(name)
+        # Prefer new .orchestrator/ layout, fall back to legacy per-module path
+        new_path = (self._config_dir / ORCH_DIR / "status" / f"{mod.name}.md").resolve()
+        if new_path.exists():
+            return new_path
         return (self._config_dir / mod.path / mod.status_md).resolve()
 
     def qa_module(self) -> ModuleConfig | None:

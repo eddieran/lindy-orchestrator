@@ -153,7 +153,7 @@ class TestContractCompliance:
         cfg = _make_config(tmp_path)
         findings = _check_contract_compliance(cfg)
         assert len(findings) == 1
-        assert "no CONTRACTS.md" in findings[0].description
+        assert "no .orchestrator/contracts.md" in findings[0].description
 
     def test_missing_section(self, tmp_path: Path):
         contracts = tmp_path / ".orchestrator" / "contracts.md"
