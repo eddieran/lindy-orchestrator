@@ -73,16 +73,16 @@ jobs:
           echo "✓ Unknown key correctly rejected"
 
       # -----------------------------------------------------------------------
-      # 4. Project-local config: set --local → verify orchestrator.yaml
+      # 4. Project-local config: set --local → verify .orchestrator/config.yaml
       # -----------------------------------------------------------------------
-      - name: Set local provider (creates orchestrator.yaml)
+      - name: Set local provider (creates .orchestrator/config.yaml)
         working-directory: /tmp
         run: |
           mkdir -p localtest && cd localtest
           lindy-orchestrate config set --local provider codex_cli
-          test -f orchestrator.yaml
-          grep -q "codex_cli" orchestrator.yaml
-          echo "✓ orchestrator.yaml created with codex_cli"
+          test -f .orchestrator/config.yaml
+          grep -q "codex_cli" .orchestrator/config.yaml
+          echo "✓ .orchestrator/config.yaml created with codex_cli"
 
       - name: Local provider preserved after global change
         working-directory: /tmp/localtest
@@ -96,16 +96,17 @@ jobs:
         working-directory: /tmp/localtest
         run: |
           lindy-orchestrate config set --local provider claude_cli
-          grep -q "claude_cli" orchestrator.yaml
+          grep -q "claude_cli" .orchestrator/config.yaml
           echo "✓ Local provider updated to claude_cli"
 
       # -----------------------------------------------------------------------
-      # 5. Existing orchestrator.yaml: local set preserves other keys
+      # 5. Existing .orchestrator/config.yaml: local set preserves other keys
       # -----------------------------------------------------------------------
       - name: Existing yaml keys preserved on local set
         run: |
           TMPDIR=$(mktemp -d)
-          cat > "$TMPDIR/orchestrator.yaml" <<'YAML'
+          mkdir -p "$TMPDIR/.orchestrator"
+          cat > "$TMPDIR/.orchestrator/config.yaml" <<'YAML'
           project:
             name: myapp
           modules: []
@@ -114,7 +115,7 @@ jobs:
           lindy-orchestrate config set --local provider codex_cli
           python3 -c "
           import yaml
-          d = yaml.safe_load(open('orchestrator.yaml'))
+          d = yaml.safe_load(open('.orchestrator/config.yaml'))
           assert d['project']['name'] == 'myapp', 'project.name lost!'
           assert d['dispatcher']['provider'] == 'codex_cli', 'provider not set!'
           print('✓ Existing keys preserved')
@@ -126,7 +127,8 @@ jobs:
       - name: Global config applied to project without explicit provider
         run: |
           TMPDIR=$(mktemp -d)
-          cat > "$TMPDIR/orchestrator.yaml" <<'YAML'
+          mkdir -p "$TMPDIR/.orchestrator"
+          cat > "$TMPDIR/.orchestrator/config.yaml" <<'YAML'
           project:
             name: noconfig
           modules: []
@@ -136,7 +138,7 @@ jobs:
           import os, sys
           sys.path.insert(0, 'src')
           from lindy_orchestrator.config import load_config
-          cfg = load_config('$TMPDIR/orchestrator.yaml')
+          cfg = load_config('$TMPDIR/.orchestrator/config.yaml')
           assert cfg.dispatcher.provider == 'codex_cli', f'Expected codex_cli, got {cfg.dispatcher.provider}'
           print('✓ Global config (codex_cli) applied to project yaml')
           "

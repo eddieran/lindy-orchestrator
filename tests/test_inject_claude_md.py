@@ -150,10 +150,7 @@ class TestInjectStatusContent:
         status_dir = tmp_path / ".orchestrator" / "status"
         status_dir.mkdir(parents=True, exist_ok=True)
         (status_dir / "backend.md").write_text(
-            "# Backend Status\n\n"
-            "## Meta\n"
-            "| Key | Value |\n"
-            "| overall_health | GREEN |\n"
+            "# Backend Status\n\n## Meta\n| Key | Value |\n| overall_health | GREEN |\n"
         )
 
         task = _make_task(module="backend", prompt="Original prompt")

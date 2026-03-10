@@ -30,18 +30,23 @@ from lindy_orchestrator.models import DiscoveryContext, ModuleProfile
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _minimal_config(tmp_path: Path) -> OrchestratorConfig:
     """Create a minimal config with .orchestrator/config.yaml."""
     orch = tmp_path / ORCH_DIR
     orch.mkdir(parents=True, exist_ok=True)
     cfg_file = orch / "config.yaml"
-    cfg_file.write_text(yaml.dump({
-        "project": {"name": "pathtest"},
-        "modules": [
-            {"name": "backend", "path": "backend/"},
-            {"name": "frontend", "path": "frontend/"},
-        ],
-    }))
+    cfg_file.write_text(
+        yaml.dump(
+            {
+                "project": {"name": "pathtest"},
+                "modules": [
+                    {"name": "backend", "path": "backend/"},
+                    {"name": "frontend", "path": "frontend/"},
+                ],
+            }
+        )
+    )
     (tmp_path / "backend").mkdir(exist_ok=True)
     (tmp_path / "frontend").mkdir(exist_ok=True)
     return load_config(cfg_file)
@@ -140,9 +145,7 @@ class TestGeneratorOutputPaths:
 
         for path in written:
             rel = path.relative_to(tmp_path)
-            assert str(rel).startswith(ORCH_DIR), (
-                f"Artifact {rel} written outside .orchestrator/"
-            )
+            assert str(rel).startswith(ORCH_DIR), f"Artifact {rel} written outside .orchestrator/"
 
     def test_config_yaml_created(self, tmp_path):
         (tmp_path / "backend").mkdir()
@@ -341,18 +344,14 @@ class TestReaderPaths:
         from lindy_orchestrator.qa.layer_check import _parse_architecture_layers
 
         # Should NOT find anything at old location
-        (tmp_path / "ARCHITECTURE.md").write_text(
-            "- **backend/**: models → services → routes"
-        )
+        (tmp_path / "ARCHITECTURE.md").write_text("- **backend/**: models → services → routes")
         result = _parse_architecture_layers(tmp_path, "backend")
         assert result is None  # old location ignored
 
         # Should find at new location
         orch = tmp_path / ORCH_DIR
         orch.mkdir(parents=True, exist_ok=True)
-        (orch / "architecture.md").write_text(
-            "- **backend/**: models → services → routes"
-        )
+        (orch / "architecture.md").write_text("- **backend/**: models → services → routes")
         result = _parse_architecture_layers(tmp_path, "backend")
         assert result is not None
         assert result.layers == ["models", "services", "routes"]

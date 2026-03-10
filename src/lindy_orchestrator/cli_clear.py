@@ -41,7 +41,11 @@ def _clean_gitignore(cwd: Path) -> bool:
         return False
     original = gitignore.read_text(encoding="utf-8")
     lines = original.splitlines(keepends=True)
-    filtered = [ln for ln in lines if ".orchestrator" not in ln and "orchestrator" not in ln.lower().split("#")[0]]
+    filtered = [
+        ln
+        for ln in lines
+        if ".orchestrator" not in ln and "orchestrator" not in ln.lower().split("#")[0]
+    ]
     new_text = "".join(filtered)
     if new_text == original:
         return False

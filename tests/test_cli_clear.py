@@ -63,10 +63,7 @@ def _setup_orchestrated_project(tmp_path: Path) -> Path:
 
     # .gitignore with orchestrator entries
     (tmp_path / ".gitignore").write_text(
-        "node_modules/\n"
-        ".orchestrator/logs/\n"
-        ".orchestrator/sessions/\n"
-        "*.pyc\n"
+        "node_modules/\n.orchestrator/logs/\n.orchestrator/sessions/\n*.pyc\n"
     )
 
     return tmp_path
@@ -80,8 +77,7 @@ def _setup_legacy_project(tmp_path: Path) -> Path:
     (tmp_path / "CONTRACTS.md").write_text("# Contracts\n")
     # Root CLAUDE.md with orchestrator marker
     (tmp_path / "CLAUDE.md").write_text(
-        "# lindy-orchestrator — Project Orchestrator\n\n"
-        "> You coordinate modules.\n"
+        "# lindy-orchestrator — Project Orchestrator\n\n> You coordinate modules.\n"
     )
 
     # Legacy docs

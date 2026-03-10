@@ -192,7 +192,9 @@ class TestE2EValidate:
         }
         (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
         (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
-        result = runner.invoke(app, ["validate", "-c", str(tmp_path / ".orchestrator" / "config.yaml")])
+        result = runner.invoke(
+            app, ["validate", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code != 0
         assert "Module path missing" in result.output
 
@@ -362,7 +364,9 @@ class TestE2EEdgeCases:
 
     def test_empty_project_dir_validate(self, tmp_path):
         """Validate on an empty dir with no config should fail."""
-        result = runner.invoke(app, ["validate", "-c", str(tmp_path / ".orchestrator" / "config.yaml")])
+        result = runner.invoke(
+            app, ["validate", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code != 0
 
     def test_no_args_shows_help(self):
@@ -455,7 +459,9 @@ class TestE2EIssues:
         ]
         mock_create.return_value = mock_tracker
 
-        result = runner.invoke(app, ["issues", "-c", str(tmp_path / ".orchestrator" / "config.yaml")])
+        result = runner.invoke(
+            app, ["issues", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code == 0
         assert "#42" in result.output
         assert "Fix bug" in result.output
@@ -479,7 +485,9 @@ class TestE2EIssues:
         ]
         mock_create.return_value = mock_tracker
 
-        result = runner.invoke(app, ["issues", "-c", str(tmp_path / ".orchestrator" / "config.yaml"), "--json"])
+        result = runner.invoke(
+            app, ["issues", "-c", str(tmp_path / ".orchestrator" / "config.yaml"), "--json"]
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert len(data) == 1

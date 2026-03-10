@@ -291,7 +291,6 @@ def _dispatch_loop(
             inject_status_content(task, config, progress)
             inject_claude_md(task, config, progress)
 
-
         # Inject pending mailbox messages if enabled
         inject_mailbox_messages(task, config, progress)
 

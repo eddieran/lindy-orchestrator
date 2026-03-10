@@ -206,7 +206,9 @@ class TestE2EMailbox:
         (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
         (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
         (tmp_path / "x").mkdir()
-        result = runner.invoke(app, ["mailbox", "-c", str(tmp_path / ".orchestrator" / "config.yaml")])
+        result = runner.invoke(
+            app, ["mailbox", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
+        )
         assert "disabled" in result.output.lower()
 
     def test_mailbox_summary_with_messages(self, project_dir, cfg_path):

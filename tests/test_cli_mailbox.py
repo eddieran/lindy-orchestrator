@@ -41,12 +41,16 @@ def _setup_project(tmp_path: Path, mailbox_enabled: bool = True) -> Path:
 class TestMailboxCLI:
     def test_mailbox_disabled_warning(self, tmp_path):
         project = _setup_project(tmp_path, mailbox_enabled=False)
-        result = runner.invoke(app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")])
+        result = runner.invoke(
+            app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")]
+        )
         assert "disabled" in result.output.lower()
 
     def test_mailbox_summary_empty(self, tmp_path):
         project = _setup_project(tmp_path)
-        result = runner.invoke(app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")])
+        result = runner.invoke(
+            app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code == 0
         assert "no pending messages" in result.output.lower() or "Mailbox Summary" in result.output
 
@@ -149,6 +153,8 @@ class TestMailboxCLI:
         mb.send(Message(from_module="a", to_module="backend", content="msg1"))
         mb.send(Message(from_module="b", to_module="backend", content="msg2"))
 
-        result = runner.invoke(app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")])
+        result = runner.invoke(
+            app, ["mailbox", "-c", str(project / ".orchestrator" / "config.yaml")]
+        )
         assert result.exit_code == 0
         assert "2 pending" in result.output

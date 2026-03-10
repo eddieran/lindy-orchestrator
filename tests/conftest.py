@@ -56,9 +56,7 @@ def project_dir(tmp_path: Path) -> Path:
 
     for mod in ("backend", "frontend"):
         (tmp_path / mod).mkdir(exist_ok=True)
-        (orch_dir / "status" / f"{mod}.md").write_text(
-            MINIMAL_STATUS_MD.format(name=mod)
-        )
+        (orch_dir / "status" / f"{mod}.md").write_text(MINIMAL_STATUS_MD.format(name=mod))
 
     (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
     (orch_dir / "logs").mkdir(parents=True, exist_ok=True)

@@ -27,7 +27,6 @@ __all__ = [
 ]
 
 
-
 @dataclass
 class ExecutionProgress:
     """Tracks overall execution progress."""
@@ -227,7 +226,6 @@ def inject_status_content(
     progress(f"    [dim]Injected STATUS.md for {task.module}[/]")
 
 
-
 def inject_branch_delivery(
     task: TaskItem,
     branch_name: str,
@@ -260,7 +258,6 @@ def inject_branch_delivery(
             f"3. `git push -u origin {branch_name}` (push to remote)\n"
             f"Do NOT skip the push step — CI verification depends on it.\n"
         )
-
 
 
 def _autofill_ci_params(

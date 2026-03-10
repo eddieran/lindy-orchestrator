@@ -265,9 +265,7 @@ def _detect_entry_points(path: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _read_existing_docs(
-    path: Path, root: Path | None = None, module_name: str = ""
-) -> str:
+def _read_existing_docs(path: Path, root: Path | None = None, module_name: str = "") -> str:
     """Read existing documentation files (README, .orchestrator/claude/)."""
     docs = []
 
