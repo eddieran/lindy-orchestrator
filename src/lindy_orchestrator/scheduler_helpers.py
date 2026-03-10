@@ -164,6 +164,10 @@ def inject_qa_gates(
     progress: Callable[[str], None],
 ) -> None:
     """Auto-inject standard QA gates (structural, layer, command) into a task."""
+    if task.skip_qa:
+        progress("    [dim]QA gates skipped (skip_qa=true)[/]")
+        return
+
     # Auto-inject structural check gate
     has_structural = any(q.gate == "structural_check" for q in task.qa_checks)
     if not has_structural:

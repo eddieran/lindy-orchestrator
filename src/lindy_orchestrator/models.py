@@ -123,6 +123,7 @@ class TaskItem:
     feedback_history: list[dict[str, Any]] = field(default_factory=list)
     started_at: str | None = None
     completed_at: str | None = None
+    skip_qa: bool = False  # skip auto-injected QA gates (for review-only tasks)
     timeout_seconds: int | None = None  # per-task override
     stall_seconds: int | None = None  # per-task stall override
     cost_usd: float = 0.0  # actual cost from dispatch provider
@@ -226,6 +227,7 @@ def plan_from_dict(data: dict) -> TaskPlan:
                 started_at=t.get("started_at"),
                 completed_at=t.get("completed_at"),
                 timeout_seconds=t.get("timeout_seconds"),
+                skip_qa=t.get("skip_qa", False),
                 stall_seconds=t.get("stall_seconds"),
                 cost_usd=t.get("cost_usd", 0.0),
             )

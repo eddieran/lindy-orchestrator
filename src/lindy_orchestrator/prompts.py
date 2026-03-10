@@ -37,7 +37,8 @@ Output ONLY valid JSON (no markdown, no explanation) in this exact format:
       "depends_on": [],
       "qa_checks": [
         {{"gate": "<gate-name>", "params": {{}}}}
-      ]
+      ],
+      "skip_qa": false
     }}
   ]
 }}
@@ -79,6 +80,9 @@ Available gates:
 {available_gates}
 
 Use ONE primary QA check per task. For code changes with CI configured, prefer `ci_check`.
+
+### Skip QA
+Set `"skip_qa": true` for review-only or analysis tasks that produce reports but do NOT modify code. This skips auto-injected QA gates (structural_check, command_check, etc.) that would fail on non-code-change tasks.
 
 Today's date: {date}
 """
