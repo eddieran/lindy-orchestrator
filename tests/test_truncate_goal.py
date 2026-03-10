@@ -182,9 +182,7 @@ class TestDashboardVerbosePanel:
         dash = Dashboard(plan, hooks, console=console, verbose=True)
 
         # Simulate a task start + heartbeat
-        dash._on_task_started(
-            Event(type=EventType.TASK_STARTED, task_id=1, module="mod")
-        )
+        dash._on_task_started(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
         dash._on_heartbeat(
             Event(
                 type=EventType.TASK_HEARTBEAT,
@@ -206,9 +204,7 @@ class TestDashboardVerbosePanel:
         console = _make_console(is_terminal=False)
         dash = Dashboard(plan, hooks, console=console, verbose=False)
 
-        dash._on_task_started(
-            Event(type=EventType.TASK_STARTED, task_id=1, module="mod")
-        )
+        dash._on_task_started(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
         # Detail tracking still happens but panel shouldn't include it
         panel = dash._build_panel()
         # The panel should still render without error

@@ -116,9 +116,7 @@ class Dashboard:
         with self._lock:
             if event.task_id is not None:
                 self._annotations[event.task_id] = "starting\u2026"
-                self._task_details[event.task_id] = _TaskDetail(
-                    started_at=time.monotonic()
-                )
+                self._task_details[event.task_id] = _TaskDetail(started_at=time.monotonic())
         self._refresh()
 
     def _on_task_completed(self, event: Event) -> None:
@@ -216,9 +214,7 @@ class Dashboard:
 
     def _build_detail_section(self, task_details: dict[int, _TaskDetail]) -> Text | None:
         """Build a per-task detail section for running tasks."""
-        running = [
-            t for t in self._plan.tasks if t.status == TaskStatus.IN_PROGRESS
-        ]
+        running = [t for t in self._plan.tasks if t.status == TaskStatus.IN_PROGRESS]
         if not running:
             return None
 
