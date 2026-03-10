@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import threading
+from dataclasses import dataclass, field
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -18,6 +19,25 @@ from rich.text import Text
 from .dag import STATUS_ICONS, render_dag
 from .hooks import Event, EventType, HookRegistry
 from .models import TaskPlan, TaskStatus
+
+
+@dataclass
+class _TaskDetail:
+    """Per-task runtime detail for the verbose dashboard view."""
+
+    tool_trail: list[str] = field(default_factory=list)
+    reasoning: str = ""
+    event_count: int = 0
+    started_at: float = 0.0
+
+    def add_tool(self, name: str) -> None:
+        self.tool_trail.append(name)
+        if len(self.tool_trail) > 5:
+            self.tool_trail = self.tool_trail[-5:]
+
+    def set_reasoning(self, text: str) -> None:
+        collapsed = " ".join(text.split())
+        self.reasoning = collapsed[:80]
 
 
 class Dashboard:
@@ -48,6 +68,8 @@ class Dashboard:
 
         # Per-task annotation strings (shown when verbose)
         self._annotations: dict[int, str] = {}
+        # Per-task runtime details (shown when verbose)
+        self._task_details: dict[int, _TaskDetail] = {}
 
     # -- public API -----------------------------------------------------------
 
@@ -94,6 +116,9 @@ class Dashboard:
         with self._lock:
             if event.task_id is not None:
                 self._annotations[event.task_id] = "starting\u2026"
+                self._task_details[event.task_id] = _TaskDetail(
+                    started_at=time.monotonic()
+                )
         self._refresh()
 
     def _on_task_completed(self, event: Event) -> None:
@@ -128,6 +153,14 @@ class Dashboard:
                 tool = event.data.get("tool", "")
                 if tool:
                     self._annotations[event.task_id] = f"tool: {tool}"
+                detail = self._task_details.get(event.task_id)
+                if detail:
+                    if tool:
+                        detail.add_tool(tool)
+                    detail.event_count = event.data.get("event_count", detail.event_count)
+                    reasoning = event.data.get("reasoning", "")
+                    if reasoning:
+                        detail.set_reasoning(reasoning)
         self._refresh()
 
     def _on_qa_event(self, event: Event) -> None:
@@ -153,6 +186,7 @@ class Dashboard:
         """Build the full dashboard panel."""
         with self._lock:
             annotations = dict(self._annotations)
+            task_details = dict(self._task_details)
 
         dag_text = render_dag(
             self._plan,
@@ -162,6 +196,12 @@ class Dashboard:
         summary = self._build_summary()
 
         parts = [dag_text, Text(""), summary]
+
+        if self._verbose and not final:
+            detail_section = self._build_detail_section(task_details)
+            if detail_section:
+                parts.append(Text(""))
+                parts.append(detail_section)
 
         title = "Execution Complete" if final else "Executing"
         border = "green" if final and not self._plan.has_failures() else "cyan"
@@ -173,6 +213,47 @@ class Dashboard:
             title=title,
             border_style=border,
         )
+
+    def _build_detail_section(self, task_details: dict[int, _TaskDetail]) -> Text | None:
+        """Build a per-task detail section for running tasks."""
+        running = [
+            t for t in self._plan.tasks if t.status == TaskStatus.IN_PROGRESS
+        ]
+        if not running:
+            return None
+
+        now = time.monotonic()
+        text = Text()
+        text.append("  Active tasks:\n", style="bold dim")
+
+        for task in running:
+            detail = task_details.get(task.id)
+            if not detail:
+                continue
+
+            elapsed = now - detail.started_at
+            mins, secs = divmod(int(elapsed), 60)
+            elapsed_str = f"{mins}m {secs:02d}s"
+
+            text.append(f"  {STATUS_ICONS[TaskStatus.IN_PROGRESS]} ", style="bold blue")
+            text.append(f"task-{task.id}", style="bold")
+            text.append(f" [{elapsed_str}] ", style="cyan")
+
+            if detail.tool_trail:
+                trail = " \u2192 ".join(detail.tool_trail)
+                text.append(trail, style="dim")
+
+            text.append(f" ({detail.event_count} events)", style="dim")
+
+            if detail.reasoning:
+                snippet = detail.reasoning[:60]
+                if len(detail.reasoning) > 60:
+                    snippet += "\u2026"
+                text.append(f' "{snippet}"', style="italic dim")
+
+            text.append("\n")
+
+        return text
 
     def _build_summary(self) -> Text:
         """Build the summary bar with task counts and elapsed time."""
