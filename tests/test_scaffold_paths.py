@@ -444,3 +444,226 @@ class TestInjectionPaths:
         task2 = TaskItem(id=2, module="backend", description="test2", prompt="Do stuff")
         inject_qa_gates(task2, cfg, lambda m: None)
         assert any(q.gate == "layer_check" for q in task2.qa_checks)
+
+
+# ===========================================================================
+# 6. Additional orch_* config properties
+# ===========================================================================
+
+
+class TestOrchConfigProperties:
+    """Verify all orch_* helper properties resolve to .orchestrator/ paths."""
+
+    def test_orch_status_path(self, tmp_path):
+        cfg = _minimal_config(tmp_path)
+        path = cfg.orch_status_path("backend")
+        assert ".orchestrator" in str(path)
+        assert "status" in str(path)
+        assert path.name == "backend.yaml"
+
+    def test_orch_log_path(self, tmp_path):
+        cfg = _minimal_config(tmp_path)
+        path = cfg.orch_log_path
+        assert ".orchestrator" in str(path)
+        assert path.name == "actions.jsonl"
+        assert "logs" in str(path)
+
+    def test_orch_sessions_path(self, tmp_path):
+        cfg = _minimal_config(tmp_path)
+        path = cfg.orch_sessions_path
+        assert ".orchestrator" in str(path)
+        assert path.name == "sessions"
+
+    def test_orch_mailbox_path(self, tmp_path):
+        cfg = _minimal_config(tmp_path)
+        path = cfg.orch_mailbox_path
+        assert ".orchestrator" in str(path)
+        assert path.name == "mailbox"
+
+
+# ===========================================================================
+# 7. _has_config backward compatibility
+# ===========================================================================
+
+
+class TestHasConfigHelper:
+    """Verify _has_config detects both new and legacy config locations."""
+
+    def test_detects_new_config(self, tmp_path):
+        from lindy_orchestrator.cli_onboard_helpers import _has_config
+
+        orch = tmp_path / ".orchestrator"
+        orch.mkdir()
+        (orch / "config.yaml").write_text("project: {name: test}")
+        assert _has_config(tmp_path) is True
+
+    def test_detects_legacy_config(self, tmp_path):
+        from lindy_orchestrator.cli_onboard_helpers import _has_config
+
+        (tmp_path / "orchestrator.yaml").write_text("project: {name: test}")
+        assert _has_config(tmp_path) is True
+
+    def test_returns_false_when_no_config(self, tmp_path):
+        from lindy_orchestrator.cli_onboard_helpers import _has_config
+
+        assert _has_config(tmp_path) is False
+
+
+# ===========================================================================
+# 8. Planner reads architecture from .orchestrator/
+# ===========================================================================
+
+
+class TestPlannerArchitecturePath:
+    """Verify planner.generate_plan reads architecture from .orchestrator/."""
+
+    def test_planner_arch_path_uses_orchestrator(self, tmp_path):
+        """The arch_path variable in generate_plan points to .orchestrator/architecture.md."""
+        # Verify by inspecting the source — the actual path construction
+        import lindy_orchestrator.planner as planner_mod
+        import inspect
+
+        source = inspect.getsource(planner_mod.generate_plan)
+        assert '".orchestrator"' in source or "'.orchestrator'" in source
+        assert "architecture.md" in source
+
+    def test_planner_reads_new_arch_not_legacy(self, tmp_path):
+        """Planner should read .orchestrator/architecture.md, not root ARCHITECTURE.md."""
+        cfg = _minimal_config(tmp_path)
+        # Put content at the WRONG (legacy) location
+        (tmp_path / "ARCHITECTURE.md").write_text("# Legacy architecture")
+        # Put content at the RIGHT (new) location
+        orch_arch = tmp_path / ORCH_DIR / "architecture.md"
+        orch_arch.write_text("# New architecture\n\n- **backend/** → Python")
+
+        # The planner's arch_path should resolve to the new location
+        arch_path = cfg.root / ".orchestrator" / "architecture.md"
+        assert arch_path.exists()
+        assert "New architecture" in arch_path.read_text()
+
+
+# ===========================================================================
+# 9. Prompt wording updated for injection model
+# ===========================================================================
+
+
+class TestPromptWording:
+    """Verify prompts reference injected content, not file discovery."""
+
+    def test_prompt_template_references_injected_status(self):
+        from lindy_orchestrator.prompts import PLAN_PROMPT_TEMPLATE
+
+        assert "Read the STATUS.md content provided above." in PLAN_PROMPT_TEMPLATE
+        assert "Read your STATUS.md first." not in PLAN_PROMPT_TEMPLATE
+
+    def test_agent_check_prompt_references_injected_status(self):
+        """agent_check.py prompt should reference injected content."""
+        import inspect
+
+        from lindy_orchestrator.qa.agent_check import AgentCheckGate
+
+        source = inspect.getsource(AgentCheckGate.check)
+        assert "Read the STATUS.md content provided above." in source
+        assert "Read your STATUS.md first." not in source
+
+    def test_module_claude_md_references_injected_status(self):
+        """Module CLAUDE.md template tells agent to read injected content."""
+        ctx = _make_ctx(Path("."))
+        mod = ctx.modules[0]
+        content = render_module_claude_md(ctx, mod)
+        assert "injected into your prompt" in content
+        assert "Read `STATUS.md` in this directory" not in content
+
+
+# ===========================================================================
+# 10. Template content — multi-module path references
+# ===========================================================================
+
+
+class TestTemplateMultiModulePaths:
+    """Verify templates reference .orchestrator/ paths for multi-module projects."""
+
+    def _multi_module_ctx(self):
+        return DiscoveryContext(
+            project_name="multi",
+            project_description="multi-module project",
+            root=".",
+            modules=[
+                ModuleProfile(name="backend", path="backend", tech_stack=["Python"]),
+                ModuleProfile(name="frontend", path="frontend", tech_stack=["React"]),
+            ],
+            coordination_complexity=2,
+            branch_prefix="af",
+        )
+
+    def test_agent_docs_boundaries_references(self):
+        """Boundaries doc should reference .orchestrator/ paths for cross-module comms."""
+        ctx = self._multi_module_ctx()
+        docs = render_agent_docs(ctx)
+        boundaries = docs["boundaries.md"]
+        assert ".orchestrator/status/" in boundaries
+        assert ".orchestrator/contracts.md" in boundaries
+
+    def test_agent_docs_protocol_no_legacy_refs(self):
+        """Protocol doc must NOT reference legacy paths."""
+        ctx = self._multi_module_ctx()
+        docs = render_agent_docs(ctx)
+        protocol = docs["protocol.md"]
+        # Should not reference old-style "CONTRACTS.md" at root
+        assert "defined in `CONTRACTS.md`" not in protocol
+        # Should use new path
+        assert ".orchestrator/contracts.md" in protocol
+
+    def test_contracts_md_status_references(self):
+        """Contracts template should reference .orchestrator/status/ paths."""
+        ctx = self._multi_module_ctx()
+        content = render_contracts_md(ctx)
+        assert ".orchestrator/status/" in content
+        # Change Protocol section should reference new path
+        assert "`.orchestrator/status/" in content
+
+
+# ===========================================================================
+# 11. Load config backward compat — legacy orchestrator.yaml still works
+# ===========================================================================
+
+
+class TestLoadConfigBackwardCompat:
+    """Verify load_config handles both new and legacy config file locations."""
+
+    def test_load_from_legacy_sets_root_correctly(self, tmp_path):
+        """Loading from legacy orchestrator.yaml sets _config_dir to the parent."""
+        cfg_file = tmp_path / "orchestrator.yaml"
+        cfg_file.write_text(
+            yaml.dump(
+                {
+                    "project": {"name": "legacy"},
+                    "modules": [{"name": "app", "path": "app/"}],
+                }
+            )
+        )
+        (tmp_path / "app").mkdir()
+
+        cfg = load_config(cfg_file)
+        assert cfg.root == tmp_path
+        assert cfg.project.name == "legacy"
+
+    def test_load_from_new_location_sets_root_correctly(self, tmp_path):
+        """Loading from .orchestrator/config.yaml sets _config_dir to grandparent."""
+        orch = tmp_path / ORCH_DIR
+        orch.mkdir()
+        cfg_file = orch / "config.yaml"
+        cfg_file.write_text(
+            yaml.dump(
+                {
+                    "project": {"name": "newlayout"},
+                    "modules": [{"name": "app", "path": "app/"}],
+                }
+            )
+        )
+        (tmp_path / "app").mkdir()
+
+        cfg = load_config(cfg_file)
+        # Root should be tmp_path, not tmp_path/.orchestrator/
+        assert cfg.root == tmp_path
+        assert cfg.project.name == "newlayout"

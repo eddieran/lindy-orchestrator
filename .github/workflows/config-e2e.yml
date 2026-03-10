@@ -144,3 +144,46 @@ jobs:
           "
           # Reset
           lindy-orchestrate config set provider claude_cli
+
+      # -----------------------------------------------------------------------
+      # 7. Backward compat: legacy orchestrator.yaml still loads correctly
+      # -----------------------------------------------------------------------
+      - name: Legacy orchestrator.yaml still loads
+        run: |
+          TMPDIR=$(mktemp -d)
+          cat > "$TMPDIR/orchestrator.yaml" <<'YAML'
+          project:
+            name: legacy-project
+          modules: []
+          YAML
+          python3 -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from lindy_orchestrator.config import load_config
+          cfg = load_config('$TMPDIR/orchestrator.yaml')
+          assert cfg.project.name == 'legacy-project', f'Expected legacy-project, got {cfg.project.name}'
+          print('✓ Legacy orchestrator.yaml loads correctly')
+          "
+
+      - name: find_config prefers .orchestrator/ over legacy
+        run: |
+          TMPDIR=$(mktemp -d)
+          cat > "$TMPDIR/orchestrator.yaml" <<'YAML'
+          project:
+            name: legacy
+          YAML
+          mkdir -p "$TMPDIR/.orchestrator"
+          cat > "$TMPDIR/.orchestrator/config.yaml" <<'YAML'
+          project:
+            name: new-layout
+          YAML
+          python3 -c "
+          import sys
+          sys.path.insert(0, 'src')
+          from lindy_orchestrator.config import find_config
+          from pathlib import Path
+          found = find_config(Path('$TMPDIR'))
+          assert found is not None
+          assert '.orchestrator' in str(found), f'Expected .orchestrator path, got {found}'
+          print('✓ find_config prefers .orchestrator/config.yaml over legacy')
+          "
