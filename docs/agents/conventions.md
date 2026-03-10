@@ -61,3 +61,4 @@
 - Branch naming: `{branch_prefix}/task-{id}` (default prefix: `af`)
 - Agents must create, commit to, and push their task branch
 - Never force-push task branches
+- Parallel tasks use git worktrees for isolation (`worktree.py`)

@@ -94,7 +94,7 @@ src/lindy_orchestrator/
     scheduler.py                    # DAG-based parallel task execution
     scheduler_helpers.py            # Scheduler helper functions
     session.py                      # Session state persistence
-    worktree.py                     # Git worktree utilities
+    worktree.py                     # Git worktree utilities for parallel isolation
     discovery/
         __init__.py
         analyzer.py                 # Static project analyzer

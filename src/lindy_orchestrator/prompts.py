@@ -59,7 +59,7 @@ Each task prompt SHOULD be a structured JSON object (preferred) or a plain strin
 ```
 
 **Rules for prompts:**
-- Start every prompt with "Read your STATUS.md first." (if the module has one)
+- Start every prompt with "Read the STATUS.md content provided above." (if the module has one)
 - Agents must EXECUTE, not just plan. If a task requires running tests, say: "Run the tests and verify they pass."
 - Keep prompts concise. The agent has full codebase access — don't repeat file contents
 - Include at least one verification step so the agent can self-check before committing
