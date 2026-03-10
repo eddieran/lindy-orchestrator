@@ -13,6 +13,25 @@ from rich.text import Text
 
 from lindy_orchestrator.models import TaskItem, TaskPlan, TaskStatus
 
+# -- text helpers -------------------------------------------------------------
+
+
+def truncate_goal(text: str, max_chars: int = 72) -> str:
+    """Collapse whitespace and truncate *text* with head…tail ellipsis.
+
+    If the collapsed text fits within *max_chars*, it is returned as-is.
+    Otherwise, the first 60 % and last 30 % are kept with " … " in between.
+    """
+    import re
+
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    if len(collapsed) <= max_chars:
+        return collapsed
+    head_len = int(max_chars * 0.6)
+    tail_len = int(max_chars * 0.3)
+    return collapsed[:head_len] + " \u2026 " + collapsed[-tail_len:]
+
+
 # -- status display -----------------------------------------------------------
 
 STATUS_ICONS: dict[TaskStatus, str] = {
@@ -219,7 +238,7 @@ def render_dag(
         text.append("(empty plan)", style="dim")
         return text
 
-    text.append(f"DAG: {plan.goal}\n", style="bold")
+    text.append(f"DAG: {truncate_goal(plan.goal)}\n", style="bold")
 
     for prefix, connector, node, ann, style, _task in _walk_tree(plan.tasks, annotations, verbose):
         text.append(prefix, style="dim")
@@ -249,7 +268,7 @@ def render_dag_ascii(
     if not plan.tasks:
         return "(empty plan)"
 
-    lines: list[str] = [f"DAG: {plan.goal}"]
+    lines: list[str] = [f"DAG: {truncate_goal(plan.goal)}"]
 
     for prefix, connector, node, ann, _style, _task in _walk_tree(plan.tasks, annotations, verbose):
         lines.append(_format_line(prefix, connector, node, ann))

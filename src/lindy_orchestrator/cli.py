@@ -22,6 +22,7 @@ from .cli_helpers import (
     resolve_goal,
     validate_provider,
 )
+from .dag import truncate_goal
 from .dashboard import Dashboard
 from .hooks import HookRegistry
 from .logger import ActionLogger
@@ -114,7 +115,7 @@ def run(
         plan = _plan_from_dict(plan_data)
         goal = plan.goal
         console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
-        console.print(f"Goal: [bold]{goal}[/]")
+        console.print(f"Goal: [bold]{truncate_goal(goal)}[/]")
         console.print(f"[green]Loaded plan from {plan_file}[/]\n")
     else:
         from .planner import generate_plan
@@ -122,7 +123,7 @@ def run(
         goal = _resolve_goal(goal, file)
 
         console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
-        console.print(f"Goal: [bold]{goal}[/]")
+        console.print(f"Goal: [bold]{truncate_goal(goal)}[/]")
 
     logger = ActionLogger(cfg.log_path)
     sessions = SessionManager(cfg.sessions_path)
@@ -215,7 +216,7 @@ def plan(
     cfg = _load_cfg(config)
 
     console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
-    console.print(f"Goal: [bold]{goal}[/]\n")
+    console.print(f"Goal: [bold]{truncate_goal(goal)}[/]\n")
 
     progress = PlanProgress(console=console)
     on_progress = make_on_progress(console)
@@ -266,7 +267,7 @@ def resume(
 
     console.print(f"[bold]lindy-orchestrate v{__version__}[/] — Resume")
     console.print(f"Session: [bold]{session.session_id}[/]")
-    console.print(f"Goal: {session.goal}")
+    console.print(f"Goal: {truncate_goal(session.goal)}")
     console.print(f"Status: {session.status}")
 
     if session.status == "completed":

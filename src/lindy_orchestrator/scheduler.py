@@ -250,30 +250,51 @@ def _dispatch_loop(
         # Heartbeat state for progress feedback
         _hb_count = 0
         _hb_last_tool = ""
+        _hb_recent_tools: list[str] = []
+        _hb_last_reasoning = ""
         _hb_start = time.monotonic()
         _hb_last_print = _hb_start
 
         def _on_event(event: dict) -> None:
             """Track events and emit periodic heartbeat."""
-            nonlocal _hb_count, _hb_last_tool, _hb_last_print
+            nonlocal _hb_count, _hb_last_tool, _hb_last_print, _hb_last_reasoning
             _hb_count += 1
 
             tool_name = ""
+            reasoning_text = ""
             content = event.get("message", {}).get("content", [{}])
             if isinstance(content, list):
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type", "")
+                    if block_type == "tool_use":
                         tool_name = block.get("name", "?")
                         _hb_last_tool = tool_name
+                        _hb_recent_tools.append(tool_name)
+                        if len(_hb_recent_tools) > 5:
+                            _hb_recent_tools.pop(0)
                         detail(f"      [dim]tool: {tool_name}[/]")
+                    elif block_type in ("thinking", "text"):
+                        snippet = block.get("text", "")
+                        if snippet:
+                            reasoning_text = snippet
 
-            if hooks and tool_name:
+            if reasoning_text:
+                _hb_last_reasoning = reasoning_text
+
+            if hooks and (tool_name or reasoning_text):
                 hooks.emit(
                     Event(
                         type=EventType.TASK_HEARTBEAT,
                         task_id=task.id,
                         module=task.module,
-                        data={"tool": tool_name, "event_count": _hb_count},
+                        data={
+                            "tool": tool_name,
+                            "tools": list(_hb_recent_tools),
+                            "event_count": _hb_count,
+                            "reasoning": _hb_last_reasoning[:120] if _hb_last_reasoning else "",
+                        },
                     )
                 )
 

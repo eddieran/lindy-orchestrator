@@ -13,6 +13,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from .dag import truncate_goal
 from .models import TaskItem, TaskPlan, TaskStatus
 
 
@@ -254,10 +255,10 @@ def generate_execution_summary(
 
     # Header panel
     if failed:
-        title = f"GOAL PAUSED: {plan.goal}"
+        title = f"GOAL PAUSED: {truncate_goal(plan.goal)}"
         border = "red"
     else:
-        title = f"GOAL COMPLETED: {plan.goal}"
+        title = f"GOAL COMPLETED: {truncate_goal(plan.goal)}"
         border = "green"
 
     header_lines = [
