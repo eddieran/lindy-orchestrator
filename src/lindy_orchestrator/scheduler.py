@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import signal
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +31,7 @@ from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import StructuredFeedback, build_retry_prompt, build_structured_feedback
-from .worktree import create_worktree, remove_worktree
+from .worktree import cleanup_all_worktrees, create_worktree, remove_worktree
 
 log = logging.getLogger(__name__)
 
@@ -78,86 +79,119 @@ def execute_plan(
 
     hooks.emit(Event(type=EventType.SESSION_START, data={"goal": plan.goal}))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
-        while not plan.all_terminal():
-            ready = plan.next_ready()
-            if not ready:
-                # No tasks ready but not all terminal — shouldn't happen
-                # unless there's a dependency cycle. Break to avoid infinite loop.
-                break
+    # Install signal handler so worktrees are cleaned up on Ctrl-C / SIGTERM
+    _interrupted = False
+    prev_sigint = signal.getsignal(signal.SIGINT)
+    prev_sigterm = signal.getsignal(signal.SIGTERM)
 
-            if len(ready) > 1:
-                progress(f"\n  [bold]Dispatching {len(ready)} tasks in parallel...[/]")
+    def _on_signal(signum, frame):  # type: ignore[no-untyped-def]
+        nonlocal _interrupted
+        _interrupted = True
+        log.warning("Received signal %s — will clean up worktrees", signum)
 
-            # Submit all ready tasks
-            futures: dict[concurrent.futures.Future, TaskItem] = {}
-            for task in ready:
-                task.status = TaskStatus.IN_PROGRESS
-                task.started_at = datetime.now(timezone.utc).isoformat()
-                hooks.emit(
-                    Event(
-                        type=EventType.TASK_STARTED,
-                        task_id=task.id,
-                        module=task.module,
-                        data={"description": task.description},
-                    )
-                )
-                progress(f"\n  [bold]Task {task.id}:[/] [{task.module}] {task.description}")
+    try:
+        signal.signal(signal.SIGINT, _on_signal)
+        signal.signal(signal.SIGTERM, _on_signal)
+    except (OSError, ValueError):
+        # signal handlers can only be set from the main thread
+        pass
 
-                if config.safety.dry_run:
-                    task.status = TaskStatus.COMPLETED
-                    task.result = "[DRY RUN] Skipped"
-                    wd = config.module_path(task.module)
-                    qa_list = ", ".join(q.gate for q in task.qa_checks) or "none"
-                    deps = f" (after: {task.depends_on})" if task.depends_on else ""
-                    progress(f"    [yellow]DRY RUN[/] — would dispatch to {task.module}")
-                    progress(f"      Working dir: {wd}")
-                    progress(f"      QA gates: {qa_list}")
-                    progress(f"      Dependencies: {deps or 'none'}")
-                    if task.prompt:
-                        progress(f"      Prompt preview: {task.prompt[:150]}...")
-                    continue
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
+            while not plan.all_terminal() and not _interrupted:
+                ready = plan.next_ready()
+                if not ready:
+                    break
 
-                future = pool.submit(
-                    _execute_single_task,
-                    task,
-                    config,
-                    logger,
-                    progress,
-                    detail,
-                    max_retries,
-                    hooks,
-                )
-                futures[future] = task
+                if len(ready) > 1:
+                    progress(f"\n  [bold]Dispatching {len(ready)} tasks in parallel...[/]")
 
-            # Wait for all parallel tasks to complete
-            for future in concurrent.futures.as_completed(futures):
-                task = futures[future]
-                try:
-                    dispatches = future.result()
-                    total_dispatches += dispatches
-                except Exception as e:
-                    task.status = TaskStatus.FAILED
-                    task.result = f"Unexpected error: {e}"
-                    progress(f"    [bold red]Task {task.id} ERROR[/]: {e}")
-                    logger.log_action(
-                        "task_error",
-                        details={"task_id": task.id, "error": str(e)},
-                        result="error",
-                    )
-
-                # Checkpoint after each task resolves
-                if session_mgr and session:
-                    try:
-                        session_mgr.checkpoint(session, plan_to_dict(plan))
-                        hooks.emit(
-                            Event(
-                                type=EventType.CHECKPOINT_SAVED,
-                                data={"checkpoint_count": session.checkpoint_count},
-                            )
+                futures: dict[concurrent.futures.Future, TaskItem] = {}
+                for task in ready:
+                    task.status = TaskStatus.IN_PROGRESS
+                    task.started_at = datetime.now(timezone.utc).isoformat()
+                    hooks.emit(
+                        Event(
+                            type=EventType.TASK_STARTED,
+                            task_id=task.id,
+                            module=task.module,
+                            data={"description": task.description},
                         )
-                    except Exception:
-                        log.warning("Checkpoint save failed", exc_info=True)
+                    )
+                    progress(f"\n  [bold]Task {task.id}:[/] [{task.module}] {task.description}")
+
+                    if config.safety.dry_run:
+                        task.status = TaskStatus.COMPLETED
+                        task.result = "[DRY RUN] Skipped"
+                        wd = config.module_path(task.module)
+                        qa_list = ", ".join(q.gate for q in task.qa_checks) or "none"
+                        deps = f" (after: {task.depends_on})" if task.depends_on else ""
+                        progress(f"    [yellow]DRY RUN[/] — would dispatch to {task.module}")
+                        progress(f"      Working dir: {wd}")
+                        progress(f"      QA gates: {qa_list}")
+                        progress(f"      Dependencies: {deps or 'none'}")
+                        if task.prompt:
+                            progress(f"      Prompt preview: {task.prompt[:150]}...")
+                        continue
+
+                    future = pool.submit(
+                        _execute_single_task,
+                        task,
+                        config,
+                        logger,
+                        progress,
+                        detail,
+                        max_retries,
+                        hooks,
+                    )
+                    futures[future] = task
+
+                for future in concurrent.futures.as_completed(futures):
+                    task = futures[future]
+                    try:
+                        dispatches = future.result()
+                        total_dispatches += dispatches
+                    except Exception as e:
+                        task.status = TaskStatus.FAILED
+                        task.result = f"Unexpected error: {e}"
+                        progress(f"    [bold red]Task {task.id} ERROR[/]: {e}")
+                        logger.log_action(
+                            "task_error",
+                            details={"task_id": task.id, "error": str(e)},
+                            result="error",
+                        )
+
+                    if session_mgr and session:
+                        try:
+                            session_mgr.checkpoint(session, plan_to_dict(plan))
+                            hooks.emit(
+                                Event(
+                                    type=EventType.CHECKPOINT_SAVED,
+                                    data={"checkpoint_count": session.checkpoint_count},
+                                )
+                            )
+                        except Exception:
+                            log.warning("Checkpoint save failed", exc_info=True)
+
+        if _interrupted:
+            progress("\n  [bold yellow]Interrupted — marking in-progress tasks as failed[/]")
+            for task in plan.tasks:
+                if task.status == TaskStatus.IN_PROGRESS:
+                    task.status = TaskStatus.FAILED
+                    task.result = "Interrupted by signal"
+    finally:
+        # Always clean up worktrees, even on crash / interrupt
+        try:
+            cleanup_all_worktrees(config.root)
+        except Exception:
+            log.warning("Worktree cleanup failed", exc_info=True)
+
+        # Restore original signal handlers
+        try:
+            signal.signal(signal.SIGINT, prev_sigint)
+            signal.signal(signal.SIGTERM, prev_sigterm)
+        except (OSError, ValueError):
+            pass
 
     hooks.emit(
         Event(

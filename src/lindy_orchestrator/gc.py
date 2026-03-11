@@ -1,7 +1,7 @@
 """Garbage collection — clean up entropy from agent-generated artifacts.
 
-Handles: stale branches, old sessions, log rotation, STATUS.md drift,
-orphan plan files.
+Handles: stale worktrees, stale branches, old sessions, log rotation,
+STATUS.md drift, orphan plan files.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from .config import OrchestratorConfig
+from .worktree import WORKTREES_DIR
 
 
 @dataclass
@@ -59,6 +60,9 @@ def run_gc(
     """
     report = GCReport(dry_run=not apply)
 
+    # 0. Stale worktrees
+    report.actions.extend(_find_stale_worktrees(config.root, apply))
+
     # 1. Stale branches
     report.actions.extend(
         _find_stale_branches(config.root, config.project.branch_prefix, max_branch_age_days, apply)
@@ -82,6 +86,41 @@ def run_gc(
 # ---------------------------------------------------------------------------
 # Individual checks
 # ---------------------------------------------------------------------------
+
+
+def _find_stale_worktrees(
+    project_root: Path,
+    apply: bool,
+) -> list[GCAction]:
+    """Find and remove leftover worktree directories from aborted sessions."""
+    from .worktree import cleanup_all_worktrees
+
+    actions: list[GCAction] = []
+    worktrees_base = project_root / WORKTREES_DIR
+    if not worktrees_base.exists():
+        return []
+
+    dirs = [d for d in worktrees_base.iterdir() if d.is_dir()]
+    if not dirs:
+        return []
+
+    for d in dirs:
+        action = GCAction(
+            category="stale_worktree",
+            description=f"Leftover worktree `{d.name}`",
+            path=str(d),
+        )
+        actions.append(action)
+
+    if apply and actions:
+        try:
+            cleanup_all_worktrees(project_root)
+            for a in actions:
+                a.applied = True
+        except Exception:
+            pass  # individual failures logged inside cleanup_all_worktrees
+
+    return actions
 
 
 def _find_stale_branches(

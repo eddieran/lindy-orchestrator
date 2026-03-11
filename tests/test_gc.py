@@ -18,6 +18,7 @@ from lindy_orchestrator.gc import (
     _check_status_drift,
     _find_old_sessions,
     _find_orphan_plans,
+    _find_stale_worktrees,
     format_gc_report,
     run_gc,
 )
@@ -41,6 +42,37 @@ def _make_config(tmp_path: Path) -> OrchestratorConfig:
     (tmp_path / "backend").mkdir(exist_ok=True)
 
     return cfg
+
+
+class TestStaleWorktrees:
+    def test_finds_stale_worktrees(self, tmp_path: Path):
+        wt_dir = tmp_path / ".worktrees"
+        (wt_dir / "task-1").mkdir(parents=True)
+        (wt_dir / "task-2").mkdir(parents=True)
+
+        actions = _find_stale_worktrees(tmp_path, apply=False)
+        assert len(actions) == 2
+        assert all(a.category == "stale_worktree" for a in actions)
+        assert not any(a.applied for a in actions)
+
+    def test_no_worktrees_dir(self, tmp_path: Path):
+        actions = _find_stale_worktrees(tmp_path, apply=False)
+        assert len(actions) == 0
+
+    def test_empty_worktrees_dir(self, tmp_path: Path):
+        (tmp_path / ".worktrees").mkdir()
+        actions = _find_stale_worktrees(tmp_path, apply=False)
+        assert len(actions) == 0
+
+    def test_apply_removes_worktrees(self, tmp_path: Path):
+        wt_dir = tmp_path / ".worktrees"
+        (wt_dir / "task-1").mkdir(parents=True)
+
+        with patch("lindy_orchestrator.worktree.cleanup_all_worktrees") as mock_cleanup:
+            actions = _find_stale_worktrees(tmp_path, apply=True)
+            assert len(actions) == 1
+            assert actions[0].applied
+            mock_cleanup.assert_called_once_with(tmp_path)
 
 
 class TestOldSessions:
