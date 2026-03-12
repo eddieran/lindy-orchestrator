@@ -18,7 +18,7 @@ from typing import Any
 from ..config import LayerCheckConfig
 from ..models import QAResult
 from . import register
-from .structural_check import Violation, _get_staged_files
+from .structural_check import Violation, _format_violations, _get_staged_files
 
 
 @dataclass
@@ -226,17 +226,7 @@ def _check_layer_violations(
     return violations
 
 
-def _format_violations(violations: list[Violation]) -> str:
-    """Format layer violations into a human/agent-readable report."""
-    if not violations:
-        return "All layer checks passed."
-
-    parts = [f"**{len(violations)} layer violation(s):**\n"]
-    for v in violations:
-        parts.append(f"VIOLATION [{v.rule}]: {v.message}")
-        parts.append(f"FIX: {v.remediation}\n")
-
-    return "\n".join(parts)
+# _format_violations imported from structural_check (single source of truth)
 
 
 @register("layer_check")
@@ -305,7 +295,7 @@ class LayerCheckGate:
         return QAResult(
             gate="layer_check",
             passed=len(violations) == 0,
-            output=_format_violations(violations),
+            output=_format_violations(violations, label="layer"),
             details={
                 "violation_count": len(violations),
                 "violations": [

@@ -13,7 +13,7 @@ runner = CliRunner()
 
 class TestCliProviderFlag:
     @patch("shutil.which", return_value=None)
-    @patch("lindy_orchestrator.cli._load_cfg")
+    @patch("lindy_orchestrator.cli.load_cfg")
     def test_codex_provider_checks_codex_cli(self, mock_cfg, mock_which):
         """--provider codex_cli checks for codex binary, not claude."""
         from lindy_orchestrator.config import OrchestratorConfig
@@ -24,7 +24,7 @@ class TestCliProviderFlag:
         assert "codex" in result.output.lower() and "not found" in result.output.lower()
 
     @patch("shutil.which", return_value=None)
-    @patch("lindy_orchestrator.cli._load_cfg")
+    @patch("lindy_orchestrator.cli.load_cfg")
     def test_default_provider_checks_claude_cli(self, mock_cfg, mock_which):
         """Without --provider, checks for claude binary."""
         from lindy_orchestrator.config import OrchestratorConfig
@@ -35,7 +35,7 @@ class TestCliProviderFlag:
         assert "claude" in result.output.lower() and "not found" in result.output.lower()
 
     @patch("shutil.which", return_value=None)
-    @patch("lindy_orchestrator.cli._load_cfg")
+    @patch("lindy_orchestrator.cli.load_cfg")
     def test_explicit_claude_provider_checks_claude_cli(self, mock_cfg, mock_which):
         """--provider claude_cli checks for claude binary."""
         from lindy_orchestrator.config import OrchestratorConfig
@@ -46,7 +46,7 @@ class TestCliProviderFlag:
         assert "claude" in result.output.lower() and "not found" in result.output.lower()
 
     @patch("shutil.which", return_value=None)
-    @patch("lindy_orchestrator.cli._load_cfg")
+    @patch("lindy_orchestrator.cli.load_cfg")
     def test_provider_flag_overrides_config(self, mock_cfg, mock_which):
         """--provider flag overrides the config file's dispatcher.provider."""
         from lindy_orchestrator.config import OrchestratorConfig

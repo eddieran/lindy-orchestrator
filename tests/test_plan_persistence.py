@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from lindy_orchestrator.cli import _persist_plan, _plan_from_dict, _plan_to_dict
+from lindy_orchestrator.cli_helpers import persist_plan, plan_from_dict, plan_to_dict
 from lindy_orchestrator.models import QACheck, TaskItem, TaskPlan, TaskStatus
 
 
@@ -34,8 +34,8 @@ def _make_plan() -> TaskPlan:
 def test_plan_roundtrip():
     """Plan → dict → Plan preserves all fields."""
     plan = _make_plan()
-    data = _plan_to_dict(plan)
-    restored = _plan_from_dict(data)
+    data = plan_to_dict(plan)
+    restored = plan_from_dict(data)
 
     assert restored.goal == plan.goal
     assert len(restored.tasks) == 2
@@ -58,7 +58,7 @@ def test_plan_roundtrip():
 def test_persist_plan_creates_files(tmp_path: Path):
     """_persist_plan writes JSON and latest.md."""
     plan = _make_plan()
-    _persist_plan(tmp_path, plan)
+    persist_plan(tmp_path, plan)
 
     plans_dir = tmp_path / ".orchestrator" / "plans"
     assert plans_dir.exists()
@@ -78,10 +78,10 @@ def test_persist_plan_creates_files(tmp_path: Path):
 def test_resume_skips_completed():
     """When restoring a plan, completed tasks keep their status."""
     plan = _make_plan()
-    data = _plan_to_dict(plan)
+    data = plan_to_dict(plan)
 
     # Simulate resume: task 1 completed, task 2 still pending
-    restored = _plan_from_dict(data)
+    restored = plan_from_dict(data)
     assert restored.tasks[0].status == TaskStatus.COMPLETED
     assert restored.tasks[1].status == TaskStatus.PENDING
 
@@ -96,9 +96,9 @@ def test_resume_resets_failed_to_pending():
     plan = _make_plan()
     plan.tasks[1].status = TaskStatus.FAILED
     plan.tasks[1].retries = 2
-    data = _plan_to_dict(plan)
+    data = plan_to_dict(plan)
 
-    restored = _plan_from_dict(data)
+    restored = plan_from_dict(data)
     # Simulate resume logic: reset failed to pending
     for t in restored.tasks:
         if t.status == TaskStatus.FAILED:

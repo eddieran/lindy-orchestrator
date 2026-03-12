@@ -299,12 +299,12 @@ def _module_file_prefix(
     return ""
 
 
-def _format_violations(violations: list[Violation]) -> str:
+def _format_violations(violations: list[Violation], label: str = "structural") -> str:
     """Format violations into a human/agent-readable report."""
     if not violations:
-        return "All structural checks passed."
+        return f"All {label} checks passed."
 
-    parts = [f"**{len(violations)} structural violation(s):**\n"]
+    parts = [f"**{len(violations)} {label} violation(s):**\n"]
     for v in violations:
         parts.append(f"VIOLATION [{v.rule}]: {v.message}")
         parts.append(f"FIX: {v.remediation}\n")

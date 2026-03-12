@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 # ---------------------------------------------------------------------------
@@ -128,9 +128,7 @@ class OrchestratorConfig(BaseModel):
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
 
     # Internal: set after loading, not from YAML
-    _config_dir: Path = Path(".")
-
-    model_config = {"arbitrary_types_allowed": True}
+    _config_dir: Path = PrivateAttr(default_factory=lambda: Path("."))
 
     @property
     def root(self) -> Path:
