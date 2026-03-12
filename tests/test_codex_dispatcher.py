@@ -11,7 +11,6 @@ import pytest
 
 from lindy_orchestrator.codex_dispatcher import (
     _extract_result_from_lines,
-    _extract_tool_use,
     _parse_event,
     dispatch_codex_agent,
     dispatch_codex_agent_simple,
@@ -58,42 +57,6 @@ class TestCodexParseEvent:
     def test_with_newline(self):
         result = _parse_event('{"type": "result"}\n')
         assert result == {"type": "result"}
-
-
-class TestCodexExtractToolUse:
-    def test_claude_style_tool_use(self):
-        event = {
-            "type": "assistant",
-            "message": {"content": [{"type": "tool_use", "name": "Bash", "id": "1", "input": {}}]},
-        }
-        assert _extract_tool_use(event) == "Bash"
-
-    def test_codex_style_function_call(self):
-        event = {"type": "function_call", "name": "shell"}
-        assert _extract_tool_use(event) == "shell"
-
-    def test_text_only_event(self):
-        event = {
-            "type": "assistant",
-            "message": {"content": [{"type": "text", "text": "hello"}]},
-        }
-        assert _extract_tool_use(event) == ""
-
-    def test_non_assistant_event(self):
-        assert _extract_tool_use({"type": "system"}) == ""
-        assert _extract_tool_use({"type": "result"}) == ""
-
-    def test_codex_nested_function_call(self):
-        event = {"id": "0", "msg": {"type": "function_call", "name": "shell"}}
-        assert _extract_tool_use(event) == "shell"
-
-    def test_codex_v2_item_started_command_execution(self):
-        event = {"type": "item.started", "item": {"type": "command_execution", "command": "ls"}}
-        assert _extract_tool_use(event) == "shell"
-
-    def test_codex_v2_item_completed_command_execution(self):
-        event = {"type": "item.completed", "item": {"type": "command_execution"}}
-        assert _extract_tool_use(event) == "shell"
 
 
 class TestCodexExtractResultFromLines:
@@ -256,7 +219,7 @@ class TestCodexSimpleDispatch:
             assert result.success is False
             assert result.error == "cli_not_found"
 
-    @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_success_with_json_result(self, mock_cli, mock_run, config, tmp_path):
         # codex exec --json outputs JSONL with a result event
@@ -274,7 +237,7 @@ class TestCodexSimpleDispatch:
         assert result.success is True
         assert result.output == "Plan generated!"
 
-    @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_success_with_plain_text(self, mock_cli, mock_run, config, tmp_path):
         mock_run.return_value = type(
@@ -286,7 +249,7 @@ class TestCodexSimpleDispatch:
         assert result.success is True
         assert result.output == "Just text"
 
-    @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_timeout(self, mock_cli, mock_run, config, tmp_path):
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="codex", timeout=60)
@@ -294,7 +257,7 @@ class TestCodexSimpleDispatch:
         assert result.success is False
         assert result.error == "timeout"
 
-    @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_stderr_fallback(self, mock_cli, mock_run, config, tmp_path):
         mock_run.return_value = type(
@@ -306,7 +269,7 @@ class TestCodexSimpleDispatch:
         assert result.success is False
         assert "[stderr]" in result.output
 
-    @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_command_uses_codex_flags(self, mock_cli, mock_run, config, tmp_path):
         """Verify the command uses codex-specific flags."""
@@ -324,7 +287,7 @@ class TestCodexSimpleDispatch:
         assert "--skip-git-repo-check" in cmd
         assert "test prompt" in cmd
 
-    @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_file_not_found_error(self, mock_cli, mock_run, config, tmp_path):
         mock_run.side_effect = FileNotFoundError()
@@ -332,7 +295,7 @@ class TestCodexSimpleDispatch:
         assert result.success is False
         assert result.error == "cli_not_found"
 
-    @patch("lindy_orchestrator.codex_dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.codex_dispatcher.find_codex_cli", return_value="/usr/bin/codex")
     def test_output_truncation(self, mock_cli, mock_run, config, tmp_path):
         config.max_output_chars = 20
