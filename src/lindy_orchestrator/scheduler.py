@@ -36,6 +36,88 @@ from .worktree import cleanup_all_worktrees, create_worktree, remove_worktree
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# HeartbeatTracker — replaces closure with 5 nonlocal variables
+# ---------------------------------------------------------------------------
+
+
+class _HeartbeatTracker:
+    """Tracks event progress and emits periodic heartbeat messages."""
+
+    __slots__ = (
+        "task_id",
+        "module",
+        "_progress",
+        "_detail",
+        "_hooks",
+        "count",
+        "last_tool",
+        "recent_tools",
+        "last_reasoning",
+        "_start_time",
+        "_last_print_time",
+    )
+
+    def __init__(
+        self,
+        task_id: int,
+        module: str,
+        progress: Callable[[str], None],
+        detail: Callable[[str], None],
+        hooks: HookRegistry | None,
+    ) -> None:
+        self.task_id = task_id
+        self.module = module
+        self._progress = progress
+        self._detail = detail
+        self._hooks = hooks
+        self.count = 0
+        self.last_tool = ""
+        self.recent_tools: list[str] = []
+        self.last_reasoning = ""
+        self._start_time = time.monotonic()
+        self._last_print_time = self._start_time
+
+    def on_event(self, event: dict) -> None:
+        """Track events and emit periodic heartbeat."""
+        self.count += 1
+
+        tool_name, reasoning_text = extract_event_info(event)
+
+        if tool_name:
+            self.last_tool = tool_name
+            self.recent_tools.append(tool_name)
+            if len(self.recent_tools) > 5:
+                self.recent_tools.pop(0)
+            self._detail(f"      [dim]tool: {tool_name}[/]")
+
+        if reasoning_text:
+            self.last_reasoning = reasoning_text
+
+        if self._hooks and (tool_name or reasoning_text):
+            self._hooks.emit(
+                Event(
+                    type=EventType.TASK_HEARTBEAT,
+                    task_id=self.task_id,
+                    module=self.module,
+                    data={
+                        "tool": tool_name,
+                        "tools": list(self.recent_tools),
+                        "event_count": self.count,
+                        "reasoning": self.last_reasoning[:120] if self.last_reasoning else "",
+                    },
+                )
+            )
+
+        now = time.monotonic()
+        if now - self._last_print_time >= 30:
+            elapsed = int(now - self._start_time)
+            mins, secs = divmod(elapsed, 60)
+            tool_hint = f", last tool: {self.last_tool}" if self.last_tool else ""
+            self._progress(f"    [dim]⋯ {self.count} events, {mins}m{secs:02d}s{tool_hint}[/]")
+            self._last_print_time = now
+
+
 def execute_plan(
     plan: TaskPlan,
     config: OrchestratorConfig,
@@ -251,6 +333,275 @@ def _execute_single_task(
                 log.warning("Worktree cleanup failed for task-%d", task.id, exc_info=True)
 
 
+# ---------------------------------------------------------------------------
+# Extracted helpers for _dispatch_loop decomposition
+# ---------------------------------------------------------------------------
+
+
+def _resolve_working_dir(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    worktree_path: Path | None,
+) -> tuple[Path, Path]:
+    """Resolve working_dir and module_dir (fixed for all retries)."""
+    if worktree_path:
+        working_dir = worktree_path
+        if task.module in ("root", "*"):
+            module_dir = worktree_path
+        else:
+            mod = config.get_module(task.module)
+            module_dir = (worktree_path / mod.path).resolve()
+    else:
+        working_dir = config.root.resolve()
+        module_dir = config.module_path(task.module)
+    return working_dir, module_dir
+
+
+def _prepare_task_prompt(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    branch_name: str,
+    worktree_path: Path | None,
+    dispatches: int,
+    progress: Callable[[str], None],
+) -> None:
+    """Inject STATUS.md, CLAUDE.md, mailbox, and branch delivery into task prompt."""
+    if dispatches == 0:
+        inject_status_content(task, config, progress)
+        inject_claude_md(task, config, progress)
+    inject_mailbox_messages(task, config, progress)
+    inject_branch_delivery(task, branch_name, worktree_path, dispatches)
+
+
+def _log_dispatch(logger: ActionLogger, task: TaskItem, result: object) -> None:
+    """Log dispatch result to action logger."""
+    logger.log_dispatch(
+        task.module,
+        task.prompt[:200],
+        {
+            "success": result.success,
+            "duration": result.duration_seconds,
+            "exit_code": result.exit_code,
+            "event_count": result.event_count,
+            "last_tool_use": result.last_tool_use,
+            "cost_usd": result.cost_usd,
+        },
+    )
+
+
+def _handle_dispatch_failure(
+    task: TaskItem,
+    result: object,
+    progress: Callable[[str], None],
+    hooks: HookRegistry | None,
+) -> None:
+    """Mark task as failed and emit events on dispatch failure."""
+    error_info = result.output[:200]
+    if result.error == "stall":
+        error_info = f"Agent stalled (last tool: {result.last_tool_use or 'none'})"
+    progress(f"    [red]DISPATCH FAILED[/] ({result.error or 'error'}): {error_info}")
+    task.status = TaskStatus.FAILED
+    task.completed_at = datetime.now(timezone.utc).isoformat()
+    if hooks:
+        hooks.emit(
+            Event(
+                type=EventType.TASK_FAILED,
+                task_id=task.id,
+                module=task.module,
+                data={
+                    "reason": result.error or "dispatch_error",
+                    "description": task.description,
+                },
+            )
+        )
+
+
+def _check_and_log_delivery(
+    project_root: Path,
+    branch_name: str,
+    logger: ActionLogger,
+    task: TaskItem,
+    progress: Callable[[str], None],
+) -> None:
+    """Verify branch has commits and log the result."""
+    delivery_ok, delivery_msg = _check_delivery(project_root, branch_name)
+    if delivery_ok:
+        progress(f"    [green]Delivery check[/]: {delivery_msg}")
+    else:
+        progress(f"    [yellow]Delivery check[/]: {delivery_msg}")
+        logger.log_action(
+            "delivery_check",
+            details={"task_id": task.id, "branch": branch_name},
+            result="warning",
+            output=delivery_msg,
+        )
+
+
+def _run_qa_gates(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    logger: ActionLogger,
+    qa_root: Path,
+    module_dir: Path,
+    progress: Callable[[str], None],
+    detail: Callable[[str], None],
+    hooks: HookRegistry | None,
+) -> bool:
+    """Run QA gates in parallel. Returns True if all pass."""
+    qa_mod = config.qa_module()
+    gate_count = len(task.qa_checks)
+    progress(f"    Running {gate_count} QA gate(s){'  in parallel' if gate_count > 1 else ''}...")
+
+    def _run_gate(qa):
+        return qa, run_qa_gate(
+            check=qa,
+            project_root=qa_root,
+            module_name=task.module,
+            task_output=task.result,
+            custom_gates=config.qa_gates.custom,
+            dispatcher_config=config.dispatcher,
+            qa_module=qa_mod,
+            module_path=module_dir,
+        )
+
+    all_passed = True
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(gate_count, 4)) as qa_pool:
+        futs = {qa_pool.submit(_run_gate, qa): qa for qa in task.qa_checks}
+        for fut in concurrent.futures.as_completed(futs):
+            qa, qa_result = fut.result()
+            task.qa_results.append(qa_result)
+            logger.log_qa(qa.gate, qa_result.passed, qa_result.output)
+            evt_type = EventType.QA_PASSED if qa_result.passed else EventType.QA_FAILED
+            if qa_result.passed:
+                progress(f"      [green]PASS[/]: {qa.gate} — {qa_result.output[:100]}")
+            else:
+                progress(f"      [red]FAIL[/]: {qa.gate} — {qa_result.output[:200]}")
+                detail(f"      Full output: {qa_result.output}")
+                all_passed = False
+            if hooks:
+                hooks.emit(
+                    Event(
+                        type=evt_type,
+                        task_id=task.id,
+                        module=task.module,
+                        data={"gate": qa.gate, "output": qa_result.output[:200]},
+                    )
+                )
+    return all_passed
+
+
+def _mark_completed(
+    task: TaskItem,
+    logger: ActionLogger,
+    progress: Callable[[str], None],
+    hooks: HookRegistry | None,
+) -> None:
+    """Mark task as completed and emit events."""
+    task.status = TaskStatus.COMPLETED
+    task.completed_at = datetime.now(timezone.utc).isoformat()
+    progress(f"    [bold green]Task {task.id} COMPLETED[/]")
+    logger.log_action(
+        "task_completed",
+        details={
+            "task_id": task.id,
+            "module": task.module,
+            "description": task.description,
+        },
+    )
+    if hooks:
+        hooks.emit(
+            Event(
+                type=EventType.TASK_COMPLETED,
+                task_id=task.id,
+                module=task.module,
+                data={"description": task.description},
+            )
+        )
+
+
+def _handle_retry(
+    task: TaskItem,
+    original_prompt: str,
+    max_retries: int,
+    logger: ActionLogger,
+    progress: Callable[[str], None],
+    hooks: HookRegistry | None,
+) -> bool:
+    """Handle retry logic after QA failure. Returns True to continue loop, False to stop."""
+    task.retries += 1
+    if task.retries > max_retries:
+        task.status = TaskStatus.FAILED
+        task.completed_at = datetime.now(timezone.utc).isoformat()
+        progress(f"    [bold red]Task {task.id} FAILED[/] after {max_retries} retries")
+        logger.log_action(
+            "task_failed",
+            details={
+                "task_id": task.id,
+                "module": task.module,
+                "retries": task.retries,
+                "qa_results": [
+                    {"gate": r.gate, "passed": r.passed, "output": r.output[:200]}
+                    for r in task.qa_results
+                ],
+            },
+        )
+        if hooks:
+            hooks.emit(
+                Event(
+                    type=EventType.TASK_FAILED,
+                    task_id=task.id,
+                    module=task.module,
+                    data={
+                        "reason": "max_retries_exceeded",
+                        "retries": task.retries,
+                        "description": task.description,
+                    },
+                )
+            )
+        return False
+
+    if hooks:
+        hooks.emit(
+            Event(
+                type=EventType.TASK_RETRYING,
+                task_id=task.id,
+                module=task.module,
+                data={
+                    "retry": task.retries,
+                    "max_retries": max_retries,
+                    "description": task.description,
+                },
+            )
+        )
+
+    # Build structured feedback for each failed gate
+    failed_checks = [r for r in task.qa_results if not r.passed]
+    feedback_objs: list[StructuredFeedback] = []
+    for r in failed_checks:
+        fb = build_structured_feedback(r.gate, r.output, retry_number=task.retries)
+        feedback_objs.append(fb)
+        task.feedback_history.append(
+            {
+                "retry": task.retries,
+                "gate": r.gate,
+                "category": fb.category.value,
+                "summary": fb.summary,
+                "errors": fb.specific_errors,
+                "files": fb.files_to_check,
+                "remediation": fb.remediation_steps,
+            }
+        )
+    task.prompt = build_retry_prompt(original_prompt, feedback_objs, task.retries, max_retries)
+    task.qa_results = []
+    progress(f"    [yellow]QA failed, retrying with feedback[/] ({task.retries}/{max_retries})...")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Dispatch loop (decomposed)
+# ---------------------------------------------------------------------------
+
+
 def _dispatch_loop(
     task: TaskItem,
     config: OrchestratorConfig,
@@ -265,127 +616,29 @@ def _dispatch_loop(
     """Inner dispatch loop with retry logic. Extracted for worktree cleanup."""
     dispatches = 0
     original_prompt = task.prompt
+    working_dir, module_dir = _resolve_working_dir(task, config, worktree_path)
 
     while True:
-        # Dispatch to module agent
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
 
-        # Use worktree for isolation; fall back to project root
-        if worktree_path:
-            working_dir = worktree_path
-            if task.module in ("root", "*"):
-                module_dir = worktree_path
-            else:
-                mod = config.get_module(task.module)
-                module_dir = (worktree_path / mod.path).resolve()
-        else:
-            working_dir = config.root.resolve()
-            module_dir = config.module_path(task.module)
-
-        # Heartbeat state for progress feedback
-        _hb_count = 0
-        _hb_last_tool = ""
-        _hb_recent_tools: list[str] = []
-        _hb_last_reasoning = ""
-        _hb_start = time.monotonic()
-        _hb_last_print = _hb_start
-
-        def _on_event(event: dict) -> None:
-            """Track events and emit periodic heartbeat."""
-            nonlocal _hb_count, _hb_last_tool, _hb_last_print, _hb_last_reasoning
-            _hb_count += 1
-
-            tool_name, reasoning_text = extract_event_info(event)
-
-            if tool_name:
-                _hb_last_tool = tool_name
-                _hb_recent_tools.append(tool_name)
-                if len(_hb_recent_tools) > 5:
-                    _hb_recent_tools.pop(0)
-                detail(f"      [dim]tool: {tool_name}[/]")
-
-            if reasoning_text:
-                _hb_last_reasoning = reasoning_text
-
-            if hooks and (tool_name or reasoning_text):
-                hooks.emit(
-                    Event(
-                        type=EventType.TASK_HEARTBEAT,
-                        task_id=task.id,
-                        module=task.module,
-                        data={
-                            "tool": tool_name,
-                            "tools": list(_hb_recent_tools),
-                            "event_count": _hb_count,
-                            "reasoning": _hb_last_reasoning[:120] if _hb_last_reasoning else "",
-                        },
-                    )
-                )
-
-            # Heartbeat: every 30 seconds
-            now = time.monotonic()
-            if now - _hb_last_print >= 30:
-                elapsed = int(now - _hb_start)
-                mins, secs = divmod(elapsed, 60)
-                tool_hint = f", last tool: {_hb_last_tool}" if _hb_last_tool else ""
-                progress(f"    [dim]⋯ {_hb_count} events, {mins}m{secs:02d}s{tool_hint}[/]")
-                _hb_last_print = now
-
-        # Inject STATUS.md and CLAUDE.md content on first dispatch
-        if dispatches == 0:
-            inject_status_content(task, config, progress)
-            inject_claude_md(task, config, progress)
-
-        # Inject pending mailbox messages if enabled
-        inject_mailbox_messages(task, config, progress)
-
-        # Inject branch delivery instructions
-        inject_branch_delivery(task, branch_name, worktree_path, dispatches)
+        hb = _HeartbeatTracker(task.id, task.module, progress, detail, hooks)
+        _prepare_task_prompt(task, config, branch_name, worktree_path, dispatches, progress)
 
         provider = create_provider(config.dispatcher)
         result = provider.dispatch(
             module=task.module,
             working_dir=working_dir,
             prompt=task.prompt,
-            on_event=_on_event,
+            on_event=hb.on_event,
             stall_seconds=task.stall_seconds,
         )
         dispatches += 1
         task.result = result.output
         task.cost_usd += result.cost_usd
-
-        logger.log_dispatch(
-            task.module,
-            task.prompt[:200],
-            {
-                "success": result.success,
-                "duration": result.duration_seconds,
-                "exit_code": result.exit_code,
-                "event_count": result.event_count,
-                "last_tool_use": result.last_tool_use,
-                "cost_usd": result.cost_usd,
-            },
-        )
+        _log_dispatch(logger, task, result)
 
         if not result.success:
-            error_info = result.output[:200]
-            if result.error == "stall":
-                error_info = f"Agent stalled (last tool: {result.last_tool_use or 'none'})"
-            progress(f"    [red]DISPATCH FAILED[/] ({result.error or 'error'}): {error_info}")
-            task.status = TaskStatus.FAILED
-            task.completed_at = datetime.now(timezone.utc).isoformat()
-            if hooks:
-                hooks.emit(
-                    Event(
-                        type=EventType.TASK_FAILED,
-                        task_id=task.id,
-                        module=task.module,
-                        data={
-                            "reason": result.error or "dispatch_error",
-                            "description": task.description,
-                        },
-                    )
-                )
+            _handle_dispatch_failure(task, result, progress, hooks)
             return dispatches
 
         progress(
@@ -394,155 +647,24 @@ def _dispatch_loop(
         )
         detail(f"    Output preview: {result.output[:500]}")
 
-        # Delivery check: verify branch has commits
-        delivery_ok, delivery_msg = _check_delivery(config.root, branch_name)
-        if delivery_ok:
-            progress(f"    [green]Delivery check[/]: {delivery_msg}")
-        else:
-            progress(f"    [yellow]Delivery check[/]: {delivery_msg}")
-            logger.log_action(
-                "delivery_check",
-                details={"task_id": task.id, "branch": branch_name},
-                result="warning",
-                output=delivery_msg,
-            )
-
-        # Auto-fill ci_check params before parallel execution
+        _check_and_log_delivery(config.root, branch_name, logger, task, progress)
         _autofill_ci_params(task.qa_checks, branch_name, config, task.module)
 
-        # Run QA gates in parallel
         qa_root = worktree_path or config.root
-        qa_mod = config.qa_module()
-        gate_count = len(task.qa_checks)
-        progress(
-            f"    Running {gate_count} QA gate(s){'  in parallel' if gate_count > 1 else ''}..."
+        all_qa_passed = _run_qa_gates(
+            task,
+            config,
+            logger,
+            qa_root,
+            module_dir,
+            progress,
+            detail,
+            hooks,
         )
-
-        def _run_gate(qa):
-            return qa, run_qa_gate(
-                check=qa,
-                project_root=qa_root,
-                module_name=task.module,
-                task_output=task.result,
-                custom_gates=config.qa_gates.custom,
-                dispatcher_config=config.dispatcher,
-                qa_module=qa_mod,
-                module_path=module_dir,
-            )
-
-        all_qa_passed = True
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(gate_count, 4)) as qa_pool:
-            futs = {qa_pool.submit(_run_gate, qa): qa for qa in task.qa_checks}
-            for fut in concurrent.futures.as_completed(futs):
-                qa, qa_result = fut.result()
-                task.qa_results.append(qa_result)
-                logger.log_qa(qa.gate, qa_result.passed, qa_result.output)
-                evt_type = EventType.QA_PASSED if qa_result.passed else EventType.QA_FAILED
-                if qa_result.passed:
-                    progress(f"      [green]PASS[/]: {qa.gate} — {qa_result.output[:100]}")
-                else:
-                    progress(f"      [red]FAIL[/]: {qa.gate} — {qa_result.output[:200]}")
-                    detail(f"      Full output: {qa_result.output}")
-                    all_qa_passed = False
-                if hooks:
-                    hooks.emit(
-                        Event(
-                            type=evt_type,
-                            task_id=task.id,
-                            module=task.module,
-                            data={"gate": qa.gate, "output": qa_result.output[:200]},
-                        )
-                    )
 
         if all_qa_passed:
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = datetime.now(timezone.utc).isoformat()
-            progress(f"    [bold green]Task {task.id} COMPLETED[/]")
-            logger.log_action(
-                "task_completed",
-                details={
-                    "task_id": task.id,
-                    "module": task.module,
-                    "description": task.description,
-                },
-            )
-            if hooks:
-                hooks.emit(
-                    Event(
-                        type=EventType.TASK_COMPLETED,
-                        task_id=task.id,
-                        module=task.module,
-                        data={"description": task.description},
-                    )
-                )
+            _mark_completed(task, logger, progress, hooks)
             return dispatches
 
-        # Retry with QA feedback
-        task.retries += 1
-        if task.retries > max_retries:
-            task.status = TaskStatus.FAILED
-            task.completed_at = datetime.now(timezone.utc).isoformat()
-            progress(f"    [bold red]Task {task.id} FAILED[/] after {max_retries} retries")
-            logger.log_action(
-                "task_failed",
-                details={
-                    "task_id": task.id,
-                    "module": task.module,
-                    "retries": task.retries,
-                    "qa_results": [
-                        {"gate": r.gate, "passed": r.passed, "output": r.output[:200]}
-                        for r in task.qa_results
-                    ],
-                },
-            )
-            if hooks:
-                hooks.emit(
-                    Event(
-                        type=EventType.TASK_FAILED,
-                        task_id=task.id,
-                        module=task.module,
-                        data={
-                            "reason": "max_retries_exceeded",
-                            "retries": task.retries,
-                            "description": task.description,
-                        },
-                    )
-                )
+        if not _handle_retry(task, original_prompt, max_retries, logger, progress, hooks):
             return dispatches
-
-        if hooks:
-            hooks.emit(
-                Event(
-                    type=EventType.TASK_RETRYING,
-                    task_id=task.id,
-                    module=task.module,
-                    data={
-                        "retry": task.retries,
-                        "max_retries": max_retries,
-                        "description": task.description,
-                    },
-                )
-            )
-
-        # Build structured feedback for each failed gate
-        failed_checks = [r for r in task.qa_results if not r.passed]
-        feedback_objs: list[StructuredFeedback] = []
-        for r in failed_checks:
-            fb = build_structured_feedback(r.gate, r.output, retry_number=task.retries)
-            feedback_objs.append(fb)
-            task.feedback_history.append(
-                {
-                    "retry": task.retries,
-                    "gate": r.gate,
-                    "category": fb.category.value,
-                    "summary": fb.summary,
-                    "errors": fb.specific_errors,
-                    "files": fb.files_to_check,
-                    "remediation": fb.remediation_steps,
-                }
-            )
-        task.prompt = build_retry_prompt(original_prompt, feedback_objs, task.retries, max_retries)
-        task.qa_results = []
-        progress(
-            f"    [yellow]QA failed, retrying with feedback[/] ({task.retries}/{max_retries})..."
-        )
