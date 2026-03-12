@@ -21,7 +21,6 @@ class ModuleConfig(BaseModel):
     name: str
     path: str
     status_md: str = "STATUS.md"
-    claude_md: str = "CLAUDE.md"
     repo: str = ""
     ci_workflow: str = "ci.yml"
     role: str = ""  # "qa" marks a module as QA dispatcher target

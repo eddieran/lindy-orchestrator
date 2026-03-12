@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -19,7 +17,6 @@ log = logging.getLogger(__name__)
 __all__ = [
     "_autofill_ci_params",
     "_check_delivery",
-    "ExecutionProgress",
     "extract_event_info",
     "inject_branch_delivery",
     "inject_claude_md",
@@ -27,27 +24,6 @@ __all__ = [
     "inject_qa_gates",
     "inject_status_content",
 ]
-
-
-@dataclass
-class ExecutionProgress:
-    """Tracks overall execution progress."""
-
-    total_tasks: int = 0
-    completed: int = 0
-    failed: int = 0
-    skipped: int = 0
-    in_progress: int = 0
-    total_dispatches: int = 0
-    start_time: float = field(default_factory=time.monotonic)
-
-    @property
-    def pending(self) -> int:
-        return self.total_tasks - self.completed - self.failed - self.skipped - self.in_progress
-
-    @property
-    def elapsed_seconds(self) -> float:
-        return time.monotonic() - self.start_time if self.start_time else 0.0
 
 
 def _check_delivery(project_root: Path, branch_name: str) -> tuple[bool, str]:
