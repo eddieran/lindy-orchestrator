@@ -26,7 +26,7 @@ class TestSimpleDispatch:
             assert result.success is False
             assert result.error == "cli_not_found"
 
-    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
     def test_success_with_json_result(self, mock_cli, mock_run, config, tmp_path):
         """Parses JSON output and extracts result field."""
@@ -45,7 +45,7 @@ class TestSimpleDispatch:
         assert result.success is True
         assert result.output == "Plan generated!"
 
-    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
     def test_success_with_plain_text(self, mock_cli, mock_run, config, tmp_path):
         """Non-JSON output is returned as-is."""
@@ -64,7 +64,7 @@ class TestSimpleDispatch:
         assert result.success is True
         assert result.output == "Just some text"
 
-    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
     def test_timeout(self, mock_cli, mock_run, config, tmp_path):
         """subprocess.TimeoutExpired → error='timeout'."""
@@ -75,7 +75,7 @@ class TestSimpleDispatch:
         assert result.success is False
         assert result.error == "timeout"
 
-    @patch("lindy_orchestrator.dispatcher.subprocess.run")
+    @patch("lindy_orchestrator.dispatch_core.subprocess.run")
     @patch("lindy_orchestrator.dispatcher.find_claude_cli", return_value="/usr/bin/claude")
     def test_stderr_fallback(self, mock_cli, mock_run, config, tmp_path):
         """Empty stdout → falls back to stderr."""

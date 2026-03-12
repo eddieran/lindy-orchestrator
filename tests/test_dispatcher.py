@@ -11,7 +11,6 @@ import pytest
 from lindy_orchestrator.config import DispatcherConfig
 from lindy_orchestrator.dispatcher import (
     _extract_result_from_lines,
-    _extract_tool_use,
     _parse_event,
     dispatch_agent,
 )
@@ -38,40 +37,6 @@ class TestParseEvent:
     def test_with_newline(self):
         result = _parse_event('{"type": "result"}\n')
         assert result == {"type": "result"}
-
-
-class TestExtractToolUse:
-    def test_tool_use_block(self):
-        event = {
-            "type": "assistant",
-            "message": {
-                "content": [{"type": "tool_use", "name": "Bash", "id": "123", "input": {}}]
-            },
-        }
-        assert _extract_tool_use(event) == "Bash"
-
-    def test_text_block_only(self):
-        event = {
-            "type": "assistant",
-            "message": {"content": [{"type": "text", "text": "hello"}]},
-        }
-        assert _extract_tool_use(event) == ""
-
-    def test_non_assistant_event(self):
-        assert _extract_tool_use({"type": "system"}) == ""
-        assert _extract_tool_use({"type": "result"}) == ""
-
-    def test_multiple_content_blocks(self):
-        event = {
-            "type": "assistant",
-            "message": {
-                "content": [
-                    {"type": "text", "text": "I'll run this"},
-                    {"type": "tool_use", "name": "Edit", "id": "456", "input": {}},
-                ]
-            },
-        }
-        assert _extract_tool_use(event) == "Edit"
 
 
 class TestExtractResultFromLines:

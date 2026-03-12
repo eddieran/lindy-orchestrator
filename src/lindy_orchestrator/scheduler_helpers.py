@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
+from .dispatch_core import extract_event_info  # canonical location; re-exported here
 from .mailbox import Mailbox, format_mailbox_messages
 from .models import QACheck, TaskItem
 
@@ -47,53 +48,6 @@ class ExecutionProgress:
     @property
     def elapsed_seconds(self) -> float:
         return time.monotonic() - self.start_time if self.start_time else 0.0
-
-
-def extract_event_info(event: dict) -> tuple[str, str]:
-    """Extract (tool_name, reasoning_text) from any provider's event format.
-
-    Supports Claude, Codex flat, Codex v1 nested, and Codex v2 item formats.
-    Returns ("", "") for unrecognised events.
-    """
-    tool_name = ""
-    reasoning_text = ""
-
-    # --- Claude-style: {"type":"assistant","message":{"content":[...]}} ---
-    content = event.get("message", {}).get("content", [])
-    if isinstance(content, list):
-        for block in content:
-            if not isinstance(block, dict):
-                continue
-            btype = block.get("type", "")
-            if btype == "tool_use":
-                tool_name = block.get("name", "")
-            elif btype in ("thinking", "text"):
-                snippet = block.get("text", "")
-                if snippet:
-                    reasoning_text = snippet
-
-    # --- Codex flat: {"type":"function_call","name":"shell"} ---
-    if not tool_name and event.get("type") == "function_call":
-        tool_name = event.get("name", "")
-
-    # --- Codex v1 nested: {"msg":{"type":"function_call","name":"shell"}} ---
-    nested = event.get("msg")
-    if isinstance(nested, dict):
-        if not tool_name and nested.get("type") == "function_call":
-            tool_name = nested.get("name", "")
-        if not reasoning_text and nested.get("type") == "agent_message":
-            reasoning_text = nested.get("message", "")
-
-    # --- Codex v2 item: {"type":"item.started"|"item.completed","item":{...}} ---
-    if event.get("type") in ("item.started", "item.completed"):
-        item = event.get("item", {})
-        if isinstance(item, dict):
-            if not tool_name and item.get("type") == "command_execution":
-                tool_name = "shell"
-            if not reasoning_text and item.get("type") == "agent_message":
-                reasoning_text = item.get("text", "")
-
-    return (tool_name, reasoning_text)
 
 
 def _check_delivery(project_root: Path, branch_name: str) -> tuple[bool, str]:
