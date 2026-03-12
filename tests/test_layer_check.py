@@ -8,11 +8,10 @@ from lindy_orchestrator.qa.layer_check import (
     LayerCheckGate,
     _check_layer_violations,
     _extract_intra_imports,
-    _format_violations,
     _parse_architecture_layers,
     _resolve_layer,
 )
-from lindy_orchestrator.qa.structural_check import Violation
+from lindy_orchestrator.qa.structural_check import Violation, _format_violations
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +350,7 @@ class TestCheckLayerViolations:
 
 class TestFormatViolations:
     def test_no_violations(self):
-        result = _format_violations([])
+        result = _format_violations([], label="layer")
         assert "passed" in result.lower()
 
     def test_formats_violations(self):
@@ -363,7 +362,7 @@ class TestFormatViolations:
                 remediation="Move shared logic to models/ or lower.",
             )
         ]
-        result = _format_violations(violations)
+        result = _format_violations(violations, label="layer")
         assert "1 layer violation(s)" in result
         assert "VIOLATION [layer_violation]" in result
         assert "FIX: Move" in result

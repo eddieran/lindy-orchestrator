@@ -63,14 +63,6 @@ def main(
     """Lightweight, git-native multi-agent orchestration framework."""
 
 
-# Private aliases for internal use and backward compat with cli_ext
-_load_cfg = load_cfg
-_plan_to_dict = plan_to_dict
-_plan_from_dict = plan_from_dict
-_persist_plan = persist_plan
-_resolve_goal = resolve_goal
-
-
 @app.command()
 def run(
     goal: Optional[str] = typer.Argument(None, help="Natural language goal to achieve"),
@@ -96,7 +88,7 @@ def run(
     """
     from .scheduler import execute_plan
 
-    cfg = _load_cfg(config)
+    cfg = load_cfg(config)
     if dry_run:
         cfg.safety.dry_run = True
 
@@ -112,7 +104,7 @@ def run(
             console.print(f"[red]Plan file not found: {plan_file}[/]")
             raise typer.Exit(1)
         plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
-        plan = _plan_from_dict(plan_data)
+        plan = plan_from_dict(plan_data)
         goal = plan.goal
         console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
         console.print(f"Goal: [bold]{truncate_goal(goal)}[/]")
@@ -120,7 +112,7 @@ def run(
     else:
         from .planner import generate_plan
 
-        goal = _resolve_goal(goal, file)
+        goal = resolve_goal(goal, file)
 
         console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
         console.print(f"Goal: [bold]{truncate_goal(goal)}[/]")
@@ -154,11 +146,11 @@ def run(
                 progress.stop()
 
     # Persist plan to session for resume capability
-    session.plan_json = _plan_to_dict(plan)
+    session.plan_json = plan_to_dict(plan)
     sessions.save(session)
 
     # Auto-persist plan to .orchestrator/plans/
-    _persist_plan(cfg.root, plan)
+    persist_plan(cfg.root, plan)
 
     print_task_list(console, plan.tasks)
 
@@ -212,8 +204,8 @@ def plan(
     """
     from .planner import generate_plan
 
-    goal = _resolve_goal(goal, file)
-    cfg = _load_cfg(config)
+    goal = resolve_goal(goal, file)
+    cfg = load_cfg(config)
 
     console.print(f"[bold]lindy-orchestrate v{__version__}[/]")
     console.print(f"Goal: [bold]{truncate_goal(goal)}[/]\n")
@@ -231,12 +223,12 @@ def plan(
     print_task_list(console, plan_result.tasks, show_qa=True, show_prompt=True)
 
     # Auto-persist plan
-    plan_json_path = _persist_plan(cfg.root, plan_result)
+    plan_json_path = persist_plan(cfg.root, plan_result)
     console.print(f"\n[green]Plan saved to {plan_json_path}[/]")
     console.print(f"[dim]To execute: lindy-orchestrate run --plan {plan_json_path}[/]")
 
     if output_file:
-        data = _plan_to_dict(plan_result)
+        data = plan_to_dict(plan_result)
         Path(output_file).write_text(json.dumps(data, indent=2, default=str))
         console.print(f"[green]Also saved to {output_file}[/]")
 
@@ -253,7 +245,7 @@ def resume(
     """
     from .scheduler import execute_plan
 
-    cfg = _load_cfg(config)
+    cfg = load_cfg(config)
     sessions = SessionManager(cfg.sessions_path)
 
     if session_id:
@@ -280,7 +272,7 @@ def resume(
         return
 
     # Restore plan from checkpoint
-    plan = _plan_from_dict(session.plan_json)
+    plan = plan_from_dict(session.plan_json)
     completed_count = sum(1 for t in plan.tasks if t.status.value == "completed")
     remaining = [t for t in plan.tasks if t.status.value not in ("completed", "skipped")]
 
@@ -366,17 +358,7 @@ from .cli_onboard import register_onboard_command  # noqa: E402
 from .cli_status import register_status_commands  # noqa: E402
 
 register_config_commands(app, console)
-register_ext_commands(
-    app,
-    console,
-    helpers={
-        "load_cfg": _load_cfg,
-        "plan_to_dict": _plan_to_dict,
-        "plan_from_dict": _plan_from_dict,
-        "persist_plan": _persist_plan,
-        "resolve_goal": _resolve_goal,
-    },
-)
+register_ext_commands(app, console)
 register_onboard_command(app, console)
 register_clear_command(app, console)
-register_status_commands(app, console, _load_cfg)
+register_status_commands(app, console, load_cfg)

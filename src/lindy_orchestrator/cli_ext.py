@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Optional
+from typing import Optional
 
 import typer
 from rich.console import Console
 
-from .cli_helpers import finalise_session, make_on_progress, print_task_list, validate_provider
+from .cli_helpers import (
+    finalise_session,
+    load_cfg as _load_cfg,
+    make_on_progress,
+    persist_plan as _persist_plan,
+    plan_to_dict as _plan_to_dict,
+    print_task_list,
+    validate_provider,
+)
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
 from .reporter import PlanProgress, print_goal_report
@@ -17,17 +25,8 @@ from .session import SessionManager
 from .status.parser import parse_status_md
 
 
-def register_ext_commands(app: typer.Typer, console: Console, helpers: dict[str, Any]) -> None:
-    """Register extension commands on the Typer app.
-
-    Args:
-        helpers: dict with keys 'load_cfg', 'plan_to_dict', 'plan_from_dict',
-                 'persist_plan', 'resolve_goal'.
-    """
-    _load_cfg = helpers["load_cfg"]
-    _plan_to_dict = helpers["plan_to_dict"]
-    _plan_from_dict = helpers["plan_from_dict"]
-    _persist_plan = helpers["persist_plan"]
+def register_ext_commands(app: typer.Typer, console: Console) -> None:
+    """Register extension commands on the Typer app."""
 
     # -------------------------------------------------------------------
     # gc
