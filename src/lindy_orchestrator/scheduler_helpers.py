@@ -17,7 +17,12 @@ log = logging.getLogger(__name__)
 __all__ = [
     "_autofill_ci_params",
     "_check_delivery",
+    "build_prompt",
     "extract_event_info",
+    "gather_branch_delivery",
+    "gather_claude_md",
+    "gather_mailbox_messages",
+    "gather_status_content",
     "inject_branch_delivery",
     "inject_claude_md",
     "inject_mailbox_messages",
@@ -278,3 +283,156 @@ def _autofill_ci_params(
                     qa.params["repo"] = mod_cfg.repo
             except ValueError:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# gather_* variants — return strings instead of mutating task.prompt
+# ---------------------------------------------------------------------------
+
+
+def gather_status_content(task: TaskItem, config: OrchestratorConfig) -> str:
+    """Return STATUS.md content for the task's module, or empty string."""
+    path = config._config_dir / ".orchestrator" / "status" / f"{task.module}.md"
+    if not path.exists():
+        return ""
+    try:
+        content = path.read_text()
+    except Exception:
+        log.warning("Failed to read %s", path, exc_info=True)
+        return ""
+    return f"## Current STATUS.md\n\n{content}"
+
+
+def gather_claude_md(task: TaskItem, config: OrchestratorConfig) -> str:
+    """Return CLAUDE.md / CODEX.md instructions, or empty string."""
+    provider = config.dispatcher.provider
+    if provider == "codex_cli":
+        provider_dir = "codex"
+        header_label = "CODEX.md"
+    else:
+        provider_dir = "claude"
+        header_label = "CLAUDE.md"
+
+    orch_base = config._config_dir / ".orchestrator"
+    primary = orch_base / provider_dir
+    fallback = orch_base / "claude" if provider_dir != "claude" else None
+
+    sections: list[str] = []
+    for name in ("root.md", f"{task.module}.md"):
+        path = primary / name
+        if not path.exists() and fallback:
+            path = fallback / name
+        if path.exists():
+            try:
+                sections.append(path.read_text())
+            except Exception:
+                log.warning("Failed to read %s", path, exc_info=True)
+    if not sections:
+        return ""
+    return f"## {header_label} Instructions\n\n" + "\n\n".join(sections)
+
+
+def gather_mailbox_messages(task: TaskItem, config: OrchestratorConfig) -> str:
+    """Return formatted mailbox messages, or empty string."""
+    if not config.mailbox.enabled or not config.mailbox.inject_on_dispatch:
+        return ""
+    try:
+        mb = Mailbox(config.root / config.mailbox.dir)
+        pending = mb.receive(task.module, unread_only=True)
+        if pending:
+            formatted = format_mailbox_messages(pending)
+            return f"## Inter-agent messages for {task.module}\n\n{formatted}"
+    except Exception:
+        log.warning("Mailbox injection failed for %s", task.module, exc_info=True)
+    return ""
+
+
+def gather_branch_delivery(
+    task: TaskItem,
+    branch_name: str,
+    worktree_path: Path | None,
+    dispatches: int,
+) -> str:
+    """Return branch delivery instructions, or empty string."""
+    if dispatches != 0:
+        return ""
+    if worktree_path:
+        return (
+            f"## IMPORTANT: Branch delivery requirements\n\n"
+            f"You are already on branch `{branch_name}` (worktree isolation).\n"
+            f"Do NOT switch branches or run `git checkout`.\n"
+            f"When done:\n"
+            f"1. `git add` and `git commit` your changes\n"
+            f"2. `git push -u origin {branch_name}` (push to remote)\n"
+            f"Do NOT skip the push step — CI verification depends on it."
+        )
+    return (
+        f"## IMPORTANT: Branch delivery requirements\n\n"
+        f"You MUST deliver your work on branch `{branch_name}`.\n"
+        f"Before starting work:\n"
+        f"1. `git checkout -b {branch_name}` (create the branch)\n"
+        f"When done:\n"
+        f"2. `git add` and `git commit` your changes\n"
+        f"3. `git push -u origin {branch_name}` (push to remote)\n"
+        f"Do NOT skip the push step — CI verification depends on it."
+    )
+
+
+def build_prompt(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    branch_name: str,
+    worktree_path: Path | None,
+    dispatches: int,
+    progress: Callable[[str], None],
+) -> str:
+    """Build the complete prompt for a task dispatch.
+
+    If config.dispatcher.prompt_template is set, reads the template file and
+    renders it with ``str.format_map()``. Falls back to default concatenation
+    order on any error.
+    """
+    user_prompt = task.prompt
+
+    # Gather sections
+    if dispatches == 0:
+        status_content = gather_status_content(task, config)
+        claude_md = gather_claude_md(task, config)
+    else:
+        status_content = ""
+        claude_md = ""
+
+    mailbox_messages = gather_mailbox_messages(task, config)
+    branch_instructions = gather_branch_delivery(task, branch_name, worktree_path, dispatches)
+
+    # Log what was injected
+    if status_content:
+        progress(f"    [dim]Injected STATUS.md for {task.module}[/]")
+    if claude_md:
+        progress("    [dim]Injected CLAUDE.md instructions[/]")
+    if mailbox_messages:
+        progress("    [dim]Injected mailbox messages[/]")
+
+    template_path = config.dispatcher.prompt_template
+    if template_path:
+        try:
+            tpl = Path(template_path).read_text()
+            return tpl.format_map(
+                {
+                    "status_content": status_content,
+                    "claude_md": claude_md,
+                    "mailbox_messages": mailbox_messages,
+                    "branch_instructions": branch_instructions,
+                    "user_prompt": user_prompt,
+                }
+            )
+        except Exception:
+            log.warning("Prompt template render failed, using default order", exc_info=True)
+
+    # Default concatenation order
+    parts = [
+        p
+        for p in [status_content, claude_md, user_prompt, mailbox_messages, branch_instructions]
+        if p
+    ]
+    return "\n\n".join(parts)
