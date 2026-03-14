@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import re
+import shlex
 import signal
+import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,12 +22,9 @@ from .config import OrchestratorConfig
 from .scheduler_helpers import (
     _autofill_ci_params,
     _check_delivery,
+    build_prompt,
     extract_event_info,
-    inject_branch_delivery,
-    inject_claude_md,
-    inject_mailbox_messages,
     inject_qa_gates,
-    inject_status_content,
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
@@ -34,6 +35,57 @@ from .qa.feedback import StructuredFeedback, build_retry_prompt, build_structure
 from .worktree import cleanup_all_worktrees, create_worktree, remove_worktree
 
 log = logging.getLogger(__name__)
+
+# Shell metacharacters that require sh -c wrapping
+_SHELL_META_RE = re.compile(r"&&|\|\||[|;<>]")
+
+
+def _run_lifecycle_hook(
+    hook_name: str,
+    command: str,
+    working_dir: Path,
+    progress: Callable[[str], None],
+    timeout: int = 60,
+) -> bool:
+    """Run a lifecycle hook command. Returns True on success, False on failure.
+
+    Hook failure is non-blocking — logged as a warning, never raises.
+    """
+    if not command:
+        return True
+
+    try:
+        if _SHELL_META_RE.search(command):
+            cmd_args = ["sh", "-c", command]
+        else:
+            cmd_args = shlex.split(command)
+
+        proc = subprocess.run(
+            cmd_args,
+            cwd=str(working_dir),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if proc.returncode != 0:
+            log.warning(
+                "Lifecycle hook %s failed (exit %d): %s",
+                hook_name,
+                proc.returncode,
+                proc.stderr[:200],
+            )
+            progress(f"    [yellow]Hook {hook_name} failed (exit {proc.returncode})[/]")
+            return False
+        progress(f"    [dim]Hook {hook_name} ok[/]")
+        return True
+    except subprocess.TimeoutExpired:
+        log.warning("Lifecycle hook %s timed out after %ds", hook_name, timeout)
+        progress(f"    [yellow]Hook {hook_name} timed out ({timeout}s)[/]")
+        return False
+    except Exception as e:
+        log.warning("Lifecycle hook %s error: %s", hook_name, e)
+        progress(f"    [yellow]Hook {hook_name} error: {e}[/]")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +197,11 @@ def execute_plan(
     max_parallel = config.safety.max_parallel
     total_dispatches = 0
 
+    # Per-module concurrency semaphores
+    module_semaphores: dict[str, threading.Semaphore] = {
+        mod: threading.Semaphore(limit) for mod, limit in config.safety.module_concurrency.items()
+    }
+
     # Initialize hook registry with backward-compat progress adapter
     if hooks is None:
         hooks = HookRegistry()
@@ -181,8 +238,35 @@ def execute_plan(
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
             while not plan.all_terminal() and not _interrupted:
+                # Hot-reload config (safe sections only)
+                if config.check_reload() is not None:
+                    max_retries = config.safety.max_retries_per_task
+                    log.info("Config hot-reloaded")
+
                 ready = plan.next_ready()
+
+                # Emit TASK_SKIPPED for newly skipped tasks (guarded by completed_at)
+                had_new_skips = False
+                for t in plan.tasks:
+                    if t.status == TaskStatus.SKIPPED and t.completed_at is None:
+                        t.completed_at = datetime.now(timezone.utc).isoformat()
+                        had_new_skips = True
+                        hooks.emit(
+                            Event(
+                                type=EventType.TASK_SKIPPED,
+                                task_id=t.id,
+                                module=t.module,
+                                data={
+                                    "reason": t.result,
+                                    "description": t.description,
+                                },
+                            )
+                        )
+                        progress(f"    [dim]Task {t.id} SKIPPED[/] ({t.module}): {t.description}")
+
                 if not ready:
+                    if had_new_skips:
+                        continue  # cascade: re-check for more skips
                     break
 
                 if len(ready) > 1:
@@ -225,6 +309,7 @@ def execute_plan(
                         detail,
                         max_retries,
                         hooks,
+                        module_semaphores.get(task.module),
                     )
                     futures[future] = task
 
@@ -296,11 +381,34 @@ def _execute_single_task(
     detail: Callable[[str], None],
     max_retries: int,
     hooks: HookRegistry | None = None,
+    module_semaphore: threading.Semaphore | None = None,
 ) -> int:
     """Execute a single task with dispatch, QA gates, and retry logic.
 
     Returns the number of dispatches made.
     """
+    if module_semaphore:
+        module_semaphore.acquire()
+
+    try:
+        return _execute_single_task_inner(
+            task, config, logger, progress, detail, max_retries, hooks
+        )
+    finally:
+        if module_semaphore:
+            module_semaphore.release()
+
+
+def _execute_single_task_inner(
+    task: TaskItem,
+    config: OrchestratorConfig,
+    logger: ActionLogger,
+    progress: Callable[[str], None],
+    detail: Callable[[str], None],
+    max_retries: int,
+    hooks: HookRegistry | None = None,
+) -> int:
+    """Core single-task execution (inside optional semaphore)."""
     inject_qa_gates(task, config, progress)
 
     branch_name = f"{config.project.branch_prefix}/task-{task.id}"
@@ -312,6 +420,12 @@ def _execute_single_task(
         progress(f"    [dim]Worktree: .worktrees/task-{task.id}[/]")
     except Exception as e:
         log.warning("Worktree creation failed, using shared directory: %s", e)
+
+    lc = config.lifecycle_hooks
+    hook_cwd = worktree_path or config.root
+
+    if worktree_path and lc.after_create:
+        _run_lifecycle_hook("after_create", lc.after_create, hook_cwd, progress, lc.timeout)
 
     try:
         return _dispatch_loop(
@@ -327,6 +441,10 @@ def _execute_single_task(
         )
     finally:
         if worktree_path:
+            if lc.before_remove:
+                _run_lifecycle_hook(
+                    "before_remove", lc.before_remove, hook_cwd, progress, lc.timeout
+                )
             try:
                 remove_worktree(config.root, task.id)
             except Exception:
@@ -365,12 +483,8 @@ def _prepare_task_prompt(
     dispatches: int,
     progress: Callable[[str], None],
 ) -> None:
-    """Inject STATUS.md, CLAUDE.md, mailbox, and branch delivery into task prompt."""
-    if dispatches == 0:
-        inject_status_content(task, config, progress)
-        inject_claude_md(task, config, progress)
-    inject_mailbox_messages(task, config, progress)
-    inject_branch_delivery(task, branch_name, worktree_path, dispatches)
+    """Build the full task prompt via build_prompt()."""
+    task.prompt = build_prompt(task, config, branch_name, worktree_path, dispatches, progress)
 
 
 def _log_dispatch(logger: ActionLogger, task: TaskItem, result: object) -> None:
@@ -618,11 +732,17 @@ def _dispatch_loop(
     original_prompt = task.prompt
     working_dir, module_dir = _resolve_working_dir(task, config, worktree_path)
 
+    lc = config.lifecycle_hooks
+    hook_cwd = worktree_path or config.root
+
     while True:
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
 
         hb = _HeartbeatTracker(task.id, task.module, progress, detail, hooks)
         _prepare_task_prompt(task, config, branch_name, worktree_path, dispatches, progress)
+
+        if lc.before_run:
+            _run_lifecycle_hook("before_run", lc.before_run, hook_cwd, progress, lc.timeout)
 
         provider = create_provider(config.dispatcher)
         result = provider.dispatch(
@@ -636,6 +756,9 @@ def _dispatch_loop(
         task.result = result.output
         task.cost_usd += result.cost_usd
         _log_dispatch(logger, task, result)
+
+        if result.success and lc.after_run:
+            _run_lifecycle_hook("after_run", lc.after_run, hook_cwd, progress, lc.timeout)
 
         if not result.success:
             _handle_dispatch_failure(task, result, progress, hooks)

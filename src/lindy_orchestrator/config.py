@@ -46,6 +46,7 @@ class DispatcherConfig(BaseModel):
     stall_escalation: StallEscalationConfig = Field(default_factory=StallEscalationConfig)
     permission_mode: str = "bypassPermissions"
     max_output_chars: int = 50_000
+    prompt_template: str = ""
 
 
 class CICheckConfig(BaseModel):
@@ -79,10 +80,19 @@ class QAGatesConfig(BaseModel):
     custom: list[CustomGateConfig] = Field(default_factory=list)
 
 
+class LifecycleHooksConfig(BaseModel):
+    after_create: str = ""
+    before_run: str = ""
+    after_run: str = ""
+    before_remove: str = ""
+    timeout: int = 60
+
+
 class SafetyConfig(BaseModel):
     dry_run: bool = False
     max_retries_per_task: int = 2
     max_parallel: int = 3
+    module_concurrency: dict[str, int] = Field(default_factory=dict)
 
 
 class MailboxConfig(BaseModel):
@@ -125,9 +135,12 @@ class OrchestratorConfig(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     mailbox: MailboxConfig = Field(default_factory=MailboxConfig)
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
+    lifecycle_hooks: LifecycleHooksConfig = Field(default_factory=LifecycleHooksConfig)
 
     # Internal: set after loading, not from YAML
     _config_dir: Path = PrivateAttr(default_factory=lambda: Path("."))
+    _config_path: Path | None = PrivateAttr(default=None)
+    _config_mtime: float = PrivateAttr(default=0.0)
 
     @property
     def root(self) -> Path:
@@ -204,6 +217,34 @@ class OrchestratorConfig(BaseModel):
     def orch_mailbox_path(self) -> Path:
         """Return the resolved path to ``.orchestrator/mailbox/``."""
         return (self._config_dir / ORCH_DIR / "mailbox").resolve()
+
+    def check_reload(self) -> OrchestratorConfig | None:
+        """Check if config file changed and selectively reload safe sections.
+
+        Returns the updated config if reloaded, None if unchanged.
+        Only updates safety, dispatcher, qa_gates, and lifecycle_hooks —
+        never modules (unsafe mid-run).
+        """
+        if self._config_path is None:
+            return None
+        try:
+            mtime = self._config_path.stat().st_mtime
+        except OSError:
+            return None
+        if mtime <= self._config_mtime:
+            return None
+        try:
+            raw = _load_yaml(self._config_path)
+            _normalize_qa_gates(raw)
+            fresh = OrchestratorConfig.model_validate(raw)
+        except Exception:
+            return None
+        self.safety = fresh.safety
+        self.dispatcher = fresh.dispatcher
+        self.qa_gates = fresh.qa_gates
+        self.lifecycle_hooks = fresh.lifecycle_hooks
+        self._config_mtime = mtime
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +360,11 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
         cfg._config_dir = path.parent.parent
     else:
         cfg._config_dir = path.parent
+    cfg._config_path = path
+    try:
+        cfg._config_mtime = path.stat().st_mtime
+    except OSError:
+        pass
     return cfg
 
 

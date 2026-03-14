@@ -43,3 +43,4 @@ Thumbs.db
 
 # lindy-orchestrator
 .orchestrator/
+.worktrees/
