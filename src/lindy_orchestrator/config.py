@@ -60,6 +60,8 @@ class CustomGateConfig(BaseModel):
     cwd: str = "{module_path}"
     timeout: int = 600
     modules: list[str] = Field(default_factory=list)  # empty = all modules
+    required: bool = True  # False = failure is warning only, doesn't trigger retry
+    diff_only: bool = False  # True = inject {changed_files} with git diff file list
 
 
 class StructuralCheckConfig(BaseModel):

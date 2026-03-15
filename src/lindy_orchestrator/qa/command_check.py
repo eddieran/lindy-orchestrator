@@ -35,6 +35,17 @@ class CommandCheckGate:
     ) -> QAResult:
         command = params.get("command", "")
         resolved = kwargs.get("module_path")
+
+        # diff_only: resolve {changed_files} to files changed on this branch
+        if params.get("diff_only") and isinstance(command, str) and "{changed_files}" in command:
+            changed = _get_changed_files(project_root, resolved)
+            if not changed:
+                return QAResult(
+                    gate="command_check",
+                    passed=True,
+                    output="No changed files to check (diff_only mode)",
+                )
+            command = command.replace("{changed_files}", " ".join(changed))
         if "cwd" in params:
             raw_cwd = params["cwd"]
         else:
@@ -113,3 +124,40 @@ class CommandCheckGate:
             output=output,
             details={"exit_code": proc.returncode, "command": command},
         )
+
+
+def _get_changed_files(project_root: Path, module_path: str | None = None) -> list[str]:
+    """Get files changed on the current branch vs main/master."""
+    for base in ("main", "master"):
+        try:
+            merge_result = subprocess.run(
+                ["git", "merge-base", base, "HEAD"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if merge_result.returncode != 0:
+                continue
+            base_sha = merge_result.stdout.strip()
+            diff_result = subprocess.run(
+                ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if diff_result.returncode == 0 and diff_result.stdout.strip():
+                files = diff_result.stdout.strip().splitlines()
+                if module_path:
+                    # Filter to module path
+                    try:
+                        prefix = str(Path(module_path).relative_to(project_root))
+                        if prefix != ".":
+                            files = [f for f in files if f.startswith(prefix)]
+                    except ValueError:
+                        pass
+                return files
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+    return []
