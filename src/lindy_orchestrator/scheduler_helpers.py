@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .config import OrchestratorConfig
 from .dispatch_core import extract_event_info  # canonical location; re-exported here
@@ -103,9 +103,11 @@ def inject_qa_gates(
         progress("    [dim]QA gates skipped (skip_qa=true)[/]")
         return
 
+    skip_gates = set(task.skip_gates) if hasattr(task, "skip_gates") else set()
+
     # Auto-inject structural check gate
     has_structural = any(q.gate == "structural_check" for q in task.qa_checks)
-    if not has_structural:
+    if not has_structural and "structural_check" not in skip_gates:
         sc = config.qa_gates.structural
         task.qa_checks.append(
             QACheck(
@@ -122,7 +124,12 @@ def inject_qa_gates(
     # Auto-inject layer_check gate
     has_layer = any(q.gate == "layer_check" for q in task.qa_checks)
     arch_path = config.root / ".orchestrator" / "architecture.md"
-    if not has_layer and config.qa_gates.layer_check.enabled and arch_path.exists():
+    if (
+        not has_layer
+        and "layer_check" not in skip_gates
+        and config.qa_gates.layer_check.enabled
+        and arch_path.exists()
+    ):
         task.qa_checks.append(
             QACheck(
                 gate="layer_check",
@@ -144,12 +151,14 @@ def inject_qa_gates(
                 continue
             if gate.modules and task.module not in gate.modules:
                 continue
-            task.qa_checks.append(
-                QACheck(
-                    gate="command_check",
-                    params={"command": gate.command, "cwd": gate.cwd},
-                )
-            )
+            if gate.name in skip_gates:
+                continue
+            params: dict[str, Any] = {"command": gate.command, "cwd": gate.cwd}
+            if not gate.required:
+                params["required"] = False
+            if gate.diff_only:
+                params["diff_only"] = True
+            task.qa_checks.append(QACheck(gate="command_check", params=params))
             progress(f"    [dim]Auto-injected QA: command_check ({gate.command})[/]")
 
 

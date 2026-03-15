@@ -1,3 +1,3 @@
 """lindy-orchestrator: Lightweight, git-native multi-agent orchestration framework."""
 
-__version__ = "0.13.0"
+__version__ = "0.13.1"

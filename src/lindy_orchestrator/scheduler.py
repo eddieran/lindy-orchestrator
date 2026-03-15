@@ -562,8 +562,12 @@ def _run_qa_gates(
     hooks: HookRegistry | None,
 ) -> bool:
     """Run QA gates in parallel. Returns True if all pass."""
-    qa_mod = config.qa_module()
     gate_count = len(task.qa_checks)
+    if gate_count == 0:
+        progress("    [dim]No QA gates to run[/]")
+        return True
+
+    qa_mod = config.qa_module()
     progress(f"    Running {gate_count} QA gate(s){'  in parallel' if gate_count > 1 else ''}...")
 
     def _run_gate(qa):
@@ -586,8 +590,11 @@ def _run_qa_gates(
             task.qa_results.append(qa_result)
             logger.log_qa(qa.gate, qa_result.passed, qa_result.output)
             evt_type = EventType.QA_PASSED if qa_result.passed else EventType.QA_FAILED
+            is_required = qa.params.get("required", True)
             if qa_result.passed:
                 progress(f"      [green]PASS[/]: {qa.gate} — {qa_result.output[:100]}")
+            elif not is_required:
+                progress(f"      [yellow]WARN[/]: {qa.gate} (optional) — {qa_result.output[:200]}")
             else:
                 progress(f"      [red]FAIL[/]: {qa.gate} — {qa_result.output[:200]}")
                 detail(f"      Full output: {qa_result.output}")
@@ -642,6 +649,29 @@ def _handle_retry(
     hooks: HookRegistry | None,
 ) -> bool:
     """Handle retry logic after QA failure. Returns True to continue loop, False to stop."""
+    # If all failures are non-retryable (pre-existing violations), skip retry entirely
+    failed_results = [r for r in task.qa_results if not r.passed]
+    if failed_results and all(not r.retryable for r in failed_results):
+        task.status = TaskStatus.FAILED
+        task.completed_at = datetime.now(timezone.utc).isoformat()
+        progress(
+            f"    [bold red]Task {task.id} FAILED[/] — "
+            f"all {len(failed_results)} failure(s) are pre-existing (non-retryable)"
+        )
+        if hooks:
+            hooks.emit(
+                Event(
+                    type=EventType.TASK_FAILED,
+                    task_id=task.id,
+                    module=task.module,
+                    data={
+                        "reason": "non_retryable_failures",
+                        "description": task.description,
+                    },
+                )
+            )
+        return False
+
     task.retries += 1
     if task.retries > max_retries:
         task.status = TaskStatus.FAILED
@@ -769,6 +799,11 @@ def _dispatch_loop(
             f"({result.duration_seconds}s, {result.event_count} events)"
         )
         detail(f"    Output preview: {result.output[:500]}")
+
+        if task.skip_qa:
+            # skip_qa tasks skip delivery check and QA gates entirely
+            _mark_completed(task, logger, progress, hooks)
+            return dispatches
 
         _check_and_log_delivery(config.root, branch_name, logger, task, progress)
         _autofill_ci_params(task.qa_checks, branch_name, config, task.module)
