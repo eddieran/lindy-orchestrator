@@ -93,7 +93,7 @@ class LifecycleHooksConfig(BaseModel):
 class SafetyConfig(BaseModel):
     dry_run: bool = False
     max_retries_per_task: int = 2
-    max_parallel: int = 3
+    max_parallel: int = 10
     module_concurrency: dict[str, int] = Field(default_factory=dict)
 
 
