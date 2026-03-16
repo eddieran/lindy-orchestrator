@@ -36,8 +36,8 @@ class CommandCheckGate:
         command = params.get("command", "")
         resolved = kwargs.get("module_path")
 
-        # diff_only: resolve {changed_files} to files changed on this branch
-        if params.get("diff_only") and isinstance(command, str) and "{changed_files}" in command:
+        # diff_only: resolve {changed_files} or skip if no changes
+        if params.get("diff_only") and isinstance(command, str):
             changed = _get_changed_files(project_root, resolved)
             if not changed:
                 return QAResult(
@@ -45,7 +45,8 @@ class CommandCheckGate:
                     passed=True,
                     output="No changed files to check (diff_only mode)",
                 )
-            command = command.replace("{changed_files}", " ".join(changed))
+            if "{changed_files}" in command:
+                command = command.replace("{changed_files}", " ".join(changed))
         if "cwd" in params:
             raw_cwd = params["cwd"]
         else:
