@@ -157,7 +157,7 @@ def _render_config(ctx: DiscoveryContext) -> str:
             "safety:",
             "  dry_run: false",
             "  max_retries_per_task: 2",
-            f"  max_parallel: {max(min(len(ctx.modules), 3), 2)}",
+            "  max_parallel: 10",
         ]
     )
 
