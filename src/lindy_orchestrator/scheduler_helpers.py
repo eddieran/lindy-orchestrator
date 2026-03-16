@@ -158,6 +158,10 @@ def inject_qa_gates(
                 params["required"] = False
             if gate.diff_only:
                 params["diff_only"] = True
+                # diff_only without {changed_files} placeholder can't filter —
+                # auto-demote to non-required so pre-existing lint doesn't block
+                if "{changed_files}" not in gate.command:
+                    params["required"] = False
             task.qa_checks.append(QACheck(gate="command_check", params=params))
             progress(f"    [dim]Auto-injected QA: command_check ({gate.command})[/]")
 
