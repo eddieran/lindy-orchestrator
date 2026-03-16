@@ -144,6 +144,12 @@ def _render_config(ctx: DiscoveryContext) -> str:
             lines.append(f"    - name: {gate['name']}")
             lines.append(f'      command: "{gate["command"]}"')
             lines.append(f'      cwd: "{gate["cwd"]}"')
+            if gate.get("timeout"):
+                lines.append(f"      timeout: {gate['timeout']}")
+            if gate.get("required") == "false":
+                lines.append("      required: false")
+            if gate.get("diff_only") == "true":
+                lines.append("      diff_only: true")
         lines.append("")
 
     lines.extend(
@@ -182,21 +188,113 @@ def _detect_module_ci(mod) -> str:
 
 
 def _build_qa_gates(ctx: DiscoveryContext) -> list[dict[str, str]]:
-    """Build QA gate configurations from discovery context."""
-    gates = []
+    """Build QA gate configurations from discovery context.
+
+    Smart classification:
+    - Go tests: split into fast (-short) required + full (required: false)
+    - Lint/format commands: add diff_only: true
+    - Playwright/e2e: mark required: false with longer timeout
+    - pytest: add -x --tb=short for fast feedback
+    """
+    gates: list[dict[str, str]] = []
     for mod_name, commands in ctx.qa_requirements.items():
         for cmd in commands:
-            # Clean up comment annotations from command detection
             clean_cmd = cmd.split("  #")[0].strip()
-            gate_name = f"{mod_name}-{_slugify(clean_cmd)}"
-            gates.append(
-                {
-                    "name": gate_name,
-                    "command": clean_cmd,
-                    "cwd": "{module_path}",
-                }
-            )
+            gates.extend(_classify_gate(mod_name, clean_cmd))
     return gates
+
+
+def _classify_gate(mod_name: str, cmd: str) -> list[dict[str, str]]:
+    """Classify a command into one or more smart QA gates."""
+    # Go test: split into fast (-short) + full (optional)
+    if cmd == "go test ./...":
+        return [
+            {
+                "name": f"{mod_name}-test-fast",
+                "command": "go test ./... -short -count=1",
+                "cwd": "{module_path}",
+                "timeout": "120",
+            },
+            {
+                "name": f"{mod_name}-test-full",
+                "command": "go test ./... -count=1",
+                "cwd": "{module_path}",
+                "timeout": "600",
+                "required": "false",
+            },
+        ]
+
+    # pytest: add fast flags
+    if cmd == "pytest":
+        return [
+            {
+                "name": f"{mod_name}-pytest",
+                "command": "pytest -x -q --tb=short",
+                "cwd": "{module_path}",
+            }
+        ]
+
+    # Cargo test: split fast/full
+    if cmd == "cargo test":
+        return [
+            {
+                "name": f"{mod_name}-test",
+                "command": "cargo test",
+                "cwd": "{module_path}",
+            }
+        ]
+
+    # Playwright/e2e: optional with longer timeout
+    if "playwright" in cmd.lower() or "e2e" in cmd.lower() or "cypress" in cmd.lower():
+        return [
+            {
+                "name": f"{mod_name}-{_slugify(cmd)}",
+                "command": cmd,
+                "cwd": "{module_path}",
+                "timeout": "600",
+                "required": "false",
+            }
+        ]
+
+    # Lint/format commands: add diff_only
+    if _is_lint_command(cmd):
+        return [
+            {
+                "name": f"{mod_name}-{_slugify(cmd)}",
+                "command": cmd,
+                "cwd": "{module_path}",
+                "diff_only": "true",
+            }
+        ]
+
+    # Default: as-is
+    return [
+        {
+            "name": f"{mod_name}-{_slugify(cmd)}",
+            "command": cmd,
+            "cwd": "{module_path}",
+        }
+    ]
+
+
+def _is_lint_command(cmd: str) -> bool:
+    """Check if a command is a linter/formatter."""
+    lint_keywords = (
+        "eslint",
+        "prettier",
+        "ruff check",
+        "ruff format",
+        "mypy",
+        "pyright",
+        "tsc --noEmit",
+        "go vet",
+        "clippy",
+        "npm run lint",
+        "npm run format",
+        "biome",
+        "oxlint",
+    )
+    return any(kw in cmd.lower() for kw in lint_keywords)
 
 
 def _slugify(text: str) -> str:
