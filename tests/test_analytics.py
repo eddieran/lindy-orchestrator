@@ -374,3 +374,103 @@ class TestComputeAggregateStats:
         stats = compute_aggregate_stats(sessions_dir, log_path=None, module_filter="backend")
         assert "backend" in stats.per_module
         assert "frontend" not in stats.per_module
+
+
+class TestAnalyticsEdgeCases:
+    """Additional edge case coverage for analytics module."""
+
+    def test_session_with_non_dict_data(self, tmp_path: Path):
+        """Files containing non-dict JSON (e.g. a list) should be skipped."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        (sessions_dir / "array.json").write_text("[]", encoding="utf-8")
+        result = load_session_summaries(sessions_dir)
+        assert result == []
+
+    def test_session_with_invalid_timestamps(self, tmp_path: Path):
+        """Invalid timestamps should result in 0 duration, not crash."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        data = _make_session_data(
+            session_id="bad_ts",
+            started_at="not-a-date",
+            completed_at="also-not-a-date",
+        )
+        _write_session(sessions_dir, "bad_ts", data)
+        result = load_session_summaries(sessions_dir)
+        assert len(result) == 1
+        assert result[0].duration_seconds == 0.0
+
+    def test_session_with_missing_timestamps(self, tmp_path: Path):
+        """Sessions without timestamps should have 0 duration."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        data = _make_session_data(session_id="no_ts", started_at="", completed_at="")
+        _write_session(sessions_dir, "no_ts", data)
+        result = load_session_summaries(sessions_dir)
+        assert len(result) == 1
+        assert result[0].duration_seconds == 0.0
+
+    def test_aggregate_with_no_log_path(self, tmp_path: Path):
+        """compute_aggregate_stats with log_path=None uses session-level QA rate."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        tasks = [
+            {"id": 1, "module": "mod", "status": "completed", "cost_usd": 0.01},
+            {"id": 2, "module": "mod", "status": "failed", "cost_usd": 0.01},
+        ]
+        _write_session(sessions_dir, "s1", _make_session_data(session_id="s1", tasks=tasks))
+        stats = compute_aggregate_stats(sessions_dir, log_path=None)
+        assert stats.qa_pass_rate == pytest.approx(0.5)
+
+    def test_aggregate_with_empty_log_file(self, tmp_path: Path):
+        """Empty log file should fall back to session-level QA rate."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        _write_session(sessions_dir, "s1", _make_session_data(session_id="s1"))
+        log_path = tmp_path / "actions.jsonl"
+        log_path.write_text("", encoding="utf-8")
+        stats = compute_aggregate_stats(sessions_dir, log_path=log_path)
+        # With 1 completed and 0 failed, qa_pass_rate = 1.0
+        assert stats.qa_pass_rate == pytest.approx(1.0)
+
+    def test_per_module_duration_with_task_timestamps(self, tmp_path: Path):
+        """Per-module avg_duration should compute from task-level timestamps."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        tasks = [
+            {
+                "id": 1,
+                "module": "backend",
+                "status": "completed",
+                "cost_usd": 0.01,
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "completed_at": "2026-01-01T00:01:00+00:00",
+            },
+        ]
+        _write_session(sessions_dir, "s1", _make_session_data(session_id="s1", tasks=tasks))
+        stats = compute_aggregate_stats(sessions_dir, log_path=None)
+        assert "backend" in stats.per_module
+        assert stats.per_module["backend"].avg_duration == pytest.approx(60.0)
+
+    def test_deleted_session_file_during_module_breakdown(self, tmp_path: Path):
+        """_get_plan_tasks_from_summary handles missing file gracefully."""
+        from lindy_orchestrator.analytics import SessionSummary, _get_plan_tasks_from_summary
+
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        summary = SessionSummary(session_id="ghost")
+        tasks = _get_plan_tasks_from_summary(summary, sessions_dir)
+        assert tasks == []
+
+    def test_log_entry_with_non_dict_json(self, tmp_path: Path):
+        """JSONL lines containing non-dict JSON should be skipped."""
+        log_path = tmp_path / "actions.jsonl"
+        lines = [
+            '"just a string"',
+            "42",
+            json.dumps({"action": "dispatch", "result": "success"}),
+        ]
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        entries = parse_log_entries(log_path)
+        assert len(entries) == 1
