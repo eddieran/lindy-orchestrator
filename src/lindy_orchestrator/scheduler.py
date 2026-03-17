@@ -225,6 +225,19 @@ def execute_plan(
     metrics = MetricsCollector()
     metrics.attach(hooks)
 
+    # OTel metrics exporter (lazy-loaded when enabled)
+    otel_exporter = None
+    if config.otel.enabled:
+        try:
+            from .otel import setup_otel_from_config
+
+            otel_exporter = setup_otel_from_config(config.otel)
+            if otel_exporter is not None:
+                otel_exporter.attach(hooks)
+                log.info("OTel metrics exporter attached")
+        except ImportError:
+            log.warning("OTel is enabled but opentelemetry-sdk is not installed")
+
     hooks.emit(Event(type=EventType.SESSION_START, data={"goal": plan.goal}))
 
     # Install signal handler so worktrees are cleaned up on Ctrl-C / SIGTERM
@@ -382,6 +395,13 @@ def execute_plan(
                 },
             )
         )
+
+        # Detach OTel exporter before cleanup
+        if otel_exporter is not None:
+            try:
+                otel_exporter.detach()
+            except Exception:
+                log.warning("OTel exporter detach failed", exc_info=True)
 
         # Detach metrics collector
         metrics.detach(hooks)

@@ -111,6 +111,13 @@ class TrackerConfig(BaseModel):
     sync_on_complete: bool = True  # auto-comment + close on completion
 
 
+class OTelConfig(BaseModel):
+    enabled: bool = False
+    exporter: str = "console"  # "console" or "otlp"
+    endpoint: str = ""
+    service_name: str = "lindy-orchestrator"
+
+
 class LoggingConfig(BaseModel):
     dir: str = ".orchestrator/logs"
     session_dir: str = ".orchestrator/sessions"
@@ -138,6 +145,7 @@ class OrchestratorConfig(BaseModel):
     mailbox: MailboxConfig = Field(default_factory=MailboxConfig)
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     lifecycle_hooks: LifecycleHooksConfig = Field(default_factory=LifecycleHooksConfig)
+    otel: OTelConfig = Field(default_factory=OTelConfig)
 
     # Internal: set after loading, not from YAML
     _config_dir: Path = PrivateAttr(default_factory=lambda: Path("."))

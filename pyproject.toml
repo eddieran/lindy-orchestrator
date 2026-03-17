@@ -33,11 +33,17 @@ Documentation = "https://github.com/eddieran/lindy-orchestrator/blob/main/docs/U
 
 [project.optional-dependencies]
 api = ["anthropic>=0.40,<1"]
+otel = [
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20",
+]
 dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
     "pytest-cov>=5.0",
     "ruff>=0.4",
+    "opentelemetry-sdk>=1.20",
 ]
 
 [project.scripts]
