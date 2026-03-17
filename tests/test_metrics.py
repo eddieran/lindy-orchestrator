@@ -71,6 +71,7 @@ class TestTaskLifecycle:
         assert tm.duration_seconds is not None
         assert abs(tm.duration_seconds - 5.0) < 0.1
         assert tm.module == "backend"
+        assert tm.task_id == 1
 
     def test_started_then_failed(self):
         hooks = HookRegistry()
@@ -110,7 +111,24 @@ class TestTaskLifecycle:
         hooks.emit(Event(type=EventType.TASK_RETRYING, task_id=1, module="mod"))
 
         snap = mc.snapshot()
-        assert snap.per_task[1].retries == 2
+        assert snap.per_task[1].retry_count == 2
+
+    def test_description_tracked(self):
+        hooks = HookRegistry()
+        mc = MetricsCollector()
+        mc.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.TASK_STARTED,
+                task_id=1,
+                module="backend",
+                data={"description": "Setup API"},
+            )
+        )
+
+        snap = mc.snapshot()
+        assert snap.per_task[1].description == "Setup API"
 
 
 class TestCostAccumulation:
@@ -126,6 +144,36 @@ class TestCostAccumulation:
         assert snap.per_task[1].cost_usd == 0.0
         assert snap.total_cost == 0.0
 
+    def test_cost_from_event_data(self):
+        hooks = HookRegistry()
+        mc = MetricsCollector()
+        mc.attach(hooks)
+
+        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="m"))
+        hooks.emit(
+            Event(
+                type=EventType.TASK_COMPLETED,
+                task_id=1,
+                module="m",
+                data={"cost_usd": 0.25},
+            )
+        )
+        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=2, module="m"))
+        hooks.emit(
+            Event(
+                type=EventType.TASK_FAILED,
+                task_id=2,
+                module="m",
+                data={"cost_usd": 0.10},
+            )
+        )
+
+        snap = mc.snapshot()
+        assert snap.per_task[1].cost_usd == 0.25
+        assert snap.per_task[2].cost_usd == 0.10
+        assert abs(snap.total_cost - 0.35) < 0.001
+        assert abs(snap.per_module["m"].total_cost - 0.35) < 0.001
+
 
 class TestQATracking:
     def test_qa_passed_and_failed_counts(self):
@@ -139,10 +187,10 @@ class TestQATracking:
         hooks.emit(Event(type=EventType.QA_FAILED, task_id=1, module="mod"))
 
         snap = mc.snapshot()
-        assert snap.per_task[1].qa_passed == 2
-        assert snap.per_task[1].qa_failed == 1
+        assert snap.per_task[1].qa_pass_count == 2
+        assert snap.per_task[1].qa_fail_count == 1
 
-    def test_qa_pass_rate_in_snapshot(self):
+    def test_session_level_qa_counts(self):
         hooks = HookRegistry()
         mc = MetricsCollector()
         mc.attach(hooks)
@@ -153,11 +201,10 @@ class TestQATracking:
         hooks.emit(Event(type=EventType.QA_FAILED, task_id=1, module="mod"))
 
         snap = mc.snapshot()
-        # 2 passed out of 3 total
-        assert snap.qa_pass_rate is not None
-        assert abs(snap.qa_pass_rate - 2 / 3) < 0.01
+        assert snap.qa_pass_count == 2
+        assert snap.qa_fail_count == 1
 
-    def test_no_qa_events_gives_none_rate(self):
+    def test_no_qa_events_gives_zero_counts(self):
         hooks = HookRegistry()
         mc = MetricsCollector()
         mc.attach(hooks)
@@ -165,7 +212,8 @@ class TestQATracking:
         hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="mod"))
 
         snap = mc.snapshot()
-        assert snap.qa_pass_rate is None
+        assert snap.qa_pass_count == 0
+        assert snap.qa_fail_count == 0
 
 
 class TestPerModuleAggregation:
@@ -219,7 +267,23 @@ class TestPerModuleAggregation:
         # durations: 2s and 4s → avg 3s
         assert snap.per_module["mod"].avg_duration is not None
         assert abs(snap.per_module["mod"].avg_duration - 3.0) < 0.1
-        assert abs(snap.avg_duration - 3.0) < 0.1
+
+    def test_per_module_qa_counts(self):
+        hooks = HookRegistry()
+        mc = MetricsCollector()
+        mc.attach(hooks)
+
+        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="a"))
+        hooks.emit(Event(type=EventType.QA_PASSED, task_id=1, module="a"))
+        hooks.emit(Event(type=EventType.QA_FAILED, task_id=1, module="a"))
+        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=2, module="b"))
+        hooks.emit(Event(type=EventType.QA_PASSED, task_id=2, module="b"))
+
+        snap = mc.snapshot()
+        assert snap.per_module["a"].qa_pass_count == 1
+        assert snap.per_module["a"].qa_fail_count == 1
+        assert snap.per_module["b"].qa_pass_count == 1
+        assert snap.per_module["b"].qa_fail_count == 0
 
 
 class TestSnapshotIndependence:
@@ -291,6 +355,22 @@ class TestSessionTiming:
         snap = mc.snapshot()
         assert snap.elapsed_seconds is None
 
+    def test_started_at_from_session_start(self):
+        hooks = HookRegistry()
+        mc = MetricsCollector()
+        mc.attach(hooks)
+
+        ts = _ts(0)
+        hooks.emit(Event(type=EventType.SESSION_START, timestamp=ts, data={"goal": "test"}))
+
+        snap = mc.snapshot()
+        assert snap.started_at == ts
+
+    def test_no_session_start_gives_none_started_at(self):
+        mc = MetricsCollector()
+        snap = mc.snapshot()
+        assert snap.started_at is None
+
 
 class TestConcurrencySafety:
     def test_concurrent_events_no_data_corruption(self):
@@ -342,7 +422,7 @@ class TestConcurrencySafety:
         assert snap.total_tasks == 10
         assert snap.completed == 10
         assert all(tm.status == "completed" for tm in snap.per_task.values())
-        assert all(tm.qa_passed == 1 for tm in snap.per_task.values())
+        assert all(tm.qa_pass_count == 1 for tm in snap.per_task.values())
 
     def test_concurrent_snapshots_safe(self):
         hooks = HookRegistry()

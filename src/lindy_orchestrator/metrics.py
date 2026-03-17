@@ -1,7 +1,7 @@
 """Runtime metrics collection for orchestrator sessions.
 
 Subscribes to HookRegistry via on_any to aggregate task durations, costs,
-QA pass rates, and per-module breakdowns. Thread-safe via threading.Lock.
+QA pass/fail counts, and per-module breakdowns. Thread-safe via threading.Lock.
 """
 
 from __future__ import annotations
@@ -17,13 +17,15 @@ from .hooks import Event, EventType, HookRegistry
 
 @dataclass
 class TaskMetrics:
+    task_id: int = 0
+    module: str = ""
+    description: str = ""
+    status: str = "pending"
     duration_seconds: float | None = None
     cost_usd: float = 0.0
-    status: str = "pending"
-    qa_passed: int = 0
-    qa_failed: int = 0
-    retries: int = 0
-    module: str = ""
+    qa_pass_count: int = 0
+    qa_fail_count: int = 0
+    retry_count: int = 0
     started_at: str | None = None
     completed_at: str | None = None
 
@@ -36,7 +38,8 @@ class ModuleMetrics:
     completed: int = 0
     failed: int = 0
     skipped: int = 0
-    qa_pass_rate: float | None = None
+    qa_pass_count: int = 0
+    qa_fail_count: int = 0
     avg_duration: float | None = None
 
 
@@ -47,10 +50,11 @@ class SessionMetricsSnapshot:
     completed: int = 0
     failed: int = 0
     skipped: int = 0
-    qa_pass_rate: float | None = None
-    avg_duration: float | None = None
+    qa_pass_count: int = 0
+    qa_fail_count: int = 0
     per_module: dict[str, ModuleMetrics] = field(default_factory=dict)
     per_task: dict[int, TaskMetrics] = field(default_factory=dict)
+    started_at: str | None = None
     elapsed_seconds: float | None = None
 
 
@@ -72,6 +76,7 @@ class MetricsCollector:
         self._tasks: dict[int, TaskMetrics] = {}
         self._session_start_mono: float | None = None
         self._session_end_mono: float | None = None
+        self._session_started_at: str | None = None
 
     def attach(self, hooks: HookRegistry) -> None:
         """Register the collector as an on_any handler."""
@@ -91,63 +96,68 @@ class MetricsCollector:
         match event.type:
             case EventType.SESSION_START:
                 self._session_start_mono = time.monotonic()
+                self._session_started_at = event.timestamp
             case EventType.SESSION_END:
                 self._session_end_mono = time.monotonic()
             case EventType.TASK_STARTED:
                 if event.task_id is not None:
                     self._tasks[event.task_id] = TaskMetrics(
+                        task_id=event.task_id,
                         status="in_progress",
                         module=event.module,
+                        description=event.data.get("description", ""),
                         started_at=event.timestamp,
                     )
             case EventType.TASK_COMPLETED:
                 if event.task_id is not None:
                     tm = self._tasks.get(event.task_id)
                     if tm is None:
-                        tm = TaskMetrics(module=event.module)
+                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
                         self._tasks[event.task_id] = tm
                     tm.status = "completed"
                     tm.completed_at = event.timestamp
+                    tm.cost_usd += event.data.get("cost_usd", 0.0)
                     if tm.started_at and tm.completed_at:
                         tm.duration_seconds = _parse_duration(tm.started_at, tm.completed_at)
             case EventType.TASK_FAILED:
                 if event.task_id is not None:
                     tm = self._tasks.get(event.task_id)
                     if tm is None:
-                        tm = TaskMetrics(module=event.module)
+                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
                         self._tasks[event.task_id] = tm
                     tm.status = "failed"
                     tm.completed_at = event.timestamp
+                    tm.cost_usd += event.data.get("cost_usd", 0.0)
                     if tm.started_at and tm.completed_at:
                         tm.duration_seconds = _parse_duration(tm.started_at, tm.completed_at)
             case EventType.TASK_SKIPPED:
                 if event.task_id is not None:
                     tm = self._tasks.get(event.task_id)
                     if tm is None:
-                        tm = TaskMetrics(module=event.module)
+                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
                         self._tasks[event.task_id] = tm
                     tm.status = "skipped"
             case EventType.TASK_RETRYING:
                 if event.task_id is not None:
                     tm = self._tasks.get(event.task_id)
                     if tm:
-                        tm.retries += 1
+                        tm.retry_count += 1
             case EventType.QA_PASSED:
                 if event.task_id is not None:
                     tm = self._tasks.get(event.task_id)
                     if tm:
-                        tm.qa_passed += 1
+                        tm.qa_pass_count += 1
             case EventType.QA_FAILED:
                 if event.task_id is not None:
                     tm = self._tasks.get(event.task_id)
                     if tm:
-                        tm.qa_failed += 1
+                        tm.qa_fail_count += 1
 
     def snapshot(self) -> SessionMetricsSnapshot:
         """Return a frozen copy of current metrics, safe for cross-thread use."""
         with self._lock:
-            # Deep copy per-task metrics
-            per_task = {tid: copy.copy(tm) for tid, tm in self._tasks.items()}
+            # Deep copy per-task metrics for isolation
+            per_task = copy.deepcopy(self._tasks)
 
             # Compute elapsed
             elapsed: float | None = None
@@ -164,6 +174,8 @@ class MetricsCollector:
                 mm = modules[mod]
                 mm.task_count += 1
                 mm.total_cost += tm.cost_usd
+                mm.qa_pass_count += tm.qa_pass_count
+                mm.qa_fail_count += tm.qa_fail_count
                 if tm.status == "completed":
                     mm.completed += 1
                 elif tm.status == "failed":
@@ -171,14 +183,8 @@ class MetricsCollector:
                 elif tm.status == "skipped":
                     mm.skipped += 1
 
-            # Compute qa_pass_rate and avg_duration per module
+            # Compute avg_duration per module
             for mod, mm in modules.items():
-                total_qa = sum(
-                    t.qa_passed + t.qa_failed for t in per_task.values() if t.module == mod
-                )
-                if total_qa > 0:
-                    passed = sum(t.qa_passed for t in per_task.values() if t.module == mod)
-                    mm.qa_pass_rate = passed / total_qa
                 durations = [
                     t.duration_seconds
                     for t in per_task.values()
@@ -193,18 +199,8 @@ class MetricsCollector:
             failed = sum(1 for t in per_task.values() if t.status == "failed")
             skipped = sum(1 for t in per_task.values() if t.status == "skipped")
             total_cost = sum(t.cost_usd for t in per_task.values())
-
-            total_qa = sum(t.qa_passed + t.qa_failed for t in per_task.values())
-            qa_pass_rate: float | None = None
-            if total_qa > 0:
-                qa_pass_rate = sum(t.qa_passed for t in per_task.values()) / total_qa
-
-            all_durations = [
-                t.duration_seconds for t in per_task.values() if t.duration_seconds is not None
-            ]
-            avg_duration: float | None = None
-            if all_durations:
-                avg_duration = sum(all_durations) / len(all_durations)
+            qa_pass_count = sum(t.qa_pass_count for t in per_task.values())
+            qa_fail_count = sum(t.qa_fail_count for t in per_task.values())
 
             return SessionMetricsSnapshot(
                 total_cost=total_cost,
@@ -212,9 +208,10 @@ class MetricsCollector:
                 completed=completed,
                 failed=failed,
                 skipped=skipped,
-                qa_pass_rate=qa_pass_rate,
-                avg_duration=avg_duration,
+                qa_pass_count=qa_pass_count,
+                qa_fail_count=qa_fail_count,
                 per_module=modules,
                 per_task=per_task,
+                started_at=self._session_started_at,
                 elapsed_seconds=elapsed,
             )
