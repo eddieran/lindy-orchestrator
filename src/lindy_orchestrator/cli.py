@@ -63,6 +63,28 @@ def main(
     """Lightweight, git-native multi-agent orchestration framework."""
 
 
+def _start_web_dashboard(
+    plan: object,
+    hooks: HookRegistry,
+    port: int,
+    console: Console,
+) -> object:
+    """Start the web dashboard, logging a warning on failure."""
+    from .web.server import WebDashboard
+
+    try:
+        wd = WebDashboard(plan, hooks, port=port)
+        wd.start()
+        console.print(f"[bold green]Web dashboard:[/] {wd.url}")
+        return wd
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("Web dashboard failed to start: %s", exc)
+        console.print(f"[yellow]Web dashboard failed to start: {exc}[/]")
+        return None
+
+
 @app.command()
 def run(
     goal: Optional[str] = typer.Argument(None, help="Natural language goal to achieve"),
@@ -80,6 +102,8 @@ def run(
         "--provider",
         help="Dispatch provider: claude_cli (default) or codex_cli",
     ),
+    web: bool = typer.Option(False, "--web", help="Enable browser dashboard"),
+    web_port: int = typer.Option(8420, "--web-port", help="Web dashboard port"),
 ) -> None:
     """Execute a goal with full orchestration.
 
@@ -158,18 +182,25 @@ def run(
     console.print("\n[bold cyan][2/3][/] Executing tasks...")
     hooks = HookRegistry()
     dashboard: Dashboard | None = None
-    if console.is_terminal:
-        dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
-        dashboard.start()
-        # Dashboard takes over display; suppress on_progress text output
-        plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
-        dashboard.stop()
-        hooks.shutdown()
-    else:
-        plan = execute_plan(
-            plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
-        )
-        hooks.shutdown()
+    web_dashboard = None
+
+    if web:
+        web_dashboard = _start_web_dashboard(plan, hooks, web_port, console)
+
+    try:
+        if console.is_terminal:
+            dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
+            dashboard.start()
+            # Dashboard takes over display; suppress on_progress text output
+            plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
+            dashboard.stop()
+        else:
+            plan = execute_plan(
+                plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+            )
+    finally:
+        if web_dashboard is not None:
+            web_dashboard.stop()
 
     # Step 4: Report
     console.print("\n[bold cyan][3/3][/] Generating report...")
@@ -240,6 +271,8 @@ def resume(
     session_id: Optional[str] = typer.Argument(None, help="Session ID to resume"),
     config: Optional[str] = typer.Option(None, "-c", "--config"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Show detailed output"),
+    web: bool = typer.Option(False, "--web", help="Enable browser dashboard"),
+    web_port: int = typer.Option(8420, "--web-port", help="Web dashboard port"),
 ) -> None:
     """Resume a previous session from its last checkpoint.
 
@@ -270,7 +303,14 @@ def resume(
 
     if not session.plan_json:
         console.print("[yellow]No saved plan found. Re-running from scratch...[/]")
-        run(goal=session.goal, config=config, dry_run=False, verbose=verbose)
+        run(
+            goal=session.goal,
+            config=config,
+            dry_run=False,
+            verbose=verbose,
+            web=web,
+            web_port=web_port,
+        )
         return
 
     # Restore plan from checkpoint
@@ -323,17 +363,24 @@ def resume(
     console.print("\n[bold cyan]Resuming execution...[/]")
     hooks = HookRegistry()
     dashboard: Dashboard | None = None
-    if console.is_terminal:
-        dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
-        dashboard.start()
-        plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
-        dashboard.stop()
-        hooks.shutdown()
-    else:
-        plan = execute_plan(
-            plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
-        )
-        hooks.shutdown()
+    web_dashboard = None
+
+    if web:
+        web_dashboard = _start_web_dashboard(plan, hooks, web_port, console)
+
+    try:
+        if console.is_terminal:
+            dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
+            dashboard.start()
+            plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
+            dashboard.stop()
+        else:
+            plan = execute_plan(
+                plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+            )
+    finally:
+        if web_dashboard is not None:
+            web_dashboard.stop()
 
     duration = round(time.time() - start, 1)
 
