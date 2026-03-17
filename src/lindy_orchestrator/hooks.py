@@ -8,6 +8,7 @@ Supports both synchronous and asynchronous handlers.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -118,12 +119,26 @@ class HookRegistry:
             async_specific = list(self._async_handlers.get(event.type, []))
             async_any = list(self._async_any_handlers)
 
+        # Separate any misplaced async handlers registered via on()/on_any()
+        sync_specific: list[EventHandler] = []
+        sync_any: list[EventHandler] = []
         for handler in specific:
+            if inspect.iscoroutinefunction(handler):
+                async_specific.append(handler)  # type: ignore[arg-type]
+            else:
+                sync_specific.append(handler)
+        for handler in any_handlers:
+            if inspect.iscoroutinefunction(handler):
+                async_any.append(handler)  # type: ignore[arg-type]
+            else:
+                sync_any.append(handler)
+
+        for handler in sync_specific:
             try:
                 handler(event)
             except Exception:
                 log.warning("Hook handler %s failed for %s", handler, event.type, exc_info=True)
-        for handler in any_handlers:
+        for handler in sync_any:
             try:
                 handler(event)
             except Exception:

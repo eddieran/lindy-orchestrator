@@ -268,3 +268,37 @@ class TestBackwardCompat:
         reg.on(EventType.TASK_STARTED, good)
         reg.emit(Event(type=EventType.TASK_STARTED))
         assert received == [True]
+
+    def test_async_handler_via_on_auto_detected(self):
+        """Async handler registered via on() is auto-detected and dispatched."""
+        reg = HookRegistry()
+        received = []
+        done = threading.Event()
+
+        async def handler(e: Event) -> None:
+            received.append(e.type)
+            done.set()
+
+        reg.on(EventType.TASK_STARTED, handler)
+        reg.emit(Event(type=EventType.TASK_STARTED))
+
+        assert done.wait(timeout=2), "async handler via on() should fire on background loop"
+        assert received == [EventType.TASK_STARTED]
+        reg.shutdown()
+
+    def test_async_handler_via_on_any_auto_detected(self):
+        """Async handler registered via on_any() is auto-detected and dispatched."""
+        reg = HookRegistry()
+        received = []
+        done = threading.Event()
+
+        async def handler(e: Event) -> None:
+            received.append(e.type)
+            done.set()
+
+        reg.on_any(handler)
+        reg.emit(Event(type=EventType.TASK_STARTED))
+
+        assert done.wait(timeout=2), "async handler via on_any() should fire on background loop"
+        assert received == [EventType.TASK_STARTED]
+        reg.shutdown()
