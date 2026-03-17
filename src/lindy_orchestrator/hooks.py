@@ -101,6 +101,10 @@ class HookRegistry:
             self._handlers.clear()
             self._any_handlers.clear()
 
+    def shutdown(self) -> None:
+        """Tear down the registry: clear all handlers and release resources."""
+        self.clear()
+
     @property
     def handler_count(self) -> int:
         """Total number of registered handlers."""
