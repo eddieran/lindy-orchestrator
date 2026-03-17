@@ -121,6 +121,19 @@ def _run_custom_command_gate(
     command_str = gate_def.command.replace("{module_path}", module_path)
     cwd = gate_def.cwd.replace("{module_path}", module_path)
 
+    # diff_only: resolve {changed_files} or skip if no changes
+    if gate_def.diff_only and "{changed_files}" in command_str:
+        from .command_check import _get_changed_files
+
+        changed = _get_changed_files(project_root, resolved_module_path)
+        if not changed:
+            return QAResult(
+                gate=gate_def.name,
+                passed=True,
+                output="No changed files to check (diff_only mode)",
+            )
+        command_str = command_str.replace("{changed_files}", " ".join(changed))
+
     # Use shlex.split + shell=False instead of shell=True
     try:
         cmd_args = shlex.split(command_str)
