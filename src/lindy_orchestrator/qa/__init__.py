@@ -160,11 +160,28 @@ def _run_custom_command_gate(
     if proc.stderr:
         output += "\n--- stderr ---\n" + proc.stderr[-2000:]
 
+    # Diff-aware retryability for custom gates (same logic as CommandCheckGate)
+    retryable = True
+    changed_files: list[str] | None = None
+    if not passed:
+        from .command_check import _check_retryable, _get_changed_files
+
+        try:
+            changed_files = _get_changed_files(project_root, resolved_module_path)
+        except Exception:
+            changed_files = None
+        retryable = _check_retryable(project_root, Path(cwd), resolved_module_path, output)
+
+    details: dict[str, Any] = {"exit_code": proc.returncode, "command": command_str}
+    if changed_files is not None:
+        details["changed_files"] = changed_files
+
     return QAResult(
         gate=gate_def.name,
         passed=passed,
         output=output,
-        details={"exit_code": proc.returncode, "command": command_str},
+        details=details,
+        retryable=retryable,
     )
 
 
