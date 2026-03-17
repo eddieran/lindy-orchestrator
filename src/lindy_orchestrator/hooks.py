@@ -2,16 +2,19 @@
 
 Provides a thread-safe registry for event handlers that fire on task
 state transitions, QA results, stall detection, checkpoints, and more.
+Supports both synchronous and asynchronous handlers.
 """
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 log = logging.getLogger(__name__)
 
@@ -43,15 +46,38 @@ class Event:
 
 
 EventHandler = Callable[[Event], None]
+AsyncEventHandler = Callable[[Event], Awaitable[None]]
 
 
 class HookRegistry:
-    """Central registry for event handlers. Thread-safe."""
+    """Central registry for event handlers. Thread-safe.
+
+    Supports both synchronous and asynchronous handlers. Async handlers
+    run on a lazily-created background daemon thread with its own event loop.
+    """
 
     def __init__(self) -> None:
         self._handlers: dict[EventType, list[EventHandler]] = {}
         self._any_handlers: list[EventHandler] = []
+        self._async_handlers: dict[EventType, list[AsyncEventHandler]] = {}
+        self._async_any_handlers: list[AsyncEventHandler] = []
         self._lock = threading.Lock()
+        self._async_loop: asyncio.AbstractEventLoop | None = None
+        self._async_thread: threading.Thread | None = None
+
+    def _ensure_async_loop(self) -> asyncio.AbstractEventLoop:
+        """Lazily create a background daemon thread with an event loop."""
+        if self._async_loop is not None and self._async_loop.is_running():
+            return self._async_loop
+
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, daemon=True, name="hooks-async")
+        thread.start()
+        self._async_loop = loop
+        self._async_thread = thread
+        return loop
+
+    # -- Sync handler registration --
 
     def on(self, event_type: EventType, handler: EventHandler) -> None:
         """Register a handler for a specific event type."""
@@ -65,22 +91,86 @@ class HookRegistry:
         with self._lock:
             self._any_handlers.append(handler)
 
+    # -- Async handler registration --
+
+    def on_async(self, event_type: EventType, handler: AsyncEventHandler) -> None:
+        """Register an async handler for a specific event type."""
+        with self._lock:
+            if event_type not in self._async_handlers:
+                self._async_handlers[event_type] = []
+            self._async_handlers[event_type].append(handler)
+
+    def on_any_async(self, handler: AsyncEventHandler) -> None:
+        """Register an async handler that fires on every event."""
+        with self._lock:
+            self._async_any_handlers.append(handler)
+
+    # -- Emit --
+
     def emit(self, event: Event) -> None:
-        """Fire all matching handlers synchronously."""
+        """Fire all matching handlers.
+
+        Synchronous handlers run inline. Async handlers are scheduled
+        on the background event loop (fire-and-forget).
+        """
         with self._lock:
             specific = list(self._handlers.get(event.type, []))
             any_handlers = list(self._any_handlers)
+            async_specific = list(self._async_handlers.get(event.type, []))
+            async_any = list(self._async_any_handlers)
 
+        # Separate any misplaced async handlers registered via on()/on_any()
+        sync_specific: list[EventHandler] = []
+        sync_any: list[EventHandler] = []
         for handler in specific:
-            try:
-                handler(event)
-            except Exception:
-                log.warning("Hook handler %s failed for %s", handler, event.type, exc_info=True)
+            if inspect.iscoroutinefunction(handler):
+                async_specific.append(handler)  # type: ignore[arg-type]
+            else:
+                sync_specific.append(handler)
         for handler in any_handlers:
+            if inspect.iscoroutinefunction(handler):
+                async_any.append(handler)  # type: ignore[arg-type]
+            else:
+                sync_any.append(handler)
+
+        for handler in sync_specific:
             try:
                 handler(event)
             except Exception:
                 log.warning("Hook handler %s failed for %s", handler, event.type, exc_info=True)
+        for handler in sync_any:
+            try:
+                handler(event)
+            except Exception:
+                log.warning("Hook handler %s failed for %s", handler, event.type, exc_info=True)
+
+        # Schedule async handlers on background loop
+        if async_specific or async_any:
+            loop = self._ensure_async_loop()
+            for handler in async_specific:
+                loop.call_soon_threadsafe(self._schedule_async, loop, handler, event)
+            for handler in async_any:
+                loop.call_soon_threadsafe(self._schedule_async, loop, handler, event)
+
+    @staticmethod
+    def _schedule_async(
+        loop: asyncio.AbstractEventLoop,
+        handler: AsyncEventHandler,
+        event: Event,
+    ) -> None:
+        """Create a task for an async handler with error handling."""
+
+        async def _safe_run() -> None:
+            try:
+                await handler(event)
+            except Exception:
+                log.warning(
+                    "Async hook handler %s failed for %s", handler, event.type, exc_info=True
+                )
+
+        loop.create_task(_safe_run())
+
+    # -- Removal --
 
     def remove(self, event_type: EventType, handler: EventHandler) -> None:
         """Remove a specific handler."""
@@ -95,17 +185,52 @@ class HookRegistry:
             if handler in self._any_handlers:
                 self._any_handlers.remove(handler)
 
+    def remove_async(self, event_type: EventType, handler: AsyncEventHandler) -> None:
+        """Remove an async handler for a specific event type."""
+        with self._lock:
+            handlers = self._async_handlers.get(event_type, [])
+            if handler in handlers:
+                handlers.remove(handler)
+
+    def remove_any_async(self, handler: AsyncEventHandler) -> None:
+        """Remove an async on_any handler."""
+        with self._lock:
+            if handler in self._async_any_handlers:
+                self._async_any_handlers.remove(handler)
+
     def clear(self) -> None:
-        """Remove all handlers."""
+        """Remove all handlers (sync and async)."""
         with self._lock:
             self._handlers.clear()
             self._any_handlers.clear()
+            self._async_handlers.clear()
+            self._async_any_handlers.clear()
+
+    def shutdown(self, timeout: float = 5.0) -> None:
+        """Stop the background async event loop gracefully.
+
+        After shutdown, sync handlers continue to work normally.
+        Async handlers will no longer be dispatched until a new emit
+        triggers loop recreation.
+        """
+        loop = self._async_loop
+        thread = self._async_thread
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=timeout)
+        self._async_loop = None
+        self._async_thread = None
 
     @property
     def handler_count(self) -> int:
-        """Total number of registered handlers."""
+        """Total number of registered handlers (sync + async)."""
         with self._lock:
-            return sum(len(h) for h in self._handlers.values()) + len(self._any_handlers)
+            sync = sum(len(h) for h in self._handlers.values()) + len(self._any_handlers)
+            async_ = sum(len(h) for h in self._async_handlers.values()) + len(
+                self._async_any_handlers
+            )
+            return sync + async_
 
 
 def make_progress_adapter(

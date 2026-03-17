@@ -164,6 +164,7 @@ def run(
         # Dashboard takes over display; suppress on_progress text output
         plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
         dashboard.stop()
+        hooks.shutdown()
     else:
         plan = execute_plan(
             plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
@@ -326,6 +327,7 @@ def resume(
         dashboard.start()
         plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
         dashboard.stop()
+        hooks.shutdown()
     else:
         plan = execute_plan(
             plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks

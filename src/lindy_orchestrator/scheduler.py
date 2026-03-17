@@ -28,6 +28,7 @@ from .scheduler_helpers import (
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
+from .metrics import MetricsCollector
 from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
@@ -208,6 +209,10 @@ def execute_plan(
     if on_progress:
         hooks.on_any(make_progress_adapter(on_progress))
 
+    # Attach metrics collector before any events are emitted
+    metrics = MetricsCollector()
+    metrics.attach(hooks)
+
     def progress(msg: str) -> None:
         if on_progress:
             on_progress(msg)
@@ -370,6 +375,29 @@ def execute_plan(
             },
         )
     )
+
+    # Capture and log final metrics snapshot
+    try:
+        snap = metrics.snapshot()
+        logger.log_action(
+            "session_metrics",
+            details={
+                "total_tasks": snap.total_tasks,
+                "completed": snap.completed,
+                "failed": snap.failed,
+                "skipped": snap.skipped,
+                "total_cost_usd": snap.total_cost_usd,
+                "total_dispatches": snap.total_dispatches,
+                "qa_passed": snap.qa_passed,
+                "qa_failed": snap.qa_failed,
+            },
+        )
+    except Exception:
+        log.warning("Failed to log session metrics", exc_info=True)
+    finally:
+        metrics.detach()
+        hooks.shutdown()
+
     return plan
 
 
