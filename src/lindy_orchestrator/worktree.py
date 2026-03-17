@@ -48,9 +48,40 @@ def create_worktree(project_root: Path, branch_name: str, task_id: int) -> Path:
             timeout=30,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"git worktree add failed for {branch_name}: {result.stderr.strip()}"
-            )
+            # Branch already checked out elsewhere — fall back to detached HEAD
+            # then create a new branch inside the worktree.
+            if (
+                "already used by worktree" in result.stderr
+                or "already checked out" in result.stderr
+            ):
+                log.warning(
+                    "Branch %s occupied, creating worktree in detached HEAD mode",
+                    branch_name,
+                )
+                result2 = subprocess.run(
+                    ["git", "worktree", "add", "--detach", str(worktree_dir)],
+                    cwd=project_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result2.returncode != 0:
+                    raise RuntimeError(
+                        f"git worktree add --detach failed: {result2.stderr.strip()}"
+                    )
+                # Create a unique branch inside the new worktree
+                wt_branch = f"worktree-task-{task_id}"
+                subprocess.run(
+                    ["git", "checkout", "-b", wt_branch],
+                    cwd=str(worktree_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            else:
+                raise RuntimeError(
+                    f"git worktree add failed for {branch_name}: {result.stderr.strip()}"
+                )
 
     log.info("Created worktree at %s on branch %s", worktree_dir, branch_name)
     return worktree_dir.resolve()
