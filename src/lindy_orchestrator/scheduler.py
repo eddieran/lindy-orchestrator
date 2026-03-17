@@ -28,6 +28,7 @@ from .scheduler_helpers import (
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
+from .metrics import MetricsCollector
 from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
@@ -208,6 +209,10 @@ def execute_plan(
     if on_progress:
         hooks.on_any(make_progress_adapter(on_progress))
 
+    # Attach metrics collector before SESSION_START
+    metrics = MetricsCollector()
+    metrics.attach(hooks)
+
     def progress(msg: str) -> None:
         if on_progress:
             on_progress(msg)
@@ -359,6 +364,9 @@ def execute_plan(
             signal.signal(signal.SIGTERM, prev_sigterm)
         except (OSError, ValueError):
             pass
+
+        # Detach metrics collector
+        metrics.detach(hooks)
 
     hooks.emit(
         Event(
