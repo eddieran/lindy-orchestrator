@@ -718,11 +718,17 @@ def _handle_retry(
             )
         )
 
-    # Build structured feedback for each failed gate
+    # Build structured feedback for each failed gate, filtering out
+    # pre-existing violations when we can determine changed files.
     failed_checks = [r for r in task.qa_results if not r.passed]
     feedback_objs: list[StructuredFeedback] = []
     for r in failed_checks:
-        fb = build_structured_feedback(r.gate, r.output, retry_number=task.retries)
+        fb = build_structured_feedback(
+            r.gate,
+            r.output,
+            retry_number=task.retries,
+            changed_files=r.details.get("changed_files"),
+        )
         feedback_objs.append(fb)
         task.feedback_history.append(
             {

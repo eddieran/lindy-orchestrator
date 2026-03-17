@@ -257,12 +257,37 @@ def _extract_specific_errors(raw: str, limit: int = 5) -> list[str]:
 
 
 def build_structured_feedback(
-    gate: str, raw_output: str, retry_number: int = 0
+    gate: str,
+    raw_output: str,
+    retry_number: int = 0,
+    changed_files: list[str] | None = None,
 ) -> StructuredFeedback:
-    """Build a StructuredFeedback from raw QA output."""
+    """Build a StructuredFeedback from raw QA output.
+
+    When *changed_files* is provided, violations in files NOT in that list are
+    filtered out so the retry prompt only shows issues the agent can fix.
+    """
     category = classify_failure(gate, raw_output)
     specific = _extract_specific_errors(raw_output)
     files = _extract_file_paths(raw_output)
+
+    # Filter out pre-existing violations if changed_files is known
+    if changed_files:
+        changed_basenames = {f.rsplit("/", 1)[-1] for f in changed_files}
+        changed_set = set(changed_files)
+
+        def _file_is_changed(err_line: str) -> bool:
+            """Check if an error line references a changed file."""
+            for cf in changed_set:
+                if cf in err_line:
+                    return True
+            for cb in changed_basenames:
+                if cb in err_line:
+                    return True
+            return True  # can't parse → keep it
+
+        specific = [e for e in specific if _file_is_changed(e)]
+        files = [f for f in files if f in changed_set or f.rsplit("/", 1)[-1] in changed_basenames]
 
     remediation_map = {
         FailureCategory.TEST_FAILURE: [
