@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lindy Orchestrator Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --blue: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d29922;
+  --gray: #484f58;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.header .status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.status-dot.disconnected {
+  background: var(--red);
+}
+
+.main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 0;
+  height: calc(100vh - 57px);
+}
+
+.dag-panel {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.sidebar {
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-section {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-section h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+/* Goal */
+.goal-text {
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+/* Summary bar */
+.summary {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.summary-count {
+  font-weight: 600;
+  font-size: 18px;
+}
+
+.summary-item.completed .summary-count { color: var(--green); }
+.summary-item.failed .summary-count { color: var(--red); }
+.summary-item.running .summary-count { color: var(--blue); }
+.summary-item.pending .summary-count { color: var(--text-dim); }
+.summary-item.skipped .summary-count { color: var(--gray); }
+
+/* Task DAG */
+.task-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.task-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+
+.task-card:hover {
+  border-color: var(--text-dim);
+}
+
+.task-status-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.task-card.pending .task-status-icon { background: var(--gray); color: #fff; }
+.task-card.in_progress .task-status-icon { background: var(--blue); color: #fff; }
+.task-card.completed .task-status-icon { background: var(--green); color: #fff; }
+.task-card.failed .task-status-icon { background: var(--red); color: #fff; }
+.task-card.skipped .task-status-icon { background: var(--border); color: var(--text-dim); }
+
+.task-card.in_progress {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.2);
+}
+
+.task-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.task-deps {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.task-cost {
+  font-size: 13px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+/* Cost sidebar */
+.cost-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cost-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* QA log */
+.qa-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.qa-log h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.qa-entry {
+  font-size: 12px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  background: var(--surface);
+  border-left: 3px solid var(--border);
+}
+
+.qa-entry.pass { border-left-color: var(--green); }
+.qa-entry.fail { border-left-color: var(--red); }
+
+.qa-entry .qa-gate {
+  font-weight: 600;
+}
+
+.qa-entry .qa-output {
+  color: var(--text-dim);
+  margin-top: 2px;
+  word-break: break-word;
+}
+
+.qa-entry .qa-time {
+  color: var(--gray);
+  font-size: 11px;
+}
+
+/* Metrics section */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.metric-item {
+  padding: 8px;
+  background: var(--surface);
+  border-radius: 4px;
+}
+
+.metric-value {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.metric-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Status icons */
+.icon-pending::before { content: "\2B21"; }
+.icon-in_progress::before { content: "\25C9"; }
+.icon-completed::before { content: "\2713"; }
+.icon-failed::before { content: "\2717"; }
+.icon-skipped::before { content: "\25CB"; }
+
+@media (max-width: 768px) {
+  .main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+  }
+  .sidebar {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 40vh;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Lindy Orchestrator</h1>
+  <div class="status">
+    <div class="status-dot" id="conn-dot"></div>
+    <span id="conn-text">Connecting...</span>
+  </div>
+</div>
+
+<div class="main">
+  <div class="dag-panel">
+    <div class="goal-text" id="goal"></div>
+    <div class="summary" id="summary"></div>
+    <div class="task-grid" id="task-grid"></div>
+  </div>
+
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <h3>Cost</h3>
+      <div class="cost-value" id="cost-value">$0.00</div>
+      <div class="cost-label">Total execution cost</div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3>Metrics</h3>
+      <div class="metrics-grid" id="metrics-grid"></div>
+    </div>
+
+    <div class="qa-log" id="qa-log">
+      <h3>QA Results</h3>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  var state = { goal: "", tasks: [] };
+  var qaLog = [];
+  var evtSource = null;
+
+  // --- Rendering ---
+
+  var STATUS_ICONS = {
+    pending: "\u2B21",
+    in_progress: "\u25C9",
+    completed: "\u2713",
+    failed: "\u2717",
+    skipped: "\u25CB"
+  };
+
+  function renderSummary(tasks) {
+    var counts = { completed: 0, failed: 0, in_progress: 0, pending: 0, skipped: 0 };
+    tasks.forEach(function(t) { counts[t.status] = (counts[t.status] || 0) + 1; });
+
+    var items = [
+      { key: "completed", label: "Completed", cls: "completed" },
+      { key: "failed", label: "Failed", cls: "failed" },
+      { key: "in_progress", label: "Running", cls: "running" },
+      { key: "pending", label: "Pending", cls: "pending" },
+      { key: "skipped", label: "Skipped", cls: "skipped" }
+    ];
+
+    return items.map(function(item) {
+      return '<div class="summary-item ' + item.cls + '">' +
+        '<span class="summary-count">' + counts[item.key] + '</span>' +
+        '<span>' + item.label + '</span></div>';
+    }).join("");
+  }
+
+  function renderTasks(tasks) {
+    return tasks.map(function(t) {
+      var deps = (t.depends_on && t.depends_on.length > 0)
+        ? '<span class="task-deps">deps: ' + t.depends_on.join(", ") + '</span>'
+        : '';
+      var cost = t.cost_usd > 0
+        ? '<span class="task-cost">$' + t.cost_usd.toFixed(2) + '</span>'
+        : '';
+
+      return '<div class="task-card ' + t.status + '">' +
+        '<div class="task-status-icon"><span class="icon-' + t.status + '"></span></div>' +
+        '<div class="task-info">' +
+          '<div class="task-title">' + escapeHtml(t.description) + '</div>' +
+          '<div class="task-meta">' +
+            '<span>Task ' + t.id + '</span>' +
+            '<span>' + escapeHtml(t.module) + '</span>' +
+            deps +
+          '</div>' +
+        '</div>' +
+        cost +
+      '</div>';
+    }).join("");
+  }
+
+  function renderQALog() {
+    var el = document.getElementById("qa-log");
+    var html = '<h3>QA Results</h3>';
+    // Show most recent first, cap at 50
+    var entries = qaLog.slice(-50).reverse();
+    entries.forEach(function(e) {
+      var cls = e.passed ? "pass" : "fail";
+      html += '<div class="qa-entry ' + cls + '">' +
+        '<div><span class="qa-gate">' + escapeHtml(e.gate) + '</span>' +
+        ' &mdash; Task ' + e.task_id +
+        ' <span class="qa-time">' + formatTime(e.timestamp) + '</span></div>' +
+        '<div class="qa-output">' + escapeHtml(e.output || "").substring(0, 200) + '</div>' +
+      '</div>';
+    });
+    el.innerHTML = html;
+  }
+
+  function updateCost(tasks) {
+    var total = 0;
+    tasks.forEach(function(t) { total += t.cost_usd || 0; });
+    document.getElementById("cost-value").textContent = "$" + total.toFixed(2);
+  }
+
+  function render() {
+    document.getElementById("goal").textContent = state.goal || "(no goal)";
+    document.getElementById("summary").innerHTML = renderSummary(state.tasks);
+    document.getElementById("task-grid").innerHTML = renderTasks(state.tasks);
+    updateCost(state.tasks);
+    renderQALog();
+  }
+
+  // --- Helpers ---
+
+  function escapeHtml(s) {
+    var d = document.createElement("div");
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
+  }
+
+  function formatTime(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso);
+      return d.toLocaleTimeString();
+    } catch(e) {
+      return iso;
+    }
+  }
+
+  // --- Data fetching ---
+
+  function fetchState() {
+    fetch("/api/state")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        state.goal = data.goal || "";
+        state.tasks = data.tasks || [];
+        // Extract existing QA results from initial state
+        data.tasks.forEach(function(t) {
+          (t.qa_results || []).forEach(function(qr) {
+            qaLog.push({
+              gate: qr.gate,
+              passed: qr.passed,
+              output: qr.output || "",
+              task_id: t.id,
+              timestamp: ""
+            });
+          });
+        });
+        render();
+      })
+      .catch(function(err) { console.error("Failed to fetch state:", err); });
+  }
+
+  function fetchMetrics() {
+    fetch("/api/metrics")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var grid = document.getElementById("metrics-grid");
+        var html = "";
+        var keys = Object.keys(data);
+        keys.forEach(function(k) {
+          var val = data[k];
+          if (typeof val === "number" && val % 1 !== 0) {
+            val = val.toFixed(4);
+          }
+          html += '<div class="metric-item">' +
+            '<div class="metric-value">' + escapeHtml(String(val)) + '</div>' +
+            '<div class="metric-label">' + escapeHtml(k.replace(/_/g, " ")) + '</div></div>';
+        });
+        grid.innerHTML = html;
+      })
+      .catch(function() {});
+  }
+
+  // --- SSE ---
+
+  function connectSSE() {
+    if (evtSource) { evtSource.close(); }
+    evtSource = new EventSource("/api/events");
+
+    evtSource.onopen = function() {
+      document.getElementById("conn-dot").className = "status-dot";
+      document.getElementById("conn-text").textContent = "Connected";
+    };
+
+    evtSource.onerror = function() {
+      document.getElementById("conn-dot").className = "status-dot disconnected";
+      document.getElementById("conn-text").textContent = "Reconnecting...";
+    };
+
+    // Listen for all orchestrator event types
+    var eventTypes = [
+      "task_started", "task_completed", "task_failed",
+      "task_retrying", "task_skipped",
+      "qa_passed", "qa_failed",
+      "stall_warning", "stall_killed", "task_heartbeat",
+      "checkpoint_saved", "mailbox_message",
+      "session_start", "session_end"
+    ];
+
+    eventTypes.forEach(function(et) {
+      evtSource.addEventListener(et, function(e) {
+        var payload = JSON.parse(e.data);
+
+        // Update plan state if included
+        if (payload.plan_state) {
+          state.goal = payload.plan_state.goal || state.goal;
+          state.tasks = payload.plan_state.tasks || state.tasks;
+        }
+
+        // Track QA results
+        if (et === "qa_passed" || et === "qa_failed") {
+          qaLog.push({
+            gate: (payload.data && payload.data.gate) || "unknown",
+            passed: et === "qa_passed",
+            output: (payload.data && payload.data.output) || "",
+            task_id: payload.task_id,
+            timestamp: payload.timestamp
+          });
+        }
+
+        render();
+      });
+    });
+  }
+
+  // --- Init ---
+
+  fetchState();
+  connectSSE();
+  // Periodically refresh metrics
+  setInterval(fetchMetrics, 5000);
+  fetchMetrics();
+})();
+</script>
+</body>
+</html>
