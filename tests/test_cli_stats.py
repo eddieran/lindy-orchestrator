@@ -153,6 +153,76 @@ class TestStatsWithSessions:
         assert len(data["sessions"]) == 2
 
 
+class TestStatsEdgeCases:
+    def test_json_with_multiple_modules(self, tmp_path: Path):
+        """JSON output should include per_module breakdown."""
+        sessions = [
+            _make_session(
+                session_id="s1",
+                tasks=[
+                    {"id": 1, "module": "backend", "status": "completed", "cost_usd": 0.10},
+                    {"id": 2, "module": "frontend", "status": "failed", "cost_usd": 0.05},
+                ],
+            ),
+        ]
+        cfg_path = _setup_project(tmp_path, sessions=sessions)
+        result = runner.invoke(app, ["stats", "-c", cfg_path, "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "per_module" in data
+        assert "backend" in data["per_module"]
+        assert "frontend" in data["per_module"]
+
+    def test_cost_only_with_no_modules(self, tmp_path: Path):
+        """cost-only with tasks missing module should still work."""
+        sessions = [
+            _make_session(
+                session_id="s1",
+                tasks=[{"id": 1, "status": "completed", "cost_usd": 0.01}],
+            ),
+        ]
+        cfg_path = _setup_project(tmp_path, sessions=sessions)
+        result = runner.invoke(app, ["stats", "-c", cfg_path, "--cost-only"])
+        assert result.exit_code == 0
+        assert "Total Cost" in result.output
+
+    def test_stats_with_all_failed_tasks(self, tmp_path: Path):
+        sessions = [
+            _make_session(
+                session_id="s1",
+                status="failed",
+                tasks=[
+                    {"id": 1, "module": "backend", "status": "failed", "cost_usd": 0.01},
+                    {"id": 2, "module": "backend", "status": "failed", "cost_usd": 0.02},
+                ],
+            ),
+        ]
+        cfg_path = _setup_project(tmp_path, sessions=sessions)
+        result = runner.invoke(app, ["stats", "-c", cfg_path])
+        assert result.exit_code == 0
+        assert "Aggregate Stats" in result.output
+
+    def test_stats_json_output_has_all_fields(self, tmp_path: Path):
+        session = _make_session()
+        cfg_path = _setup_project(tmp_path, sessions=[session])
+        result = runner.invoke(app, ["stats", "-c", cfg_path, "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        for field in (
+            "total_cost",
+            "total_tasks",
+            "completed",
+            "failed",
+            "skipped",
+            "qa_pass_rate",
+            "avg_duration",
+            "failure_rate",
+            "per_module",
+            "sessions",
+        ):
+            assert field in data
+
+
 class TestStatsHelp:
     def test_help_flag(self):
         result = runner.invoke(app, ["stats", "--help"])

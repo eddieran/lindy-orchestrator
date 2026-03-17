@@ -28,6 +28,7 @@ from .scheduler_helpers import (
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
+from .metrics import MetricsCollector
 from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
@@ -208,6 +209,10 @@ def execute_plan(
     if on_progress:
         hooks.on_any(make_progress_adapter(on_progress))
 
+    # Attach metrics collector before SESSION_START
+    metrics = MetricsCollector()
+    metrics.attach(hooks)
+
     def progress(msg: str) -> None:
         if on_progress:
             on_progress(msg)
@@ -215,6 +220,23 @@ def execute_plan(
     def detail(msg: str) -> None:
         if on_progress and verbose:
             on_progress(msg)
+
+    # Attach metrics collector before SESSION_START
+    metrics = MetricsCollector()
+    metrics.attach(hooks)
+
+    # OTel metrics exporter (lazy-loaded when enabled)
+    otel_exporter = None
+    if config.otel.enabled:
+        try:
+            from .otel import setup_otel_from_config
+
+            otel_exporter = setup_otel_from_config(config.otel)
+            if otel_exporter is not None:
+                otel_exporter.attach(hooks)
+                log.info("OTel metrics exporter attached")
+        except ImportError:
+            log.warning("OTel is enabled but opentelemetry-sdk is not installed")
 
     hooks.emit(Event(type=EventType.SESSION_START, data={"goal": plan.goal}))
 
@@ -236,141 +258,157 @@ def execute_plan(
         pass
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
-            while not plan.all_terminal() and not _interrupted:
-                # Hot-reload config (safe sections only)
-                if config.check_reload() is not None:
-                    max_retries = config.safety.max_retries_per_task
-                    log.info("Config hot-reloaded")
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
+                while not plan.all_terminal() and not _interrupted:
+                    # Hot-reload config (safe sections only)
+                    if config.check_reload() is not None:
+                        max_retries = config.safety.max_retries_per_task
+                        log.info("Config hot-reloaded")
 
-                ready = plan.next_ready()
+                    ready = plan.next_ready()
 
-                # Emit TASK_SKIPPED for newly skipped tasks (guarded by completed_at)
-                had_new_skips = False
-                for t in plan.tasks:
-                    if t.status == TaskStatus.SKIPPED and t.completed_at is None:
-                        t.completed_at = datetime.now(timezone.utc).isoformat()
-                        had_new_skips = True
-                        hooks.emit(
-                            Event(
-                                type=EventType.TASK_SKIPPED,
-                                task_id=t.id,
-                                module=t.module,
-                                data={
-                                    "reason": t.result,
-                                    "description": t.description,
-                                },
-                            )
-                        )
-                        progress(f"    [dim]Task {t.id} SKIPPED[/] ({t.module}): {t.description}")
-
-                if not ready:
-                    if had_new_skips:
-                        continue  # cascade: re-check for more skips
-                    break
-
-                if len(ready) > 1:
-                    progress(f"\n  [bold]Dispatching {len(ready)} tasks in parallel...[/]")
-
-                futures: dict[concurrent.futures.Future, TaskItem] = {}
-                for task in ready:
-                    task.status = TaskStatus.IN_PROGRESS
-                    task.started_at = datetime.now(timezone.utc).isoformat()
-                    hooks.emit(
-                        Event(
-                            type=EventType.TASK_STARTED,
-                            task_id=task.id,
-                            module=task.module,
-                            data={"description": task.description},
-                        )
-                    )
-                    progress(f"\n  [bold]Task {task.id}:[/] [{task.module}] {task.description}")
-
-                    if config.safety.dry_run:
-                        task.status = TaskStatus.COMPLETED
-                        task.result = "[DRY RUN] Skipped"
-                        wd = config.module_path(task.module)
-                        qa_list = ", ".join(q.gate for q in task.qa_checks) or "none"
-                        deps = f" (after: {task.depends_on})" if task.depends_on else ""
-                        progress(f"    [yellow]DRY RUN[/] — would dispatch to {task.module}")
-                        progress(f"      Working dir: {wd}")
-                        progress(f"      QA gates: {qa_list}")
-                        progress(f"      Dependencies: {deps or 'none'}")
-                        if task.prompt:
-                            progress(f"      Prompt preview: {task.prompt[:150]}...")
-                        continue
-
-                    future = pool.submit(
-                        _execute_single_task,
-                        task,
-                        config,
-                        logger,
-                        progress,
-                        detail,
-                        max_retries,
-                        hooks,
-                        module_semaphores.get(task.module),
-                    )
-                    futures[future] = task
-
-                for future in concurrent.futures.as_completed(futures):
-                    task = futures[future]
-                    try:
-                        dispatches = future.result()
-                        total_dispatches += dispatches
-                    except Exception as e:
-                        task.status = TaskStatus.FAILED
-                        task.result = f"Unexpected error: {e}"
-                        progress(f"    [bold red]Task {task.id} ERROR[/]: {e}")
-                        logger.log_action(
-                            "task_error",
-                            details={"task_id": task.id, "error": str(e)},
-                            result="error",
-                        )
-
-                    if session_mgr and session:
-                        try:
-                            session_mgr.checkpoint(session, plan_to_dict(plan))
+                    # Emit TASK_SKIPPED for newly skipped tasks (guarded by completed_at)
+                    had_new_skips = False
+                    for t in plan.tasks:
+                        if t.status == TaskStatus.SKIPPED and t.completed_at is None:
+                            t.completed_at = datetime.now(timezone.utc).isoformat()
+                            had_new_skips = True
                             hooks.emit(
                                 Event(
-                                    type=EventType.CHECKPOINT_SAVED,
-                                    data={"checkpoint_count": session.checkpoint_count},
+                                    type=EventType.TASK_SKIPPED,
+                                    task_id=t.id,
+                                    module=t.module,
+                                    data={
+                                        "reason": t.result,
+                                        "description": t.description,
+                                    },
                                 )
                             )
-                        except Exception:
-                            log.warning("Checkpoint save failed", exc_info=True)
+                            progress(
+                                f"    [dim]Task {t.id} SKIPPED[/] ({t.module}): {t.description}"
+                            )
 
-        if _interrupted:
-            progress("\n  [bold yellow]Interrupted — marking in-progress tasks as failed[/]")
-            for task in plan.tasks:
-                if task.status == TaskStatus.IN_PROGRESS:
-                    task.status = TaskStatus.FAILED
-                    task.result = "Interrupted by signal"
-    finally:
-        # Always clean up worktrees, even on crash / interrupt
-        try:
-            cleanup_all_worktrees(config.root)
-        except Exception:
-            log.warning("Worktree cleanup failed", exc_info=True)
+                    if not ready:
+                        if had_new_skips:
+                            continue  # cascade: re-check for more skips
+                        break
 
-        # Restore original signal handlers
-        try:
-            signal.signal(signal.SIGINT, prev_sigint)
-            signal.signal(signal.SIGTERM, prev_sigterm)
-        except (OSError, ValueError):
-            pass
+                    if len(ready) > 1:
+                        progress(f"\n  [bold]Dispatching {len(ready)} tasks in parallel...[/]")
 
-    hooks.emit(
-        Event(
-            type=EventType.SESSION_END,
-            data={
-                "goal": plan.goal,
-                "total_dispatches": total_dispatches,
-                "has_failures": plan.has_failures(),
-            },
+                    futures: dict[concurrent.futures.Future, TaskItem] = {}
+                    for task in ready:
+                        task.status = TaskStatus.IN_PROGRESS
+                        task.started_at = datetime.now(timezone.utc).isoformat()
+                        hooks.emit(
+                            Event(
+                                type=EventType.TASK_STARTED,
+                                task_id=task.id,
+                                module=task.module,
+                                data={"description": task.description},
+                            )
+                        )
+                        progress(f"\n  [bold]Task {task.id}:[/] [{task.module}] {task.description}")
+
+                        if config.safety.dry_run:
+                            task.status = TaskStatus.COMPLETED
+                            task.result = "[DRY RUN] Skipped"
+                            wd = config.module_path(task.module)
+                            qa_list = ", ".join(q.gate for q in task.qa_checks) or "none"
+                            deps = f" (after: {task.depends_on})" if task.depends_on else ""
+                            progress(f"    [yellow]DRY RUN[/] — would dispatch to {task.module}")
+                            progress(f"      Working dir: {wd}")
+                            progress(f"      QA gates: {qa_list}")
+                            progress(f"      Dependencies: {deps or 'none'}")
+                            if task.prompt:
+                                progress(f"      Prompt preview: {task.prompt[:150]}...")
+                            continue
+
+                        future = pool.submit(
+                            _execute_single_task,
+                            task,
+                            config,
+                            logger,
+                            progress,
+                            detail,
+                            max_retries,
+                            hooks,
+                            module_semaphores.get(task.module),
+                        )
+                        futures[future] = task
+
+                    for future in concurrent.futures.as_completed(futures):
+                        task = futures[future]
+                        try:
+                            dispatches = future.result()
+                            total_dispatches += dispatches
+                        except Exception as e:
+                            task.status = TaskStatus.FAILED
+                            task.result = f"Unexpected error: {e}"
+                            progress(f"    [bold red]Task {task.id} ERROR[/]: {e}")
+                            logger.log_action(
+                                "task_error",
+                                details={"task_id": task.id, "error": str(e)},
+                                result="error",
+                            )
+
+                        if session_mgr and session:
+                            try:
+                                session_mgr.checkpoint(session, plan_to_dict(plan))
+                                hooks.emit(
+                                    Event(
+                                        type=EventType.CHECKPOINT_SAVED,
+                                        data={"checkpoint_count": session.checkpoint_count},
+                                    )
+                                )
+                            except Exception:
+                                log.warning("Checkpoint save failed", exc_info=True)
+
+            if _interrupted:
+                progress("\n  [bold yellow]Interrupted — marking in-progress tasks as failed[/]")
+                for task in plan.tasks:
+                    if task.status == TaskStatus.IN_PROGRESS:
+                        task.status = TaskStatus.FAILED
+                        task.result = "Interrupted by signal"
+        finally:
+            # Always clean up worktrees, even on crash / interrupt
+            try:
+                cleanup_all_worktrees(config.root)
+            except Exception:
+                log.warning("Worktree cleanup failed", exc_info=True)
+
+            # Restore original signal handlers
+            try:
+                signal.signal(signal.SIGINT, prev_sigint)
+                signal.signal(signal.SIGTERM, prev_sigterm)
+            except (OSError, ValueError):
+                pass
+
+        hooks.emit(
+            Event(
+                type=EventType.SESSION_END,
+                data={
+                    "goal": plan.goal,
+                    "total_dispatches": total_dispatches,
+                    "has_failures": plan.has_failures(),
+                },
+            )
         )
-    )
-    return plan
+
+        # Detach OTel exporter before cleanup
+        if otel_exporter is not None:
+            try:
+                otel_exporter.detach()
+            except Exception:
+                log.warning("OTel exporter detach failed", exc_info=True)
+
+        # Detach metrics collector
+        metrics.detach(hooks)
+
+        return plan
+    finally:
+        hooks.shutdown()
 
 
 def _execute_single_task(

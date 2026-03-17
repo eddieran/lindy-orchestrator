@@ -42,5 +42,7 @@ Thumbs.db
 .mypy_cache/
 
 # lindy-orchestrator
-.orchestrator/
 .worktrees/
+
+# lindy-orchestrator
+.orchestrator/
