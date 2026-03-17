@@ -355,6 +355,7 @@ from .cli_clear import register_clear_command  # noqa: E402
 from .cli_config import register_config_commands  # noqa: E402
 from .cli_ext import register_ext_commands  # noqa: E402
 from .cli_onboard import register_onboard_command  # noqa: E402
+from .cli_stats import register_stats_command  # noqa: E402
 from .cli_status import register_status_commands  # noqa: E402
 
 register_config_commands(app, console)
@@ -362,3 +363,4 @@ register_ext_commands(app, console)
 register_onboard_command(app, console)
 register_clear_command(app, console)
 register_status_commands(app, console, load_cfg)
+register_stats_command(app, console, load_cfg)
