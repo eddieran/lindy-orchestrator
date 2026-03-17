@@ -218,6 +218,17 @@ def execute_plan(
 
     hooks.emit(Event(type=EventType.SESSION_START, data={"goal": plan.goal}))
 
+    # Optionally attach OTel metrics exporter
+    otel_exporter = None
+    if config.otel.enabled:
+        try:
+            from .otel import setup_otel_from_config
+
+            otel_exporter = setup_otel_from_config(config.otel)
+            otel_exporter.attach(hooks)
+        except ImportError:
+            log.warning("OTel enabled but opentelemetry not installed")
+
     # Install signal handler so worktrees are cleaned up on Ctrl-C / SIGTERM
     _interrupted = False
     prev_sigint = signal.getsignal(signal.SIGINT)
@@ -352,6 +363,14 @@ def execute_plan(
             cleanup_all_worktrees(config.root)
         except Exception:
             log.warning("Worktree cleanup failed", exc_info=True)
+
+        # Shut down OTel exporter
+        if otel_exporter is not None:
+            try:
+                otel_exporter.detach()
+                otel_exporter.shutdown()
+            except Exception:
+                log.warning("OTel exporter cleanup failed", exc_info=True)
 
         # Restore original signal handlers
         try:
