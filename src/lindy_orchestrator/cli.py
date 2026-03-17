@@ -169,6 +169,7 @@ def run(
         plan = execute_plan(
             plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
         )
+    hooks.shutdown()
 
     # Step 4: Report
     console.print("\n[bold cyan][3/3][/] Generating report...")
@@ -332,6 +333,7 @@ def resume(
         plan = execute_plan(
             plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
         )
+    hooks.shutdown()
 
     duration = round(time.time() - start, 1)
 

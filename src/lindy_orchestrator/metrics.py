@@ -1,278 +1,217 @@
-"""Thread-safe metrics collector for orchestrator sessions.
+"""Runtime metrics collection for orchestrator sessions.
 
-Subscribes to HookRegistry events and aggregates runtime metrics
-(task counts, durations, costs, QA results) into frozen snapshots
-that can be safely read from any thread.
+Subscribes to HookRegistry via on_any to aggregate task durations, costs,
+QA pass/fail counts, and per-module breakdowns. Thread-safe via threading.Lock.
 """
 
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime
 
 from .hooks import Event, EventType, HookRegistry
 
 
-@dataclass(frozen=True)
+@dataclass
 class TaskMetrics:
-    """Metrics for a single task."""
-
-    task_id: int
-    module: str
-    status: str = "in_progress"  # in_progress | completed | failed | skipped
-    duration_seconds: float = 0.0
+    task_id: int = 0
+    module: str = ""
+    description: str = ""
+    status: str = "pending"
+    duration_seconds: float | None = None
     cost_usd: float = 0.0
-    qa_passed: int = 0
-    qa_failed: int = 0
+    qa_pass_count: int = 0
+    qa_fail_count: int = 0
     retry_count: int = 0
+    started_at: str | None = None
+    completed_at: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class ModuleMetrics:
-    """Aggregated metrics for a single module."""
-
-    name: str
-    total_cost_usd: float = 0.0
+    name: str = ""
+    total_cost: float = 0.0
     task_count: int = 0
     completed: int = 0
     failed: int = 0
     skipped: int = 0
-    qa_passed: int = 0
-    qa_failed: int = 0
-    total_duration_seconds: float = 0.0
+    qa_pass_count: int = 0
+    qa_fail_count: int = 0
+    avg_duration: float | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class SessionMetricsSnapshot:
-    """Point-in-time snapshot of all session metrics."""
-
+    total_cost: float = 0.0
     total_tasks: int = 0
     completed: int = 0
     failed: int = 0
     skipped: int = 0
-    in_progress: int = 0
-    total_cost_usd: float = 0.0
-    total_duration_seconds: float = 0.0
-    total_dispatches: int = 0
-    qa_passed: int = 0
-    qa_failed: int = 0
+    qa_pass_count: int = 0
+    qa_fail_count: int = 0
     per_module: dict[str, ModuleMetrics] = field(default_factory=dict)
     per_task: dict[int, TaskMetrics] = field(default_factory=dict)
+    started_at: str | None = None
+    elapsed_seconds: float | None = None
 
 
-class _MutableTask:
-    """Internal mutable task state (not exposed outside collector)."""
-
-    __slots__ = (
-        "task_id",
-        "module",
-        "status",
-        "start_time",
-        "duration_seconds",
-        "cost_usd",
-        "qa_passed",
-        "qa_failed",
-        "retry_count",
-    )
-
-    def __init__(self, task_id: int, module: str) -> None:
-        self.task_id = task_id
-        self.module = module
-        self.status = "in_progress"
-        self.start_time: float = time.monotonic()
-        self.duration_seconds: float = 0.0
-        self.cost_usd: float = 0.0
-        self.qa_passed: int = 0
-        self.qa_failed: int = 0
-        self.retry_count: int = 0
-
-    def freeze(self) -> TaskMetrics:
-        return TaskMetrics(
-            task_id=self.task_id,
-            module=self.module,
-            status=self.status,
-            duration_seconds=self.duration_seconds,
-            cost_usd=self.cost_usd,
-            qa_passed=self.qa_passed,
-            qa_failed=self.qa_failed,
-            retry_count=self.retry_count,
-        )
+def _parse_duration(start: str, end: str) -> float | None:
+    """Compute seconds between two ISO timestamps."""
+    try:
+        t0 = datetime.fromisoformat(start)
+        t1 = datetime.fromisoformat(end)
+        return (t1 - t0).total_seconds()
+    except (ValueError, TypeError):
+        return None
 
 
 class MetricsCollector:
-    """Collects runtime metrics from HookRegistry events.
-
-    Thread-safe: uses an internal lock for all mutations.
-    ``snapshot()`` returns a frozen copy safe to pass across threads.
-    """
+    """Collects runtime metrics from hook events. Thread-safe."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._tasks: dict[int, _MutableTask] = {}
-        self._total_dispatches: int = 0
-        self._hooks: HookRegistry | None = None
+        self._tasks: dict[int, TaskMetrics] = {}
+        self._session_start_mono: float | None = None
+        self._session_end_mono: float | None = None
+        self._session_started_at: str | None = None
 
     def attach(self, hooks: HookRegistry) -> None:
-        """Subscribe to all events via on_any."""
-        self._hooks = hooks
-        hooks.on_any(self._on_event)
+        """Register the collector as an on_any handler."""
+        hooks.on_any(self._handle)
 
-    def detach(self) -> None:
-        """Unsubscribe from hooks."""
-        if self._hooks is not None:
-            self._hooks.remove_any(self._on_event)
-            self._hooks = None
+    def detach(self, hooks: HookRegistry) -> None:
+        """Remove the collector from the hook registry."""
+        hooks.remove_any(self._handle)
 
-    def _on_event(self, event: Event) -> None:
-        """Central event dispatcher — routes by event type."""
-        handler = self._dispatch_table.get(event.type)
-        if handler is not None:
-            handler(self, event)
-
-    def _on_task_started(self, event: Event) -> None:
-        task_id = event.task_id
-        if task_id is None:
-            return
+    def _handle(self, event: Event) -> None:
+        """Single event handler dispatching internally by event type."""
         with self._lock:
-            self._tasks[task_id] = _MutableTask(task_id, event.module)
-            self._total_dispatches += 1
+            self._dispatch(event)
 
-    def _on_task_completed(self, event: Event) -> None:
-        task_id = event.task_id
-        if task_id is None:
-            return
-        with self._lock:
-            t = self._tasks.get(task_id)
-            if t is not None:
-                t.status = "completed"
-                t.duration_seconds = time.monotonic() - t.start_time
-
-    def _on_task_failed(self, event: Event) -> None:
-        task_id = event.task_id
-        if task_id is None:
-            return
-        with self._lock:
-            t = self._tasks.get(task_id)
-            if t is not None:
-                t.status = "failed"
-                t.duration_seconds = time.monotonic() - t.start_time
-
-    def _on_task_skipped(self, event: Event) -> None:
-        task_id = event.task_id
-        if task_id is None:
-            return
-        with self._lock:
-            # Skipped tasks may not have been started
-            if task_id not in self._tasks:
-                self._tasks[task_id] = _MutableTask(task_id, event.module)
-            self._tasks[task_id].status = "skipped"
-
-    def _on_task_retrying(self, event: Event) -> None:
-        task_id = event.task_id
-        if task_id is None:
-            return
-        with self._lock:
-            t = self._tasks.get(task_id)
-            if t is not None:
-                t.retry_count = event.data.get("retry", t.retry_count + 1)
-                self._total_dispatches += 1
-
-    def _on_qa_passed(self, event: Event) -> None:
-        task_id = event.task_id
-        if task_id is None:
-            return
-        with self._lock:
-            t = self._tasks.get(task_id)
-            if t is not None:
-                t.qa_passed += 1
-
-    def _on_qa_failed(self, event: Event) -> None:
-        task_id = event.task_id
-        if task_id is None:
-            return
-        with self._lock:
-            t = self._tasks.get(task_id)
-            if t is not None:
-                t.qa_failed += 1
-
-    def _on_session_end(self, event: Event) -> None:
-        # Update total_dispatches from authoritative event data if available
-        dispatches = event.data.get("total_dispatches")
-        if dispatches is not None:
-            with self._lock:
-                self._total_dispatches = dispatches
-
-    _dispatch_table: dict[EventType, Any] = {
-        EventType.TASK_STARTED: _on_task_started,
-        EventType.TASK_COMPLETED: _on_task_completed,
-        EventType.TASK_FAILED: _on_task_failed,
-        EventType.TASK_SKIPPED: _on_task_skipped,
-        EventType.TASK_RETRYING: _on_task_retrying,
-        EventType.QA_PASSED: _on_qa_passed,
-        EventType.QA_FAILED: _on_qa_failed,
-        EventType.SESSION_END: _on_session_end,
-    }
+    def _dispatch(self, event: Event) -> None:  # noqa: C901
+        """Route event to the appropriate handler. Must be called under lock."""
+        match event.type:
+            case EventType.SESSION_START:
+                self._session_start_mono = time.monotonic()
+                self._session_started_at = event.timestamp
+            case EventType.SESSION_END:
+                self._session_end_mono = time.monotonic()
+            case EventType.TASK_STARTED:
+                if event.task_id is not None:
+                    self._tasks[event.task_id] = TaskMetrics(
+                        task_id=event.task_id,
+                        status="in_progress",
+                        module=event.module,
+                        description=event.data.get("description", ""),
+                        started_at=event.timestamp,
+                    )
+            case EventType.TASK_COMPLETED:
+                if event.task_id is not None:
+                    tm = self._tasks.get(event.task_id)
+                    if tm is None:
+                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
+                        self._tasks[event.task_id] = tm
+                    tm.status = "completed"
+                    tm.completed_at = event.timestamp
+                    tm.cost_usd += event.data.get("cost_usd", 0.0)
+                    if tm.started_at and tm.completed_at:
+                        tm.duration_seconds = _parse_duration(tm.started_at, tm.completed_at)
+            case EventType.TASK_FAILED:
+                if event.task_id is not None:
+                    tm = self._tasks.get(event.task_id)
+                    if tm is None:
+                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
+                        self._tasks[event.task_id] = tm
+                    tm.status = "failed"
+                    tm.completed_at = event.timestamp
+                    tm.cost_usd += event.data.get("cost_usd", 0.0)
+                    if tm.started_at and tm.completed_at:
+                        tm.duration_seconds = _parse_duration(tm.started_at, tm.completed_at)
+            case EventType.TASK_SKIPPED:
+                if event.task_id is not None:
+                    tm = self._tasks.get(event.task_id)
+                    if tm is None:
+                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
+                        self._tasks[event.task_id] = tm
+                    tm.status = "skipped"
+            case EventType.TASK_RETRYING:
+                if event.task_id is not None:
+                    tm = self._tasks.get(event.task_id)
+                    if tm:
+                        tm.retry_count += 1
+            case EventType.QA_PASSED:
+                if event.task_id is not None:
+                    tm = self._tasks.get(event.task_id)
+                    if tm:
+                        tm.qa_pass_count += 1
+            case EventType.QA_FAILED:
+                if event.task_id is not None:
+                    tm = self._tasks.get(event.task_id)
+                    if tm:
+                        tm.qa_fail_count += 1
 
     def snapshot(self) -> SessionMetricsSnapshot:
-        """Return a frozen point-in-time copy of all metrics."""
+        """Return a frozen copy of current metrics, safe for cross-thread use."""
         with self._lock:
-            per_task: dict[int, TaskMetrics] = {}
-            module_agg: dict[str, dict[str, float | int]] = {}
+            # Deep copy per-task metrics for isolation
+            per_task = copy.deepcopy(self._tasks)
 
-            for tid, t in self._tasks.items():
-                per_task[tid] = t.freeze()
+            # Compute elapsed
+            elapsed: float | None = None
+            if self._session_start_mono is not None:
+                end = self._session_end_mono or time.monotonic()
+                elapsed = end - self._session_start_mono
 
-                m = module_agg.setdefault(
-                    t.module,
-                    {
-                        "total_cost_usd": 0.0,
-                        "task_count": 0,
-                        "completed": 0,
-                        "failed": 0,
-                        "skipped": 0,
-                        "qa_passed": 0,
-                        "qa_failed": 0,
-                        "total_duration_seconds": 0.0,
-                    },
-                )
-                m["task_count"] += 1  # type: ignore[operator]
-                m["total_cost_usd"] += t.cost_usd  # type: ignore[operator]
-                m["qa_passed"] += t.qa_passed  # type: ignore[operator]
-                m["qa_failed"] += t.qa_failed  # type: ignore[operator]
-                m["total_duration_seconds"] += t.duration_seconds  # type: ignore[operator]
-                if t.status == "completed":
-                    m["completed"] += 1  # type: ignore[operator]
-                elif t.status == "failed":
-                    m["failed"] += 1  # type: ignore[operator]
-                elif t.status == "skipped":
-                    m["skipped"] += 1  # type: ignore[operator]
+            # Aggregate per-module
+            modules: dict[str, ModuleMetrics] = {}
+            for tm in per_task.values():
+                mod = tm.module or "_unknown"
+                if mod not in modules:
+                    modules[mod] = ModuleMetrics(name=mod)
+                mm = modules[mod]
+                mm.task_count += 1
+                mm.total_cost += tm.cost_usd
+                mm.qa_pass_count += tm.qa_pass_count
+                mm.qa_fail_count += tm.qa_fail_count
+                if tm.status == "completed":
+                    mm.completed += 1
+                elif tm.status == "failed":
+                    mm.failed += 1
+                elif tm.status == "skipped":
+                    mm.skipped += 1
 
-            per_module = {
-                name: ModuleMetrics(name=name, **vals)  # type: ignore[arg-type]
-                for name, vals in module_agg.items()
-            }
+            # Compute avg_duration per module
+            for mod, mm in modules.items():
+                durations = [
+                    t.duration_seconds
+                    for t in per_task.values()
+                    if t.module == mod and t.duration_seconds is not None
+                ]
+                if durations:
+                    mm.avg_duration = sum(durations) / len(durations)
 
-            total_tasks = len(self._tasks)
-            completed = sum(1 for t in self._tasks.values() if t.status == "completed")
-            failed = sum(1 for t in self._tasks.values() if t.status == "failed")
-            skipped = sum(1 for t in self._tasks.values() if t.status == "skipped")
-            in_progress = sum(1 for t in self._tasks.values() if t.status == "in_progress")
-            total_cost = sum(t.cost_usd for t in self._tasks.values())
-            total_dur = sum(t.duration_seconds for t in self._tasks.values())
+            # Session-level aggregates
+            total_tasks = len(per_task)
+            completed = sum(1 for t in per_task.values() if t.status == "completed")
+            failed = sum(1 for t in per_task.values() if t.status == "failed")
+            skipped = sum(1 for t in per_task.values() if t.status == "skipped")
+            total_cost = sum(t.cost_usd for t in per_task.values())
+            qa_pass_count = sum(t.qa_pass_count for t in per_task.values())
+            qa_fail_count = sum(t.qa_fail_count for t in per_task.values())
 
             return SessionMetricsSnapshot(
+                total_cost=total_cost,
                 total_tasks=total_tasks,
                 completed=completed,
                 failed=failed,
                 skipped=skipped,
-                in_progress=in_progress,
-                total_cost_usd=total_cost,
-                total_duration_seconds=total_dur,
-                total_dispatches=self._total_dispatches,
-                qa_passed=sum(t.qa_passed for t in self._tasks.values()),
-                qa_failed=sum(t.qa_failed for t in self._tasks.values()),
-                per_module=per_module,
+                qa_pass_count=qa_pass_count,
+                qa_fail_count=qa_fail_count,
+                per_module=modules,
                 per_task=per_task,
+                started_at=self._session_started_at,
+                elapsed_seconds=elapsed,
             )

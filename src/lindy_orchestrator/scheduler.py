@@ -209,7 +209,7 @@ def execute_plan(
     if on_progress:
         hooks.on_any(make_progress_adapter(on_progress))
 
-    # Attach metrics collector before any events are emitted
+    # Attach metrics collector before SESSION_START
     metrics = MetricsCollector()
     metrics.attach(hooks)
 
@@ -365,6 +365,9 @@ def execute_plan(
         except (OSError, ValueError):
             pass
 
+        # Detach metrics collector
+        metrics.detach(hooks)
+
     hooks.emit(
         Event(
             type=EventType.SESSION_END,
@@ -375,28 +378,6 @@ def execute_plan(
             },
         )
     )
-
-    # Capture and log final metrics snapshot
-    try:
-        snap = metrics.snapshot()
-        logger.log_action(
-            "session_metrics",
-            details={
-                "total_tasks": snap.total_tasks,
-                "completed": snap.completed,
-                "failed": snap.failed,
-                "skipped": snap.skipped,
-                "total_cost_usd": snap.total_cost_usd,
-                "total_dispatches": snap.total_dispatches,
-                "qa_passed": snap.qa_passed,
-                "qa_failed": snap.qa_failed,
-            },
-        )
-    except Exception:
-        log.warning("Failed to log session metrics", exc_info=True)
-    finally:
-        metrics.detach()
-        hooks.shutdown()
 
     return plan
 
