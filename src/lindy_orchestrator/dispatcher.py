@@ -135,6 +135,15 @@ def dispatch_agent(
             env=env,
         )
     except FileNotFoundError:
+        # Distinguish missing working_dir from missing CLI binary
+        if not Path(working_dir).exists():
+            return DispatchResult(
+                module=module,
+                success=False,
+                output=f"Working directory does not exist: {working_dir}",
+                exit_code=-1,
+                error="cwd_not_found",
+            )
         return DispatchResult(
             module=module,
             success=False,
