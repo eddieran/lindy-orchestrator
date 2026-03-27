@@ -162,7 +162,7 @@ def _parse_completed(text: str) -> list[CompletedTask]:
     for r in rows:
         task_id = r.get("ID", "").strip()
         if not task_id or task_id == "\u2014":
-            task_id = r.get("ID", "").strip()
+            task_id = ""
         tasks.append(
             CompletedTask(
                 id=task_id,

@@ -6,6 +6,7 @@ tasks in parallel using concurrent.futures.
 
 from __future__ import annotations
 
+import collections
 import concurrent.futures
 import logging
 import re
@@ -126,7 +127,7 @@ class _HeartbeatTracker:
         self._hooks = hooks
         self.count = 0
         self.last_tool = ""
-        self.recent_tools: list[str] = []
+        self.recent_tools: collections.deque[str] = collections.deque(maxlen=5)
         self.last_reasoning = ""
         self._start_time = time.monotonic()
         self._last_print_time = self._start_time
@@ -140,8 +141,6 @@ class _HeartbeatTracker:
         if tool_name:
             self.last_tool = tool_name
             self.recent_tools.append(tool_name)
-            if len(self.recent_tools) > 5:
-                self.recent_tools.pop(0)
             self._detail(f"      [dim]tool: {tool_name}[/]")
 
         if reasoning_text:
@@ -220,10 +219,6 @@ def execute_plan(
     def detail(msg: str) -> None:
         if on_progress and verbose:
             on_progress(msg)
-
-    # Attach metrics collector before SESSION_START
-    metrics = MetricsCollector()
-    metrics.attach(hooks)
 
     # OTel metrics exporter (lazy-loaded when enabled)
     otel_exporter = None
@@ -808,6 +803,7 @@ def _dispatch_loop(
 
     lc = config.lifecycle_hooks
     hook_cwd = worktree_path or config.root
+    provider = create_provider(config.dispatcher)
 
     while True:
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
@@ -817,8 +813,6 @@ def _dispatch_loop(
 
         if lc.before_run:
             _run_lifecycle_hook("before_run", lc.before_run, hook_cwd, progress, lc.timeout)
-
-        provider = create_provider(config.dispatcher)
         result = provider.dispatch(
             module=task.module,
             working_dir=working_dir,
