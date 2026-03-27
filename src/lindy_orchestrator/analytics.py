@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ class SessionSummary:
     total_cost: float = 0.0
     duration_seconds: float = 0.0
     modules: list[str] = field(default_factory=list)
+    _raw_tasks: list[dict] = field(default_factory=list, repr=False)
 
 
 @dataclass
@@ -114,8 +116,6 @@ def load_session_summaries(
         completed_at = data.get("completed_at", "")
         if started_at and completed_at:
             try:
-                from datetime import datetime
-
                 start = datetime.fromisoformat(started_at)
                 end = datetime.fromisoformat(completed_at)
                 duration = max(0.0, (end - start).total_seconds())
@@ -138,6 +138,7 @@ def load_session_summaries(
                 total_cost=total_cost,
                 duration_seconds=duration,
                 modules=modules,
+                _raw_tasks=tasks,
             )
         )
 
@@ -289,8 +290,6 @@ def compute_aggregate_stats(
             ended = t.get("completed_at")
             if started and ended:
                 try:
-                    from datetime import datetime
-
                     s_dt = datetime.fromisoformat(started)
                     e_dt = datetime.fromisoformat(ended)
                     dur = max(0.0, (e_dt - s_dt).total_seconds())
@@ -326,13 +325,5 @@ def compute_aggregate_stats(
 
 
 def _get_plan_tasks_from_summary(summary: SessionSummary, sessions_dir: Path) -> list[dict]:
-    """Re-read session file to get raw task list for per-module breakdown."""
-    path = sessions_dir / f"{summary.session_id}.json"
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        plan = data.get("plan_json") or {}
-        return plan.get("tasks", [])
-    except (OSError, json.JSONDecodeError):
-        return []
+    """Get raw task list for per-module breakdown (cached from initial load)."""
+    return summary._raw_tasks

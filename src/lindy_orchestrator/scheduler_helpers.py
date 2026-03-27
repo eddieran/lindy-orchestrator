@@ -103,7 +103,7 @@ def inject_qa_gates(
         progress("    [dim]QA gates skipped (skip_qa=true)[/]")
         return
 
-    skip_gates = set(task.skip_gates) if hasattr(task, "skip_gates") else set()
+    skip_gates = set(task.skip_gates)
 
     # Auto-inject structural check gate
     has_structural = any(q.gate == "structural_check" for q in task.qa_checks)

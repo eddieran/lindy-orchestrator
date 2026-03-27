@@ -121,18 +121,18 @@ def _run_custom_command_gate(
     command_str = gate_def.command.replace("{module_path}", module_path)
     cwd = gate_def.cwd.replace("{module_path}", module_path)
 
-    # diff_only: resolve {changed_files} or skip if no changes
+    changed_files_cache: list[str] | None = None
     if gate_def.diff_only and "{changed_files}" in command_str:
         from .command_check import _get_changed_files
 
-        changed = _get_changed_files(project_root, resolved_module_path)
-        if not changed:
+        changed_files_cache = _get_changed_files(project_root, resolved_module_path)
+        if not changed_files_cache:
             return QAResult(
                 gate=gate_def.name,
                 passed=True,
                 output="No changed files to check (diff_only mode)",
             )
-        command_str = command_str.replace("{changed_files}", " ".join(changed))
+        command_str = command_str.replace("{changed_files}", " ".join(changed_files_cache))
 
     # Use shlex.split + shell=False instead of shell=True
     try:
@@ -175,14 +175,15 @@ def _run_custom_command_gate(
 
     # Diff-aware retryability for custom gates (same logic as CommandCheckGate)
     retryable = True
-    changed_files: list[str] | None = None
+    changed_files: list[str] | None = changed_files_cache
     if not passed:
         from .command_check import _check_retryable, _get_changed_files
 
-        try:
-            changed_files = _get_changed_files(project_root, resolved_module_path)
-        except Exception:
-            changed_files = None
+        if changed_files is None:
+            try:
+                changed_files = _get_changed_files(project_root, resolved_module_path)
+            except Exception:
+                changed_files = None
         retryable = _check_retryable(project_root, Path(cwd), resolved_module_path, output)
 
     details: dict[str, Any] = {"exit_code": proc.returncode, "command": command_str}
