@@ -6,7 +6,7 @@ Detailed API reference and configuration guide. For an overview, see [README.md]
 
 ## Configuration Schema
 
-Complete `orchestrator.yaml` with all fields and defaults:
+Complete `.orchestrator/config.yaml` with all fields and defaults:
 
 ```yaml
 project:
@@ -17,7 +17,6 @@ modules:
   - name: backend
     path: backend/
     status_md: STATUS.md           # Default: STATUS.md
-    claude_md: CLAUDE.md           # Default: CLAUDE.md
     repo: myorg/my-backend         # GitHub slug (required for ci_check gate)
     ci_workflow: ci.yml            # Default: ci.yml
     role: ""                       # Set to "qa" to mark as QA dispatcher target
@@ -26,70 +25,66 @@ modules:
     repo: myorg/my-frontend
 
 planner:
-  mode: cli                        # "cli" uses claude -p; "api" uses Anthropic SDK
-  model: claude-sonnet-4-20250514  # Model for API mode
-  max_tokens: 4096                 # Max tokens for API mode
+  provider: claude_cli             # "claude_cli" (default) or "codex_cli"
   timeout_seconds: 120             # Planner timeout
-  prompt_template: null            # Path to custom Jinja2 template
+  prompt: ""                       # Custom planner prompt (empty = use default)
 
-dispatcher:
+generator:
   provider: claude_cli             # "claude_cli" (default) or "codex_cli"
   timeout_seconds: 1800            # Hard timeout per task dispatch (30 min)
-  stall_timeout_seconds: 600       # Backward-compat stall detection (10 min)
-  stall_escalation:
-    warn_after_seconds: 300        # Emit warning event after 5 min of silence
-    kill_after_seconds: 600        # Kill process after 10 min of silence
+  stall_timeout: 600               # Kill process after 10 min of silence
   permission_mode: bypassPermissions
   max_output_chars: 50000          # Truncate agent output beyond this
+  prompt_prefix: ""                # Prepended to every generator prompt
+
+evaluator:
+  provider: claude_cli             # "claude_cli" (default) or "codex_cli"
+  timeout_seconds: 300             # Evaluator agent timeout
+  pass_threshold: 80               # Score (0-100) below which task retries
+  prompt_prefix: ""                # Prepended to every evaluator prompt
 
 qa_gates:
   ci_check:
     timeout_seconds: 900           # CI polling timeout (15 min)
     poll_interval: 30              # Poll every 30 seconds
-  structural:
+  structural_check:
     max_file_lines: 500            # Flag files exceeding this line count
-    enforce_module_boundary: true   # Detect cross-module imports
     sensitive_patterns:             # Patterns for sensitive files
       - ".env"
       - "*.key"
       - "*.pem"
-  layer_check:
-    enabled: true                  # Enforce ARCHITECTURE.md layer ordering
-    unknown_file_policy: skip      # "skip" or "warn" for files outside layers
   custom:                          # User-defined command-based gates
     - name: pytest
       command: "pytest --tb=short -q"
       cwd: "{module_path}"        # Resolved to module's absolute path
       timeout: 600
+      diff_only: false             # If true, only check changed files
       modules: []                  # Empty = apply to all modules
-    - name: eslint
-      command: "npx eslint src/"
-      cwd: "{module_path}"
-      modules: ["frontend"]        # Only runs on the frontend module
+    - name: lint
+      command: "ruff check {changed_files}"
+      diff_only: true              # Only lint files changed on this branch
+      modules: []
 
 safety:
   dry_run: false
-  max_retries_per_task: 2          # Retries with QA feedback on failure
+  max_retries_per_task: 2          # Retries with evaluator feedback on failure
   max_parallel: 3                  # Max concurrent task dispatches
 
-mailbox:
-  enabled: true                    # Enabled by default
-  dir: ".orchestrator/mailbox"     # Mailbox storage directory
-  inject_on_dispatch: true         # Auto-inject pending messages into prompts
-
-tracker:
-  enabled: false                   # Set to true to enable issue tracking
-  provider: github                 # "github" (uses `gh` CLI)
-  repo: ""                         # GitHub slug; empty = current repo
-  labels:                          # Filter issues by these labels
-    - orchestrator
-  sync_on_complete: true           # Auto-comment and close issues on completion
+lifecycle_hooks:
+  after_create: ""                 # Shell command after worktree creation
+  before_run: ""                   # Shell command before agent dispatch
+  after_run: ""                    # Shell command after successful dispatch
+  before_remove: ""                # Shell command before worktree removal
 
 logging:
   dir: ".orchestrator/logs"
   session_dir: ".orchestrator/sessions"
   log_file: "actions.jsonl"
 ```
+
+### Backward Compatibility
+
+Old-format YAML with `dispatcher:` instead of `generator:` still loads with a deprecation warning. The `dispatcher` fields are mapped to `generator` automatically.
 
 ### Module-Scoped QA Gates
 
@@ -109,9 +104,46 @@ These are auto-normalized to the `custom` list with `modules` set accordingly.
 
 ---
 
+## Pipeline Roles
+
+### Planner
+
+Decomposes a goal into a dependency-ordered task DAG. Each task includes:
+- `generator_prompt` ... what the Generator should do
+- `acceptance_criteria` ... human-readable success criteria
+- `evaluator_prompt` ... what the Evaluator should verify
+
+### Generator
+
+Dispatches code agents with strict context isolation. The Generator sees:
+- `generator_prompt` (from Planner)
+- CLAUDE.md / CODEX.md instructions (selected by `generator.provider`)
+- Module STATUS.md
+- Branch delivery instructions
+- Retry feedback (if retrying)
+
+The Generator **never** sees acceptance_criteria or evaluator_prompt.
+
+### Evaluator
+
+Two-phase evaluation:
+1. **QA gates** ... run in parallel (ci_check, structural_check, command_check, custom)
+2. **Agent scoring** ... evaluator agent scores 0-100 against acceptance criteria
+
+Scoring rubric:
+- 90-100: All criteria met, code clean, tests pass
+- 70-89: Most criteria met, minor issues
+- 50-69: Some criteria met, notable gaps
+- 30-49: Significant gaps, multiple failing criteria
+- 0-29: Fundamental issues
+
+`passed` is computed in code from `score >= pass_threshold`, never trusted from LLM output.
+
+---
+
 ## DispatchProvider Protocol
 
-Defined in `providers/base.py`. All dispatch providers must implement:
+Defined in `providers/base.py`:
 
 ```python
 @runtime_checkable
@@ -124,7 +156,7 @@ class DispatchProvider(Protocol):
         on_event: Callable[[dict[str, Any]], None] | None = None,
         stall_seconds: int | None = None,
     ) -> DispatchResult:
-        """Streaming dispatch with heartbeat/stall detection."""
+        """Streaming dispatch with stall detection."""
         ...
 
     def dispatch_simple(
@@ -133,7 +165,7 @@ class DispatchProvider(Protocol):
         working_dir: Path,
         prompt: str,
     ) -> DispatchResult:
-        """Blocking dispatch for quick tasks (planning, reports)."""
+        """Blocking dispatch for quick tasks (planning, evaluation)."""
         ...
 ```
 
@@ -151,6 +183,9 @@ class DispatchResult:
     error: str | None = None
     event_count: int = 0
     last_tool_use: str = ""
+    cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
 ```
 
 ---
@@ -168,13 +203,13 @@ class EventType(str, Enum):
     TASK_SKIPPED      = "task_skipped"
     QA_PASSED         = "qa_passed"
     QA_FAILED         = "qa_failed"
-    STALL_WARNING     = "stall_warning"
     STALL_KILLED      = "stall_killed"
     TASK_HEARTBEAT    = "task_heartbeat"
     CHECKPOINT_SAVED  = "checkpoint_saved"
-    MAILBOX_MESSAGE   = "mailbox_message"
     SESSION_START     = "session_start"
     SESSION_END       = "session_end"
+    PHASE_CHANGED     = "phase_changed"
+    EVAL_SCORED       = "eval_scored"
 ```
 
 ### Event
@@ -210,25 +245,6 @@ hooks.clear()  # Remove all
 
 ---
 
-## Mailbox Message Structure
-
-```python
-@dataclass
-class Message:
-    id: str              # Auto-generated UUID
-    from_module: str
-    to_module: str
-    content: str
-    message_type: str    # "request", "response", or "notification"
-    priority: str        # "low", "normal", "high", or "urgent"
-    status: str          # "pending", "read", or "acknowledged"
-    in_reply_to: str     # Optional parent message ID
-    task_id: int | None  # Optional associated task ID
-    created_at: str      # ISO 8601 timestamp
-```
-
----
-
 ## Structured QA Feedback Model
 
 ```python
@@ -254,4 +270,4 @@ class StructuredFeedback:
 ### Retry Prompt Strategy
 
 - **Retry 1**: Full original prompt + structured feedback with errors, files, and remediation
-- **Retry 2+**: Simplified prompt targeting only failing files and specific errors. Skips the original prompt to focus agent effort on fixes.
+- **Retry 2+**: Simplified prompt targeting only failing files and specific errors

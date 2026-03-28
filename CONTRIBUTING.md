@@ -5,28 +5,29 @@
 ```bash
 git clone https://github.com/eddieran/lindy-orchestrator.git
 cd lindy-orchestrator
+
+# With uv (recommended)
+uv sync --extra dev --frozen
+uv run python -m pytest tests/ -x -q --tb=short
+
+# With pip
 pip install -e ".[dev]"
+pytest tests/ -x -q --tb=short
 ```
 
 Requires Python 3.11+.
 
-For API-mode planning (optional):
-
-```bash
-pip install -e ".[api]"
-export ANTHROPIC_API_KEY=sk-...
-```
-
 ## Running Tests
 
 ```bash
-pytest tests/ -v
-```
+# Quick run
+uv run python -m pytest tests/ -x -q --tb=short
 
-With coverage:
+# Verbose
+uv run python -m pytest tests/ -v
 
-```bash
-pytest tests/ --cov=src/lindy_orchestrator --cov-report=term-missing
+# With coverage
+uv run python -m pytest tests/ --cov=lindy_orchestrator --cov-report=term-missing
 ```
 
 Coverage threshold is 70% (configured in `pyproject.toml`). All tests must pass before
@@ -37,8 +38,8 @@ submitting a PR. CI runs tests on Python 3.11, 3.12, and 3.13.
 This project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting:
 
 ```bash
-ruff check src/ tests/
-ruff format src/ tests/
+uv run ruff check src/ tests/
+uv run ruff format src/ tests/
 ```
 
 Configuration in `pyproject.toml`:
@@ -49,65 +50,57 @@ Additional conventions:
 - Type hints on all function signatures
 - PEP 8 naming conventions
 - `pathlib.Path` over `os.path`
-- Pydantic models for data validation (`model_validate()`, not deprecated `parse_obj()`)
-- Dataclasses for value objects, Pydantic for config/validation
+- Pydantic models for config/validation, dataclasses for value objects
 - `from __future__ import annotations` in every module
 
 ## Pull Request Process
 
 1. Fork the repo and create a feature branch from `main`.
 2. Make your changes. Add tests for new functionality.
-3. Run `pytest tests/ -v` and `ruff check src/ tests/` locally.
-4. Submit a PR against `main` with a clear description of the change.
-
-## Architecture Overview
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component diagram, data flow,
-layer structure per package, and boundary rules.
+3. Run tests and lint locally.
+4. Submit a PR against `main` with a clear description.
 
 ## Project Structure
 
 ```
 src/lindy_orchestrator/
     __init__.py
-    cli.py                          # Main CLI entry point (Typer)
-    cli_ext.py                      # Extension commands (gc, scan, validate, issues, run-issue, mailbox)
+    cli.py                          # Main CLI entry point
+    cli_ext.py                      # Extension commands (gc, scan, validate, stats, clear)
     cli_helpers.py                  # Shared CLI utilities
-    cli_init.py                     # init command
+    cli_config.py                   # config command (global/local provider settings)
     cli_onboard.py                  # onboard command (guided project setup)
     cli_onboard_helpers.py          # Onboard helper functions
-    cli_scaffold.py                 # Scaffold command
     cli_status.py                   # status command (module health overview)
-    codex_dispatcher.py             # Codex CLI subprocess management
+    cli_stats.py                    # stats command (execution metrics)
+    cli_clear.py                    # clear command (remove generated files)
+    command_queue.py                # Thread-safe interactive controls (pause/skip/force-pass)
     config.py                       # Configuration loading (Pydantic + YAML)
     dag.py                          # DAG visualization (ASCII tree with status icons)
     dashboard.py                    # Live DAG dashboard (Rich Live panel)
-    dispatcher.py                   # Claude CLI subprocess management
+    dispatch_core.py                # Streaming dispatch with stall detection
+    evaluator_runner.py             # Evaluator role: QA gates + agent scoring
     gc.py                           # Garbage collection (stale branches, sessions, logs)
-    hooks.py                        # Central event hook system (14 event types)
+    generator_runner.py             # Generator role: code dispatch with context isolation
+    hooks.py                        # Central event hook system
     logger.py                       # JSONL append-only action logger
-    mailbox.py                      # JSONL-based inter-agent mailbox
-    models.py                       # Core data models (TaskPlan, TaskItem, etc.)
-    planner.py                      # Goal decomposition via LLM
+    metrics.py                      # Metrics collection from hook events
+    models.py                       # Core data models (TaskSpec, TaskPlan, etc.)
+    orchestrator.py                 # Pipeline coordinator (Generator -> Evaluator loop)
+    orchestrator_helpers.py         # Orchestrator helper utilities
+    planner_runner.py               # Planner role: goal decomposition via LLM
     prompts.py                      # Prompt template rendering
     reporter.py                     # Rich terminal output and summary reports
-    scheduler.py                    # DAG-based parallel task execution
-    scheduler_helpers.py            # Scheduler helper functions
+    scheduler_helpers.py            # Legacy scheduler helper functions
     session.py                      # Session state persistence
     worktree.py                     # Git worktree utilities for parallel isolation
     discovery/
         __init__.py
         analyzer.py                 # Static project analyzer
         analyzer_helpers.py         # Analyzer helper functions
-        generator.py                # Artifact generator (orchestrator.yaml, CLAUDE.md, etc.)
+        generator.py                # Artifact generator (config.yaml, CLAUDE.md, etc.)
         interview.py                # Interactive discovery interview
-        templates/
-            __init__.py
-            agent_docs.py           # Agent documentation templates
-            architecture_md.py      # ARCHITECTURE.md template
-            contracts_md.py         # CONTRACTS.md template
-            module_claude_md.py     # Per-module CLAUDE.md template
-            root_claude_md.py       # Root CLAUDE.md template
+        templates/                  # Templates for generated docs
     entropy/
         __init__.py
         scanner.py                  # Entropy scanner (drift, contracts, quality)
@@ -124,20 +117,17 @@ src/lindy_orchestrator/
         ci_check.py                 # CI pipeline check (gh CLI)
         command_check.py            # Custom shell command gate
         feedback.py                 # Structured QA feedback (pytest/ruff/tsc parsers)
-        layer_check.py              # Intra-module layer ordering check
-        structural_check.py         # File size, sensitive files, import boundaries
+        structural_check.py         # File size and sensitive file checks
     status/
         __init__.py
         parser.py                   # STATUS.md parser
         templates.py                # STATUS.md scaffold templates
         writer.py                   # STATUS.md writer
-    trackers/
+    web/
         __init__.py
-        base.py                     # TrackerProvider Protocol
-        factory.py                  # Tracker factory
-        github_issues.py            # GitHub Issues provider (gh CLI)
-tests/                              # Test suite (pytest)
-docs/                               # Usage guides and agent reference
+        server.py                   # Web dashboard (SSE + interactive controls)
+tests/                              # Test suite (67 files, 1074 tests)
+docs/                               # Usage guides and reference
 ```
 
 ## Reporting Issues

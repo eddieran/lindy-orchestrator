@@ -4,7 +4,7 @@
 | Key | Value |
 |-----|-------|
 | module | lindy-orchestrator |
-| last_updated | 2026-03-08 UTC |
+| last_updated | 2026-03-29 UTC |
 | overall_health | GREEN |
 | agent_session | — |
 
@@ -52,8 +52,8 @@
 | audit_findings_total | 69 (14H/28M/27L) |
 | audit_findings_fixed | 35 |
 | audit_findings_remaining | 34 |
-| version | 0.8.0 |
-| tests_passing | 824 |
+| version | 0.15.0 |
+| tests_passing | 1074 |
 | ruff_warnings | 0 |
 
 ## Blockers
