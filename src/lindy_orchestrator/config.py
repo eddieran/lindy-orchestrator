@@ -49,6 +49,19 @@ class DispatcherConfig(BaseModel):
     prompt_template: str = ""
 
 
+class GeneratorConfig(BaseModel):
+    provider: str = ""
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.provider and self.provider not in VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid provider {self.provider!r}. Valid options: {sorted(VALID_PROVIDERS)}"
+            )
+
+    def resolved_provider(self, dispatcher_provider: str) -> str:
+        return self.provider or dispatcher_provider
+
+
 class CICheckConfig(BaseModel):
     timeout_seconds: int = 900
     poll_interval: int = 30
@@ -139,6 +152,7 @@ class OrchestratorConfig(BaseModel):
     modules: list[ModuleConfig] = Field(default_factory=list)
     planner: PlannerConfig = Field(default_factory=PlannerConfig)
     dispatcher: DispatcherConfig = Field(default_factory=DispatcherConfig)
+    generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

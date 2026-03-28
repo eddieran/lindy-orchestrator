@@ -117,6 +117,9 @@ class TaskSpec:
     acceptance_criteria: str = ""
     evaluator_prompt: str = ""
     prompt: str = ""
+    generator_prompt: str = ""
+    evaluator_prompt: str = ""
+    acceptance_criteria: list[str] = field(default_factory=list)
     depends_on: list[int] = field(default_factory=list)
     priority: int = 0  # higher = dispatched first within same dep level
     qa_checks: list[QACheck] = field(default_factory=list)
@@ -211,10 +214,10 @@ def plan_from_dict(data: dict) -> TaskPlan:
                 id=t["id"],
                 module=t["module"],
                 description=t["description"],
-                generator_prompt=generator_prompt,
+                generator_prompt=t.get("generator_prompt", t.get("prompt", "")),
                 acceptance_criteria=t.get("acceptance_criteria", ""),
                 evaluator_prompt=t.get("evaluator_prompt", ""),
-                prompt=t.get("prompt", generator_prompt),
+                prompt=t.get("prompt", t.get("generator_prompt", "")),
                 depends_on=t.get("depends_on", []),
                 priority=t.get("priority", 0),
                 qa_checks=qa_checks,

@@ -233,6 +233,7 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
         ]
         raw_generator_prompt = t.get("generator_prompt", t.get("prompt", ""))
         generator_prompt = _coerce_task_text(raw_generator_prompt)
+        evaluator_prompt = _coerce_task_text(t.get("evaluator_prompt", ""))
         tasks.append(
             TaskSpec(
                 id=t["id"],
@@ -240,7 +241,7 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
                 description=t["description"],
                 generator_prompt=generator_prompt,
                 acceptance_criteria=_coerce_task_text(t.get("acceptance_criteria", "")),
-                evaluator_prompt=_coerce_task_text(t.get("evaluator_prompt", "")),
+                evaluator_prompt=evaluator_prompt,
                 prompt=generator_prompt,
                 depends_on=t.get("depends_on", []),
                 priority=t.get("priority", 0),
