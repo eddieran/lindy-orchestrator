@@ -169,13 +169,13 @@ def _plan_via_cli(
 
     if not progress:
         _emit("  [dim]Generating plan...[/]")
-    provider = create_provider(config.dispatcher)
+    provider = create_provider(config.planner)
     result = provider.dispatch(
         module="planner",
         working_dir=config.root,
         prompt=prompt,
         on_event=_on_event,
-        stall_seconds=config.dispatcher.timeout_seconds,  # planning has few events; disable stall
+        stall_seconds=config.planner.timeout_seconds,  # planning has few events; disable stall
     )
     if not result.success:
         raise RuntimeError(f"Planning failed: {result.output[:500]}")
@@ -219,6 +219,9 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
                     id=1,
                     module="unknown",
                     description=f"Failed to parse task plan JSON from output ({len(output)} chars)",
+                    generator_prompt="",
+                    acceptance_criteria=[],
+                    evaluator_prompt="",
                     prompt="",
                     status=TaskStatus.FAILED,
                 )
@@ -240,7 +243,7 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
                 module=t.get("module", t.get("department", "unknown")),
                 description=t["description"],
                 generator_prompt=generator_prompt,
-                acceptance_criteria=_coerce_task_text(t.get("acceptance_criteria", "")),
+                acceptance_criteria=_coerce_acceptance_criteria(t.get("acceptance_criteria", [])),
                 evaluator_prompt=evaluator_prompt,
                 prompt=generator_prompt,
                 depends_on=t.get("depends_on", []),
@@ -303,6 +306,15 @@ def _coerce_task_text(value: object) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _coerce_acceptance_criteria(value: object) -> list[str]:
+    """Normalize acceptance_criteria from planner JSON into a list of strings."""
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    if isinstance(value, str) and value:
+        return [value]
+    return []
 
 
 class PlannerRunner:

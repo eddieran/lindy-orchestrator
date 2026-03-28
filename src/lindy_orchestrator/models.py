@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 
 class TaskStatus(str, Enum):
@@ -108,14 +108,15 @@ class QAResult:
 
 @dataclass
 class TaskSpec:
-    """A single task in a goal's execution plan."""
+    """A single task in a goal's execution plan.
+
+    `generator_prompt` is only for the generator role. `acceptance_criteria`
+    and `evaluator_prompt` are only for the evaluator role.
+    """
 
     id: int
     module: str
     description: str
-    generator_prompt: str = ""
-    acceptance_criteria: str = ""
-    evaluator_prompt: str = ""
     prompt: str = ""
     generator_prompt: str = ""
     acceptance_criteria: str = ""
@@ -150,6 +151,8 @@ class TaskPlan:
 
     goal: str
     tasks: list[TaskSpec] = field(default_factory=list)
+    planner_cost_usd: float = 0.0
+    tasks_v2: list[TaskSpec] = field(default_factory=list)
 
     def next_ready(self) -> list[TaskSpec]:
         """Return all tasks whose dependencies are satisfied.
@@ -200,62 +203,24 @@ class TaskPlan:
 
 def plan_to_dict(plan: TaskPlan) -> dict:
     """Serialize a TaskPlan to a JSON-safe dict."""
-    import dataclasses
-
     return {
         "goal": plan.goal,
-        "tasks": [_task_to_dict(t, dataclasses) for t in plan.tasks],
+        "planner_cost_usd": plan.planner_cost_usd,
+        "tasks": [_task_spec_to_dict(t) for t in plan.tasks],
+        "tasks_v2": [_task_spec_to_dict(t) for t in plan.tasks_v2],
     }
 
 
 def plan_from_dict(data: dict) -> TaskPlan:
     """Deserialize a TaskPlan from a dict."""
-    tasks = []
-    for t in data.get("tasks", []):
-        generator_prompt = t.get("generator_prompt", t.get("prompt", ""))
-        qa_checks = [
-            QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
-        ]
-        tasks.append(
-            TaskSpec(
-                id=t["id"],
-                module=t["module"],
-                description=t["description"],
-                generator_prompt=t.get("generator_prompt", t.get("prompt", "")),
-                acceptance_criteria=t.get("acceptance_criteria", ""),
-                evaluator_prompt=t.get("evaluator_prompt", ""),
-                prompt=t.get("prompt", t.get("generator_prompt", "")),
-                depends_on=t.get("depends_on", []),
-                priority=t.get("priority", 0),
-                qa_checks=qa_checks,
-                status=TaskStatus(t.get("status", "pending")),
-                result=t.get("result", ""),
-                retries=t.get("retries", 0),
-                feedback_history=t.get("feedback_history", []),
-                started_at=t.get("started_at"),
-                completed_at=t.get("completed_at"),
-                timeout_seconds=t.get("timeout_seconds"),
-                skip_qa=t.get("skip_qa", False),
-                skip_gates=t.get("skip_gates", []),
-                stall_seconds=t.get("stall_seconds"),
-                cost_usd=t.get("cost_usd", 0.0),
-            )
-        )
-    return TaskPlan(goal=data["goal"], tasks=tasks)
-
-
-def _task_to_dict(task: TaskSpec, dataclasses_module: Any) -> dict[str, Any]:
-    """Serialize task fields while mirroring legacy prompt consumers."""
-    task_dict = dataclasses_module.asdict(task)
-    generator_prompt = task.generator_prompt or task.prompt
-    task_dict["generator_prompt"] = generator_prompt
-    task_dict["prompt"] = task.prompt or generator_prompt
-    task_dict["status"] = task.status.value
-    task_dict["qa_checks"] = [{"gate": q.gate, "params": q.params} for q in task.qa_checks]
-    task_dict["qa_results"] = [
-        {"gate": r.gate, "passed": r.passed, "output": r.output[:500]} for r in task.qa_results
-    ]
-    return task_dict
+    tasks = [_task_spec_from_dict(t) for t in data.get("tasks", [])]
+    tasks_v2 = [_task_spec_from_dict(t) for t in data.get("tasks_v2", [])]
+    return TaskPlan(
+        goal=data["goal"],
+        tasks=tasks,
+        planner_cost_usd=data.get("planner_cost_usd", 0.0),
+        tasks_v2=tasks_v2,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -280,6 +245,12 @@ class DispatchResult:
 
 
 @dataclass
+class RoleProviderConfig:
+    provider: str = "claude_cli"
+    timeout_seconds: int = 300
+
+
+@dataclass
 class GeneratorOutput:
     success: bool
     output: str
@@ -287,7 +258,7 @@ class GeneratorOutput:
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
     event_count: int = 0
-    last_tool_use: str = ""
+    last_tool: str = ""
 
 
 @dataclass
@@ -310,6 +281,234 @@ class EvalResult:
     qa_results: list[QAResult] = field(default_factory=list)
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
+
+
+@dataclass
+class AttemptRecord:
+    attempt: int
+    generator_output: GeneratorOutput
+    eval_result: EvalResult
+    timestamp: str
+
+
+@dataclass
+class TaskState:
+    _checkpoint_version: ClassVar[int] = 2
+
+    spec: TaskSpec
+    status: TaskStatus = TaskStatus.PENDING
+    phase: str = "pending"
+    attempts: list[AttemptRecord] = field(default_factory=list)
+    started_at: str = ""
+    completed_at: str = ""
+    total_cost_usd: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "_checkpoint_version": self._checkpoint_version,
+            "spec": _task_spec_to_dict(self.spec),
+            "status": self.status.value,
+            "phase": self.phase,
+            "attempts": [
+                {
+                    "attempt": attempt.attempt,
+                    "generator_output": {
+                        "success": attempt.generator_output.success,
+                        "output": attempt.generator_output.output,
+                        "diff": attempt.generator_output.diff,
+                        "cost_usd": attempt.generator_output.cost_usd,
+                        "duration_seconds": attempt.generator_output.duration_seconds,
+                        "event_count": attempt.generator_output.event_count,
+                        "last_tool": attempt.generator_output.last_tool,
+                    },
+                    "eval_result": {
+                        "score": attempt.eval_result.score,
+                        "passed": attempt.eval_result.passed,
+                        "retryable": attempt.eval_result.retryable,
+                        "feedback": {
+                            "summary": attempt.eval_result.feedback.summary,
+                            "specific_errors": list(attempt.eval_result.feedback.specific_errors),
+                            "files_to_check": list(attempt.eval_result.feedback.files_to_check),
+                            "remediation_steps": list(
+                                attempt.eval_result.feedback.remediation_steps
+                            ),
+                            "failed_criteria": list(attempt.eval_result.feedback.failed_criteria),
+                            "evidence": attempt.eval_result.feedback.evidence,
+                            "missing_behaviors": list(
+                                attempt.eval_result.feedback.missing_behaviors
+                            ),
+                        },
+                        "qa_results": [
+                            {
+                                "gate": qa.gate,
+                                "passed": qa.passed,
+                                "output": qa.output,
+                                "details": qa.details,
+                                "retryable": qa.retryable,
+                            }
+                            for qa in attempt.eval_result.qa_results
+                        ],
+                        "cost_usd": attempt.eval_result.cost_usd,
+                        "duration_seconds": attempt.eval_result.duration_seconds,
+                    },
+                    "timestamp": attempt.timestamp,
+                }
+                for attempt in self.attempts
+            ],
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "total_cost_usd": self.total_cost_usd,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TaskState:
+        attempts = []
+        for attempt in data.get("attempts", []):
+            feedback_data = attempt.get("eval_result", {}).get("feedback", {})
+            qa_results = [
+                QAResult(
+                    gate=qa.get("gate", ""),
+                    passed=qa.get("passed", False),
+                    output=qa.get("output", ""),
+                    details=qa.get("details", {}),
+                    retryable=qa.get("retryable", True),
+                )
+                for qa in attempt.get("eval_result", {}).get("qa_results", [])
+            ]
+            attempts.append(
+                AttemptRecord(
+                    attempt=attempt.get("attempt", 0),
+                    generator_output=GeneratorOutput(
+                        success=attempt.get("generator_output", {}).get("success", False),
+                        output=attempt.get("generator_output", {}).get("output", ""),
+                        diff=attempt.get("generator_output", {}).get("diff", ""),
+                        cost_usd=attempt.get("generator_output", {}).get("cost_usd", 0.0),
+                        duration_seconds=attempt.get("generator_output", {}).get(
+                            "duration_seconds", 0.0
+                        ),
+                        event_count=attempt.get("generator_output", {}).get("event_count", 0),
+                        last_tool=attempt.get("generator_output", {}).get("last_tool", ""),
+                    ),
+                    eval_result=EvalResult(
+                        score=attempt.get("eval_result", {}).get("score", 0),
+                        passed=attempt.get("eval_result", {}).get("passed", False),
+                        retryable=attempt.get("eval_result", {}).get("retryable", True),
+                        feedback=EvalFeedback(
+                            summary=feedback_data.get("summary", ""),
+                            specific_errors=feedback_data.get("specific_errors", []),
+                            files_to_check=feedback_data.get("files_to_check", []),
+                            remediation_steps=feedback_data.get("remediation_steps", []),
+                            failed_criteria=feedback_data.get("failed_criteria", []),
+                            evidence=feedback_data.get("evidence", ""),
+                            missing_behaviors=feedback_data.get("missing_behaviors", []),
+                        ),
+                        qa_results=qa_results,
+                        cost_usd=attempt.get("eval_result", {}).get("cost_usd", 0.0),
+                        duration_seconds=attempt.get("eval_result", {}).get(
+                            "duration_seconds", 0.0
+                        ),
+                    ),
+                    timestamp=attempt.get("timestamp", ""),
+                )
+            )
+
+        return cls(
+            spec=_task_spec_from_dict(data.get("spec", {})),
+            status=TaskStatus(data.get("status", TaskStatus.PENDING.value)),
+            phase=data.get("phase", "pending"),
+            attempts=attempts,
+            started_at=data.get("started_at", ""),
+            completed_at=data.get("completed_at", ""),
+            total_cost_usd=data.get("total_cost_usd", 0.0),
+        )
+
+
+@dataclass
+class ExecutionResult:
+    plan: TaskPlan
+    states: list[TaskState]
+    duration_seconds: float = 0.0
+    total_cost_usd: float = 0.0
+    session_id: str = ""
+
+
+def _task_spec_to_dict(task: TaskSpec) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "module": task.module,
+        "description": task.description,
+        "generator_prompt": task.generator_prompt,
+        "acceptance_criteria": task.acceptance_criteria,
+        "evaluator_prompt": task.evaluator_prompt,
+        "prompt": task.prompt or task.generator_prompt,
+        "depends_on": list(task.depends_on),
+        "priority": task.priority,
+        "qa_checks": [{"gate": q.gate, "params": q.params} for q in task.qa_checks],
+        "status": task.status.value,
+        "result": task.result,
+        "qa_results": [
+            {
+                "gate": r.gate,
+                "passed": r.passed,
+                "output": r.output,
+                "details": r.details,
+                "retryable": r.retryable,
+            }
+            for r in task.qa_results
+        ],
+        "retries": task.retries,
+        "feedback_history": list(task.feedback_history),
+        "started_at": task.started_at,
+        "completed_at": task.completed_at,
+        "skip_qa": task.skip_qa,
+        "skip_gates": list(task.skip_gates),
+        "timeout_seconds": task.timeout_seconds,
+        "stall_seconds": task.stall_seconds,
+        "cost_usd": task.cost_usd,
+    }
+
+
+def _task_spec_from_dict(data: dict[str, Any]) -> TaskSpec:
+    qa_checks = [
+        QACheck(gate=c.get("gate", ""), params=c.get("params", {}))
+        for c in data.get("qa_checks", [])
+    ]
+    qa_results = [
+        QAResult(
+            gate=r.get("gate", ""),
+            passed=r.get("passed", False),
+            output=r.get("output", ""),
+            details=r.get("details", {}),
+            retryable=r.get("retryable", True),
+        )
+        for r in data.get("qa_results", [])
+    ]
+    generator_prompt = data.get("generator_prompt", data.get("prompt", ""))
+    return TaskSpec(
+        id=data["id"],
+        module=data["module"],
+        description=data["description"],
+        generator_prompt=generator_prompt,
+        acceptance_criteria=data.get("acceptance_criteria", []),
+        evaluator_prompt=data.get("evaluator_prompt", ""),
+        prompt=data.get("prompt", generator_prompt),
+        depends_on=data.get("depends_on", []),
+        priority=data.get("priority", 0),
+        qa_checks=qa_checks,
+        status=TaskStatus(data.get("status", TaskStatus.PENDING.value)),
+        result=data.get("result", ""),
+        qa_results=qa_results,
+        retries=data.get("retries", 0),
+        feedback_history=data.get("feedback_history", []),
+        started_at=data.get("started_at"),
+        completed_at=data.get("completed_at"),
+        skip_qa=data.get("skip_qa", False),
+        skip_gates=data.get("skip_gates", []),
+        timeout_seconds=data.get("timeout_seconds"),
+        stall_seconds=data.get("stall_seconds"),
+        cost_usd=data.get("cost_usd", 0.0),
+    )
+
 
 
 # ---------------------------------------------------------------------------
