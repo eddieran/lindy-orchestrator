@@ -66,7 +66,6 @@ Each module has a STATUS.md file at `.orchestrator/status/{{module}}.md` that tr
 
 Every task is verified by quality checks before marking complete:
 - **structural_check**: file size limits, sensitive file detection, import boundaries
-- **layer_check**: intra-module layer ordering (parsed from ARCHITECTURE.md)
 - **ci_check**: CI pipeline pass/fail
 - **command_check**: custom commands (test suites, linters)
 - **agent_check**: dispatches a QA agent for complex validation

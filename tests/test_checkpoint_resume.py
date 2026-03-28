@@ -6,7 +6,7 @@ import json
 
 from lindy_orchestrator.models import (
     QACheck,
-    TaskItem,
+    TaskSpec,
     TaskPlan,
     TaskStatus,
     plan_from_dict,
@@ -20,8 +20,8 @@ class TestPlanSerialization:
         plan = TaskPlan(
             goal="Add auth",
             tasks=[
-                TaskItem(id=1, module="backend", description="Add JWT"),
-                TaskItem(
+                TaskSpec(id=1, module="backend", description="Add JWT"),
+                TaskSpec(
                     id=2,
                     module="frontend",
                     description="Login page",
@@ -43,8 +43,8 @@ class TestPlanSerialization:
         plan = TaskPlan(
             goal="Test",
             tasks=[
-                TaskItem(id=1, module="m", description="d", status=TaskStatus.COMPLETED),
-                TaskItem(id=2, module="m", description="d", status=TaskStatus.FAILED),
+                TaskSpec(id=1, module="m", description="d", status=TaskStatus.COMPLETED),
+                TaskSpec(id=2, module="m", description="d", status=TaskStatus.FAILED),
             ],
         )
         data = plan_to_dict(plan)
@@ -56,7 +56,7 @@ class TestPlanSerialization:
     def test_plan_to_dict_is_json_safe(self):
         plan = TaskPlan(
             goal="Test",
-            tasks=[TaskItem(id=1, module="m", description="d")],
+            tasks=[TaskSpec(id=1, module="m", description="d")],
         )
         data = plan_to_dict(plan)
         # Should not raise
@@ -85,8 +85,8 @@ class TestCheckpoint:
         plan = TaskPlan(
             goal="Test goal",
             tasks=[
-                TaskItem(id=1, module="m", description="d", status=TaskStatus.COMPLETED),
-                TaskItem(id=2, module="m", description="d2", status=TaskStatus.PENDING),
+                TaskSpec(id=1, module="m", description="d", status=TaskStatus.COMPLETED),
+                TaskSpec(id=2, module="m", description="d2", status=TaskStatus.PENDING),
             ],
         )
         mgr.checkpoint(session, plan_to_dict(plan))
@@ -98,7 +98,7 @@ class TestCheckpoint:
         mgr = SessionManager(tmp_path)
         session = mgr.create(goal="Test")
         plan_dict = plan_to_dict(
-            TaskPlan(goal="Test", tasks=[TaskItem(id=1, module="m", description="d")])
+            TaskPlan(goal="Test", tasks=[TaskSpec(id=1, module="m", description="d")])
         )
 
         mgr.checkpoint(session, plan_dict)
@@ -114,8 +114,8 @@ class TestCheckpoint:
         plan = TaskPlan(
             goal="Test",
             tasks=[
-                TaskItem(id=1, module="be", description="API", status=TaskStatus.COMPLETED),
-                TaskItem(id=2, module="fe", description="UI", status=TaskStatus.PENDING),
+                TaskSpec(id=1, module="be", description="API", status=TaskStatus.COMPLETED),
+                TaskSpec(id=2, module="fe", description="UI", status=TaskStatus.PENDING),
             ],
         )
         mgr.checkpoint(session, plan_to_dict(plan))
@@ -135,9 +135,9 @@ class TestCheckpoint:
         plan = TaskPlan(
             goal="Multi-task",
             tasks=[
-                TaskItem(id=1, module="a", description="step1", status=TaskStatus.COMPLETED),
-                TaskItem(id=2, module="b", description="step2", depends_on=[1]),
-                TaskItem(id=3, module="c", description="step3", depends_on=[2]),
+                TaskSpec(id=1, module="a", description="step1", status=TaskStatus.COMPLETED),
+                TaskSpec(id=2, module="b", description="step2", depends_on=[1]),
+                TaskSpec(id=3, module="c", description="step3", depends_on=[2]),
             ],
         )
         mgr.checkpoint(session, plan_to_dict(plan))
@@ -164,9 +164,9 @@ class TestCheckpoint:
         plan = TaskPlan(
             goal="Test",
             tasks=[
-                TaskItem(id=1, module="a", description="ok", status=TaskStatus.COMPLETED),
-                TaskItem(id=2, module="b", description="fail", status=TaskStatus.FAILED),
-                TaskItem(id=3, module="c", description="skip", depends_on=[2]),
+                TaskSpec(id=1, module="a", description="ok", status=TaskStatus.COMPLETED),
+                TaskSpec(id=2, module="b", description="fail", status=TaskStatus.FAILED),
+                TaskSpec(id=3, module="c", description="skip", depends_on=[2]),
             ],
         )
         mgr.checkpoint(session, plan_to_dict(plan))

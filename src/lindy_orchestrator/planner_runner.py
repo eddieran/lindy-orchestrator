@@ -13,7 +13,7 @@ import time
 from typing import Callable
 
 from .config import OrchestratorConfig
-from .models import PlannerMode, QACheck, TaskItem, TaskPlan, TaskStatus
+from .models import PlannerMode, QACheck, TaskSpec, TaskPlan, TaskStatus
 from .providers import create_provider
 from .prompts import render_plan_prompt
 from .reporter import PlanProgress
@@ -75,7 +75,7 @@ def generate_plan(
         return TaskPlan(
             goal=goal,
             tasks=[
-                TaskItem(
+                TaskSpec(
                     id=1,
                     module=config.modules[0].name if config.modules else "default",
                     description="[DRY RUN] Would decompose goal into tasks",
@@ -214,7 +214,7 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
         return TaskPlan(
             goal=goal,
             tasks=[
-                TaskItem(
+                TaskSpec(
                     id=1,
                     module="unknown",
                     description=f"Failed to parse task plan JSON from output ({len(output)} chars)",
@@ -233,7 +233,7 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
         raw_prompt = t.get("prompt", "")
         prompt = _format_prompt(raw_prompt) if isinstance(raw_prompt, dict) else raw_prompt
         tasks.append(
-            TaskItem(
+            TaskSpec(
                 id=t["id"],
                 module=t.get("module", t.get("department", "unknown")),
                 description=t["description"],
@@ -287,3 +287,18 @@ def _format_prompt(prompt_dict: dict) -> str:
         parts.append(f"## Before committing, verify\n{verify_list}")
 
     return "\n\n".join(parts)
+
+
+class PlannerRunner:
+    """Thin wrapper around the planner entrypoint."""
+
+    def __init__(self, config: OrchestratorConfig):
+        self.config = config
+
+    def plan(
+        self,
+        goal: str,
+        on_progress: Callable[[str], None] | None = None,
+        progress: PlanProgress | None = None,
+    ) -> TaskPlan:
+        return generate_plan(goal, self.config, on_progress=on_progress, progress=progress)

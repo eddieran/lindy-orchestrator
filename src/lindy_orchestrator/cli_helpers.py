@@ -19,7 +19,7 @@ from .config import (
     load_config,
     load_global_config,
 )
-from .models import TaskItem, TaskPlan
+from .models import TaskSpec, TaskPlan
 from .providers import create_provider
 from .session import SessionManager, SessionState
 
@@ -92,7 +92,7 @@ def plan_from_dict(data: dict) -> TaskPlan:
 
 def print_task_list(
     con: Console,
-    tasks: list[TaskItem],
+    tasks: list[TaskSpec],
     *,
     show_qa: bool = False,
     show_prompt: bool = False,
@@ -108,7 +108,7 @@ def print_task_list(
     total = len(tasks)
     con.print(f"\n  [bold]{total} tasks planned:[/]")
 
-    def _print_task(t: TaskItem) -> None:
+    def _print_task(t: TaskSpec) -> None:
         deps = f" [dim](depends on: {t.depends_on})[/]" if t.depends_on else ""
         con.print(f"    {t.id}. [bold][{t.module}][/] {t.description}{deps}")
         if show_qa:

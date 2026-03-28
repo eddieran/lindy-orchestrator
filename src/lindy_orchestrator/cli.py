@@ -110,7 +110,7 @@ def run(
     Goal can be provided as argument, from a file (--file goal.md), or stdin (--file -).
     Use --plan to execute a previously saved plan JSON directly (skips LLM planning).
     """
-    from .scheduler import execute_plan
+    from .orchestrator import execute_plan
 
     cfg = load_cfg(config)
     if dry_run:
@@ -134,7 +134,7 @@ def run(
         console.print(f"Goal: [bold]{truncate_goal(goal)}[/]")
         console.print(f"[green]Loaded plan from {plan_file}[/]\n")
     else:
-        from .planner import generate_plan
+        from .planner_runner import generate_plan
 
         goal = resolve_goal(goal, file)
 
@@ -235,7 +235,7 @@ def plan(
 
     Goal can be provided as argument, from a file (--file goal.md), or stdin (--file -).
     """
-    from .planner import generate_plan
+    from .planner_runner import generate_plan
 
     goal = resolve_goal(goal, file)
     cfg = load_cfg(config)
@@ -278,7 +278,7 @@ def resume(
 
     Skips already-completed tasks and re-executes failed/pending ones.
     """
-    from .scheduler import execute_plan
+    from .orchestrator import execute_plan
 
     cfg = load_cfg(config)
     sessions = SessionManager(cfg.sessions_path)

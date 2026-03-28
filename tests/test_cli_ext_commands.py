@@ -213,72 +213,6 @@ class TestScanCommand:
         assert "2 warning(s)" in result.output
 
 
-class TestIssuesCommand:
-    def test_issues_tracker_disabled(self, tmp_path):
-        cfg_path = _write_config(tmp_path)
-        result = runner.invoke(app, ["issues", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "disabled" in result.output.lower()
-
-    @patch("lindy_orchestrator.trackers.create_tracker")
-    def test_issues_no_results(self, mock_create, tmp_path):
-        cfg_path = _write_config(tmp_path, "tracker:\n  enabled: true\n  repo: org/repo\n")
-        mock_tracker = MagicMock()
-        mock_tracker.fetch_issues.return_value = []
-        mock_create.return_value = mock_tracker
-
-        result = runner.invoke(app, ["issues", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "No issues found" in result.output
-
-    @patch("lindy_orchestrator.trackers.create_tracker")
-    def test_issues_with_results(self, mock_create, tmp_path):
-        from lindy_orchestrator.trackers.base import TrackerIssue
-
-        cfg_path = _write_config(tmp_path, "tracker:\n  enabled: true\n  repo: org/repo\n")
-        mock_tracker = MagicMock()
-        mock_tracker.fetch_issues.return_value = [
-            TrackerIssue(id="1", title="Bug fix", body="Fix it", labels=["bug"]),
-            TrackerIssue(id="2", title="Feature", body="Add it"),
-        ]
-        mock_create.return_value = mock_tracker
-
-        result = runner.invoke(app, ["issues", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "2 issue(s)" in result.output
-        assert "#1" in result.output
-        assert "Bug fix" in result.output
-
-    @patch("lindy_orchestrator.trackers.create_tracker")
-    def test_issues_fetch_failure(self, mock_create, tmp_path):
-        cfg_path = _write_config(tmp_path, "tracker:\n  enabled: true\n  repo: org/repo\n")
-        mock_tracker = MagicMock()
-        mock_tracker.fetch_issues.side_effect = RuntimeError("network error")
-        mock_create.return_value = mock_tracker
-
-        result = runner.invoke(app, ["issues", "-c", cfg_path])
-        assert result.exit_code != 0
-        assert "Failed to fetch" in result.output
-
-    @patch("lindy_orchestrator.trackers.create_tracker")
-    def test_issues_json_output(self, mock_create, tmp_path):
-        from lindy_orchestrator.trackers.base import TrackerIssue
-
-        cfg_path = _write_config(tmp_path, "tracker:\n  enabled: true\n  repo: org/repo\n")
-        mock_tracker = MagicMock()
-        mock_tracker.fetch_issues.return_value = [
-            TrackerIssue(id="1", title="Bug", body="Fix"),
-        ]
-        mock_create.return_value = mock_tracker
-
-        result = runner.invoke(app, ["issues", "-c", cfg_path, "--json"])
-        assert result.exit_code == 0
-        # Output should be valid JSON
-        data = json.loads(result.output)
-        assert len(data) == 1
-        assert data[0]["id"] == "1"
-
-
 class TestStatusCommand:
     """Tests for the unified status command (module health + logs)."""
 
@@ -372,32 +306,6 @@ class TestStatusCommand:
         assert result.exit_code == 0
         # Module should show with "?" health
         assert "backend" in result.output
-
-    def test_status_shows_mailbox_summary(self, tmp_path):
-        cfg_path = _write_config(tmp_path)
-        _write_status_md(tmp_path)
-        # Create mailbox dir and send a message
-        mb_dir = tmp_path / ".orchestrator" / "mailbox"
-        mb_dir.mkdir(parents=True, exist_ok=True)
-        from lindy_orchestrator.mailbox import Mailbox, Message
-
-        mb = Mailbox(mb_dir)
-        mb.send(Message(from_module="frontend", to_module="backend", content="test msg"))
-        result = runner.invoke(app, ["status", "-c", cfg_path, "--status-only"])
-        assert result.exit_code == 0
-        assert "Mailbox" in result.output
-        assert "1 pending" in result.output
-
-    def test_status_json_includes_mailbox(self, tmp_path):
-        cfg_path = _write_config(tmp_path)
-        _write_status_md(tmp_path)
-        mb_dir = tmp_path / ".orchestrator" / "mailbox"
-        mb_dir.mkdir(parents=True, exist_ok=True)
-        result = runner.invoke(app, ["status", "-c", cfg_path, "--json", "--status-only"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert "mailbox" in data
-        assert "backend" in data["mailbox"]
 
 
 class TestLogsAlias:

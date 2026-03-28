@@ -5,7 +5,7 @@ from lindy_orchestrator.dag import (
     render_dag,
     render_dag_ascii,
 )
-from lindy_orchestrator.models import TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import TaskSpec, TaskPlan, TaskStatus
 
 
 # ---------------------------------------------------------------------------
@@ -13,12 +13,12 @@ from lindy_orchestrator.models import TaskItem, TaskPlan, TaskStatus
 # ---------------------------------------------------------------------------
 
 
-def _plan(*tasks: TaskItem, goal: str = "test") -> TaskPlan:
+def _plan(*tasks: TaskSpec, goal: str = "test") -> TaskPlan:
     return TaskPlan(goal=goal, tasks=list(tasks))
 
 
-def _task(tid: int, module: str = "mod", desc: str = "do thing", **kw) -> TaskItem:
-    return TaskItem(id=tid, module=module, description=desc, **kw)
+def _task(tid: int, module: str = "mod", desc: str = "do thing", **kw) -> TaskSpec:
+    return TaskSpec(id=tid, module=module, description=desc, **kw)
 
 
 # ---------------------------------------------------------------------------

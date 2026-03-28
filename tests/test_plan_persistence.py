@@ -3,14 +3,14 @@
 from pathlib import Path
 
 from lindy_orchestrator.cli_helpers import persist_plan, plan_from_dict, plan_to_dict
-from lindy_orchestrator.models import QACheck, TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import QACheck, TaskSpec, TaskPlan, TaskStatus
 
 
 def _make_plan() -> TaskPlan:
     return TaskPlan(
         goal="Build feature X",
         tasks=[
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="backend",
                 description="Add API endpoint",
@@ -19,7 +19,7 @@ def _make_plan() -> TaskPlan:
                 status=TaskStatus.COMPLETED,
                 result="Done",
             ),
-            TaskItem(
+            TaskSpec(
                 id=2,
                 module="frontend",
                 description="Add UI page",

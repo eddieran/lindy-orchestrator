@@ -5,7 +5,6 @@ Covers:
 - M-01: shell=True in CommandCheckGate
 - M-28: str.format() attribute access in QA path substitution
 - M-30: Path traversal via session_id
-- M-31: Path traversal via mailbox module name
 - M-05: _delete_branch returncode check
 """
 
@@ -18,7 +17,6 @@ import pytest
 
 from lindy_orchestrator.config import CustomGateConfig
 from lindy_orchestrator.gc import _delete_branch
-from lindy_orchestrator.mailbox import Mailbox, Message
 from lindy_orchestrator.qa import _run_custom_command_gate, _validate_path_for_substitution
 from lindy_orchestrator.qa.command_check import CommandCheckGate
 from lindy_orchestrator.session import SessionManager
@@ -234,52 +232,6 @@ class TestSessionPathTraversal:
         mgr.create(goal="test")
         # Valid format but doesn't exist — should return None (not raise)
         assert mgr.load("abc-def_123") is None
-
-
-# ---------------------------------------------------------------------------
-# M-31: Path traversal via mailbox module name
-# ---------------------------------------------------------------------------
-
-
-class TestMailboxPathTraversal:
-    """M-31: Mailbox._inbox_path must reject traversal in module name."""
-
-    def test_rejects_path_traversal_module(self, tmp_path):
-        mb = Mailbox(tmp_path / "mailbox")
-        with pytest.raises(ValueError, match="Unsafe module name"):
-            mb._inbox_path("../../etc/passwd")
-
-    def test_rejects_slash_in_module(self, tmp_path):
-        mb = Mailbox(tmp_path / "mailbox")
-        with pytest.raises(ValueError, match="Unsafe module name"):
-            mb._inbox_path("foo/bar")
-
-    def test_normal_module_name_works(self, tmp_path):
-        mb = Mailbox(tmp_path / "mailbox")
-        path = mb._inbox_path("backend")
-        assert path.name == "backend.jsonl"
-        assert path.parent == (tmp_path / "mailbox")
-
-    def test_module_with_dash_and_underscore(self, tmp_path):
-        mb = Mailbox(tmp_path / "mailbox")
-        path = mb._inbox_path("my-api_v2")
-        assert path.name == "my-api_v2.jsonl"
-
-    def test_module_with_dot(self, tmp_path):
-        mb = Mailbox(tmp_path / "mailbox")
-        path = mb._inbox_path("my.module")
-        assert path.name == "my.module.jsonl"
-
-    def test_send_rejects_traversal_in_to_module(self, tmp_path):
-        mb = Mailbox(tmp_path / "mailbox")
-        msg = Message(from_module="a", to_module="../etc/passwd", content="test")
-        with pytest.raises(ValueError, match="Unsafe module name"):
-            mb.send(msg)
-
-    def test_receive_rejects_traversal(self, tmp_path):
-        mb = Mailbox(tmp_path / "mailbox")
-        with pytest.raises(ValueError, match="Unsafe module name"):
-            mb.receive("../../secret")
 
 
 # ---------------------------------------------------------------------------

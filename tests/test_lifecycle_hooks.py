@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lindy_orchestrator.scheduler import _run_lifecycle_hook
+from lindy_orchestrator.orchestrator import _run_lifecycle_hook
 
 
 @pytest.fixture()
@@ -21,7 +21,7 @@ class TestRunLifecycleHook:
         result = _run_lifecycle_hook("after_create", "", tmp_path, progress)
         assert result is True
 
-    @patch("lindy_orchestrator.scheduler.subprocess.run")
+    @patch("lindy_orchestrator.orchestrator.subprocess.run")
     def test_success_returns_true(
         self, mock_run: MagicMock, progress: MagicMock, tmp_path: Path
     ) -> None:
@@ -30,7 +30,7 @@ class TestRunLifecycleHook:
         assert result is True
         mock_run.assert_called_once()
 
-    @patch("lindy_orchestrator.scheduler.subprocess.run")
+    @patch("lindy_orchestrator.orchestrator.subprocess.run")
     def test_failure_returns_false_without_raising(
         self, mock_run: MagicMock, progress: MagicMock, tmp_path: Path
     ) -> None:
@@ -38,7 +38,7 @@ class TestRunLifecycleHook:
         result = _run_lifecycle_hook("before_run", "false", tmp_path, progress)
         assert result is False
 
-    @patch("lindy_orchestrator.scheduler.subprocess.run")
+    @patch("lindy_orchestrator.orchestrator.subprocess.run")
     def test_timeout_handled(
         self, mock_run: MagicMock, progress: MagicMock, tmp_path: Path
     ) -> None:
@@ -46,7 +46,7 @@ class TestRunLifecycleHook:
         result = _run_lifecycle_hook("after_run", "sleep 100", tmp_path, progress, timeout=5)
         assert result is False
 
-    @patch("lindy_orchestrator.scheduler.subprocess.run")
+    @patch("lindy_orchestrator.orchestrator.subprocess.run")
     def test_compound_command_uses_sh(
         self, mock_run: MagicMock, progress: MagicMock, tmp_path: Path
     ) -> None:
@@ -55,7 +55,7 @@ class TestRunLifecycleHook:
         cmd_args = mock_run.call_args[0][0]
         assert cmd_args == ["sh", "-c", "echo a && echo b"]
 
-    @patch("lindy_orchestrator.scheduler.subprocess.run")
+    @patch("lindy_orchestrator.orchestrator.subprocess.run")
     def test_simple_command_uses_shlex(
         self, mock_run: MagicMock, progress: MagicMock, tmp_path: Path
     ) -> None:
@@ -64,7 +64,7 @@ class TestRunLifecycleHook:
         cmd_args = mock_run.call_args[0][0]
         assert cmd_args == ["echo", "hello"]
 
-    @patch("lindy_orchestrator.scheduler.subprocess.run")
+    @patch("lindy_orchestrator.orchestrator.subprocess.run")
     def test_cwd_passed_correctly(
         self, mock_run: MagicMock, progress: MagicMock, tmp_path: Path
     ) -> None:
@@ -72,7 +72,7 @@ class TestRunLifecycleHook:
         _run_lifecycle_hook("after_create", "pwd", tmp_path, progress)
         assert mock_run.call_args[1]["cwd"] == str(tmp_path)
 
-    @patch("lindy_orchestrator.scheduler.subprocess.run")
+    @patch("lindy_orchestrator.orchestrator.subprocess.run")
     def test_exception_returns_false(
         self, mock_run: MagicMock, progress: MagicMock, tmp_path: Path
     ) -> None:

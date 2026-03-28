@@ -25,12 +25,12 @@ from .scheduler_helpers import (
     _check_delivery,
     build_prompt,
     extract_event_info,
-    inject_qa_gates,
+    prepare_qa_checks,
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
 from .metrics import MetricsCollector
-from .models import TaskItem, TaskPlan, TaskStatus, plan_to_dict
+from .models import TaskSpec, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
 from .qa.feedback import StructuredFeedback, build_retry_prompt, build_structured_feedback
@@ -220,18 +220,7 @@ def execute_plan(
         if on_progress and verbose:
             on_progress(msg)
 
-    # OTel metrics exporter (lazy-loaded when enabled)
     otel_exporter = None
-    if config.otel.enabled:
-        try:
-            from .otel import setup_otel_from_config
-
-            otel_exporter = setup_otel_from_config(config.otel)
-            if otel_exporter is not None:
-                otel_exporter.attach(hooks)
-                log.info("OTel metrics exporter attached")
-        except ImportError:
-            log.warning("OTel is enabled but opentelemetry-sdk is not installed")
 
     hooks.emit(Event(type=EventType.SESSION_START, data={"goal": plan.goal}))
 
@@ -292,7 +281,7 @@ def execute_plan(
                     if len(ready) > 1:
                         progress(f"\n  [bold]Dispatching {len(ready)} tasks in parallel...[/]")
 
-                    futures: dict[concurrent.futures.Future, TaskItem] = {}
+                    futures: dict[concurrent.futures.Future, TaskSpec] = {}
                     for task in ready:
                         task.status = TaskStatus.IN_PROGRESS
                         task.started_at = datetime.now(timezone.utc).isoformat()
@@ -407,7 +396,7 @@ def execute_plan(
 
 
 def _execute_single_task(
-    task: TaskItem,
+    task: TaskSpec,
     config: OrchestratorConfig,
     logger: ActionLogger,
     progress: Callable[[str], None],
@@ -433,7 +422,7 @@ def _execute_single_task(
 
 
 def _execute_single_task_inner(
-    task: TaskItem,
+    task: TaskSpec,
     config: OrchestratorConfig,
     logger: ActionLogger,
     progress: Callable[[str], None],
@@ -442,7 +431,7 @@ def _execute_single_task_inner(
     hooks: HookRegistry | None = None,
 ) -> int:
     """Core single-task execution (inside optional semaphore)."""
-    inject_qa_gates(task, config, progress)
+    prepare_qa_checks(task, config, progress)
 
     branch_name = f"{config.project.branch_prefix}/task-{task.id}"
 
@@ -490,7 +479,7 @@ def _execute_single_task_inner(
 
 
 def _resolve_working_dir(
-    task: TaskItem,
+    task: TaskSpec,
     config: OrchestratorConfig,
     worktree_path: Path | None,
 ) -> tuple[Path, Path]:
@@ -509,7 +498,7 @@ def _resolve_working_dir(
 
 
 def _prepare_task_prompt(
-    task: TaskItem,
+    task: TaskSpec,
     config: OrchestratorConfig,
     branch_name: str,
     worktree_path: Path | None,
@@ -520,7 +509,7 @@ def _prepare_task_prompt(
     task.prompt = build_prompt(task, config, branch_name, worktree_path, dispatches, progress)
 
 
-def _log_dispatch(logger: ActionLogger, task: TaskItem, result: object) -> None:
+def _log_dispatch(logger: ActionLogger, task: TaskSpec, result: object) -> None:
     """Log dispatch result to action logger."""
     logger.log_dispatch(
         task.module,
@@ -537,7 +526,7 @@ def _log_dispatch(logger: ActionLogger, task: TaskItem, result: object) -> None:
 
 
 def _handle_dispatch_failure(
-    task: TaskItem,
+    task: TaskSpec,
     result: object,
     progress: Callable[[str], None],
     hooks: HookRegistry | None,
@@ -567,7 +556,7 @@ def _check_and_log_delivery(
     project_root: Path,
     branch_name: str,
     logger: ActionLogger,
-    task: TaskItem,
+    task: TaskSpec,
     progress: Callable[[str], None],
 ) -> None:
     """Verify branch has commits and log the result."""
@@ -585,7 +574,7 @@ def _check_and_log_delivery(
 
 
 def _run_qa_gates(
-    task: TaskItem,
+    task: TaskSpec,
     config: OrchestratorConfig,
     logger: ActionLogger,
     qa_root: Path,
@@ -645,7 +634,7 @@ def _run_qa_gates(
 
 
 def _mark_completed(
-    task: TaskItem,
+    task: TaskSpec,
     logger: ActionLogger,
     progress: Callable[[str], None],
     hooks: HookRegistry | None,
@@ -674,7 +663,7 @@ def _mark_completed(
 
 
 def _handle_retry(
-    task: TaskItem,
+    task: TaskSpec,
     original_prompt: str,
     max_retries: int,
     logger: ActionLogger,
@@ -786,7 +775,7 @@ def _handle_retry(
 
 
 def _dispatch_loop(
-    task: TaskItem,
+    task: TaskSpec,
     config: OrchestratorConfig,
     logger: ActionLogger,
     progress: Callable[[str], None],
@@ -864,3 +853,27 @@ def _dispatch_loop(
 
         if not _handle_retry(task, original_prompt, max_retries, logger, progress, hooks):
             return dispatches
+
+
+class Orchestrator:
+    """Wrapper around the execution engine."""
+
+    def __init__(self, config: OrchestratorConfig):
+        self.config = config
+
+    def run(
+        self,
+        plan: TaskPlan,
+        logger: ActionLogger,
+        on_progress: Callable[[str], None] | None = None,
+        verbose: bool = False,
+        hooks: HookRegistry | None = None,
+    ) -> TaskPlan:
+        return execute_plan(
+            plan,
+            self.config,
+            logger,
+            on_progress=on_progress,
+            verbose=verbose,
+            hooks=hooks,
+        )

@@ -14,7 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .dag import truncate_goal
-from .models import TaskItem, TaskPlan, TaskStatus
+from .models import TaskSpec, TaskPlan, TaskStatus
 
 
 class PlanProgress:
@@ -208,7 +208,7 @@ _STATUS_STYLE = {
 }
 
 
-def _task_duration(task: TaskItem) -> float | None:
+def _task_duration(task: TaskSpec) -> float | None:
     """Calculate task duration in seconds from timestamps, or None."""
     if not task.started_at or not task.completed_at:
         return None
@@ -229,7 +229,7 @@ def _format_duration(seconds: float | None) -> str:
     return f"{mins}m{secs:02d}s"
 
 
-def _qa_summary(task: TaskItem) -> str:
+def _qa_summary(task: TaskSpec) -> str:
     """One-line QA summary for a task."""
     if not task.qa_results:
         return "-"

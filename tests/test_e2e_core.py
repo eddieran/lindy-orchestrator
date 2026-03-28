@@ -1,4 +1,4 @@
-"""End-to-end CLI tests — core commands (version, status, mailbox, run, plan).
+"""End-to-end CLI tests — core commands (version, status, run, plan).
 
 Resume tests are in test_e2e_resume.py.
 Uses Typer CliRunner, mocking only external dependencies (Claude CLI, git, LLM).
@@ -13,7 +13,6 @@ from typer.testing import CliRunner
 
 from lindy_orchestrator import __version__
 from lindy_orchestrator.cli import app
-from lindy_orchestrator.mailbox import Mailbox, Message
 from lindy_orchestrator.models import TaskStatus
 
 from .conftest import make_plan, mock_execute_plan, mock_generate_plan
@@ -120,115 +119,16 @@ class TestE2EStatus:
         assert result.exit_code == 0
         assert "api" in result.output
 
-    def test_status_shows_mailbox_summary(self, project_dir, cfg_path):
-        mb = Mailbox(project_dir / ".orchestrator" / "mailbox")
-        mb.send(Message(from_module="frontend", to_module="backend", content="ping"))
-        result = runner.invoke(app, ["status", "-c", cfg_path, "--status-only"])
-        assert result.exit_code == 0
-        assert "Mailbox" in result.output
-        assert "1 pending" in result.output
-
-    def test_status_json_includes_mailbox(self, project_dir, cfg_path):
-        result = runner.invoke(app, ["status", "-c", cfg_path, "--json", "--status-only"])
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert "mailbox" in data
-
 
 # ---------------------------------------------------------------------------
-# 3. Mailbox command
-# ---------------------------------------------------------------------------
-
-
-class TestE2EMailbox:
-    def test_mailbox_summary_empty(self, cfg_path):
-        result = runner.invoke(app, ["mailbox", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "Mailbox Summary" in result.output
-
-    def test_mailbox_send_and_receive(self, project_dir, cfg_path):
-        result = runner.invoke(
-            app,
-            [
-                "mailbox",
-                "--send-to",
-                "backend",
-                "--send-from",
-                "frontend",
-                "-m",
-                "API ready?",
-                "-c",
-                cfg_path,
-            ],
-        )
-        assert result.exit_code == 0
-        assert "Sent" in result.output
-
-        result = runner.invoke(app, ["mailbox", "backend", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "API ready?" in result.output
-        assert "frontend" in result.output
-
-    def test_mailbox_send_default_from(self, project_dir, cfg_path):
-        result = runner.invoke(
-            app,
-            ["mailbox", "--send-to", "backend", "-m", "hello", "-c", cfg_path],
-        )
-        assert result.exit_code == 0
-        mb = Mailbox(project_dir / ".orchestrator" / "mailbox")
-        msgs = mb.receive("backend")
-        assert msgs[0].from_module == "cli"
-
-    def test_mailbox_send_requires_message(self, cfg_path):
-        result = runner.invoke(app, ["mailbox", "--send-to", "backend", "-c", cfg_path])
-        assert result.exit_code == 1
-
-    def test_mailbox_view_empty_module(self, cfg_path):
-        result = runner.invoke(app, ["mailbox", "frontend", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "no pending" in result.output.lower()
-
-    def test_mailbox_view_json(self, project_dir, cfg_path):
-        mb = Mailbox(project_dir / ".orchestrator" / "mailbox")
-        mb.send(Message(from_module="a", to_module="backend", content="json test"))
-        result = runner.invoke(app, ["mailbox", "backend", "--json", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "json test" in result.output
-
-    def test_mailbox_disabled(self, tmp_path):
-        import yaml
-
-        config = {
-            "project": {"name": "test"},
-            "modules": [{"name": "x", "path": "x/"}],
-            "mailbox": {"enabled": False},
-        }
-        (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
-        (tmp_path / ".orchestrator" / "config.yaml").write_text(yaml.dump(config))
-        (tmp_path / "x").mkdir()
-        result = runner.invoke(
-            app, ["mailbox", "-c", str(tmp_path / ".orchestrator" / "config.yaml")]
-        )
-        assert "disabled" in result.output.lower()
-
-    def test_mailbox_summary_with_messages(self, project_dir, cfg_path):
-        mb = Mailbox(project_dir / ".orchestrator" / "mailbox")
-        mb.send(Message(from_module="a", to_module="backend", content="msg1"))
-        mb.send(Message(from_module="b", to_module="backend", content="msg2"))
-        result = runner.invoke(app, ["mailbox", "-c", cfg_path])
-        assert result.exit_code == 0
-        assert "2 pending" in result.output
-
-
-# ---------------------------------------------------------------------------
-# 4. Run command — dry-run with dashboard rendering
+# 3. Run command — dry-run with dashboard rendering
 # ---------------------------------------------------------------------------
 
 
 class TestE2ERun:
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_dry_run(self, mock_plan, mock_exec, mock_cli, cfg_path):
         result = runner.invoke(app, ["run", "Build a feature", "--dry-run", "-c", cfg_path])
         assert result.exit_code == 0
@@ -237,8 +137,8 @@ class TestE2ERun:
         assert call_args[0][1].safety.dry_run is True
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_full_flow(self, mock_plan, mock_exec, mock_cli, cfg_path):
         result = runner.invoke(app, ["run", "Implement auth", "-c", cfg_path])
         assert result.exit_code == 0
@@ -255,7 +155,7 @@ class TestE2ERun:
         assert result.exit_code != 0
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_run_from_plan_file(self, mock_exec, mock_cli, project_dir, cfg_path):
         """Run from a saved plan JSON (skip planning step)."""
         from lindy_orchestrator.models import plan_to_dict
@@ -277,15 +177,15 @@ class TestE2ERun:
         assert "not found" in result.output.lower()
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=RuntimeError("LLM down"))
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=RuntimeError("LLM down"))
     def test_run_planner_failure(self, mock_plan, mock_cli, cfg_path):
         result = runner.invoke(app, ["run", "test", "-c", cfg_path])
         assert result.exit_code != 0
         assert "failed" in result.output.lower()
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan")
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan")
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_with_failures(self, mock_plan, mock_exec, mock_cli, cfg_path):
         """When some tasks fail, report shows PAUSED."""
 
@@ -303,8 +203,8 @@ class TestE2ERun:
     # --- Execution summary report E2E tests ---
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_shows_execution_summary(self, mock_plan, mock_exec, mock_cli, cfg_path):
         """Run command outputs the execution summary with task details and metrics."""
         result = runner.invoke(app, ["run", "Build feature X", "-c", cfg_path])
@@ -313,8 +213,8 @@ class TestE2ERun:
         assert "Execution Metrics" in result.output
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_shows_session_in_summary(self, mock_plan, mock_exec, mock_cli, cfg_path):
         """Execution summary header includes the session ID."""
         result = runner.invoke(app, ["run", "Auth feature", "-c", cfg_path])
@@ -322,8 +222,8 @@ class TestE2ERun:
         assert "Session" in result.output
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_shows_task_counts(self, mock_plan, mock_exec, mock_cli, cfg_path):
         """Summary shows pass/fail/skip counts."""
         result = runner.invoke(app, ["run", "API work", "-c", cfg_path])
@@ -333,8 +233,8 @@ class TestE2ERun:
         assert "0 failed" in result.output
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_saves_report_file(self, mock_plan, mock_exec, mock_cli, project_dir, cfg_path):
         """Run command saves a Markdown report to .orchestrator/reports/."""
         result = runner.invoke(app, ["run", "Save report test", "-c", cfg_path])
@@ -349,8 +249,8 @@ class TestE2ERun:
         assert "COMPLETED" in content
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan")
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan")
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_run_failure_report_shows_task_details(self, mock_plan, mock_exec, mock_cli, cfg_path):
         """When tasks fail, execution summary shows FAIL status and retry count."""
 
@@ -370,7 +270,7 @@ class TestE2ERun:
         assert "Task Details" in result.output
 
     @patch("shutil.which", return_value="/usr/bin/claude")
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_run_from_plan_file_shows_report(self, mock_exec, mock_cli, project_dir, cfg_path):
         """Run from plan file also produces the execution summary report."""
         from lindy_orchestrator.models import plan_to_dict
@@ -394,14 +294,14 @@ class TestE2ERun:
 
 
 class TestE2EPlan:
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_plan_basic(self, mock_plan, cfg_path):
         result = runner.invoke(app, ["plan", "Build an API", "-c", cfg_path])
         assert result.exit_code == 0
         assert "2 tasks" in result.output
         assert "Plan saved to" in result.output
 
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_plan_with_output_file(self, mock_plan, project_dir, cfg_path):
         out_file = project_dir / "myplan.json"
         result = runner.invoke(
@@ -418,7 +318,7 @@ class TestE2EPlan:
         result = runner.invoke(app, ["plan", "-c", cfg_path])
         assert result.exit_code != 0
 
-    @patch("lindy_orchestrator.planner.generate_plan", side_effect=mock_generate_plan)
+    @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
     def test_plan_from_file(self, mock_plan, project_dir, cfg_path):
         goal_file = project_dir / "goal.md"
         goal_file.write_text("Implement feature X with tests")

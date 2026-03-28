@@ -193,9 +193,9 @@ class TestWorktreePromptInjection:
 
     def test_worktree_prompt_no_checkout(self):
         """When worktree is active, prompt should NOT tell agent to git checkout."""
-        from lindy_orchestrator.models import TaskItem
+        from lindy_orchestrator.models import TaskSpec
 
-        task = TaskItem(id=1, module="backend", description="test", prompt="Do stuff")
+        task = TaskSpec(id=1, module="backend", description="test", prompt="Do stuff")
         branch_name = "af/task-1"
         worktree_path = Path("/fake/worktree")
 
@@ -215,9 +215,9 @@ class TestWorktreePromptInjection:
 
     def test_fallback_prompt_has_checkout(self):
         """When no worktree, prompt should tell agent to git checkout -b."""
-        from lindy_orchestrator.models import TaskItem
+        from lindy_orchestrator.models import TaskSpec
 
-        task = TaskItem(id=1, module="backend", description="test", prompt="Do stuff")
+        task = TaskSpec(id=1, module="backend", description="test", prompt="Do stuff")
         branch_name = "af/task-1"
         worktree_path = None
 
