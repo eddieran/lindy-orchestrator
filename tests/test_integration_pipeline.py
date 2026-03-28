@@ -15,12 +15,6 @@ from urllib.request import urlopen
 
 import pytest
 
-# SSE tests require a real HTTP server and are flaky in constrained CI runners
-_SKIP_SSE = pytest.mark.skipif(
-    os.environ.get("CI") == "true",
-    reason="SSE tests are timing-sensitive and flaky in CI",
-)
-
 from lindy_orchestrator.config import ModuleConfig, OrchestratorConfig
 from lindy_orchestrator.dispatch_core import streaming_dispatch
 from lindy_orchestrator.hooks import Event, EventType, HookRegistry
@@ -39,6 +33,12 @@ from lindy_orchestrator.session import SessionManager
 from lindy_orchestrator.web.server import WebDashboard
 
 from .conftest import MINIMAL_STATUS_MD
+
+# SSE tests require a real HTTP server and are flaky in constrained CI runners
+_SKIP_SSE = pytest.mark.skipif(
+    os.environ.get("CI") == "true",
+    reason="SSE tests are timing-sensitive and flaky in CI",
+)
 
 
 def _make_config(tmp_path: Path, *, include_qa: bool = False) -> OrchestratorConfig:
