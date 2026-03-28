@@ -207,8 +207,8 @@ def test_format_prompt_empty():
     assert result == ""
 
 
-def test_parse_task_plan_with_dict_prompt():
-    """_parse_task_plan handles dict prompts (structured format)."""
+def test_parse_task_plan_with_enriched_fields():
+    """_parse_task_plan handles enriched planner task fields."""
     plan_json = json.dumps(
         {
             "tasks": [
@@ -216,12 +216,14 @@ def test_parse_task_plan_with_dict_prompt():
                     "id": 1,
                     "module": "backend",
                     "description": "Add auth",
-                    "prompt": {
+                    "generator_prompt": {
                         "objective": "Implement JWT auth",
                         "context_files": ["auth.py"],
                         "constraints": ["Use PyJWT"],
                         "verification": ["pytest"],
                     },
+                    "acceptance_criteria": "JWT login succeeds and invalid credentials fail cleanly",
+                    "evaluator_prompt": "Confirm token issuance and rejection behavior in auth.py",
                     "depends_on": [],
                     "qa_checks": [],
                 }
@@ -230,12 +232,20 @@ def test_parse_task_plan_with_dict_prompt():
     )
     plan = _parse_task_plan("test goal", plan_json)
     assert len(plan.tasks) == 1
-    assert "## Objective" in plan.tasks[0].prompt
-    assert "Implement JWT auth" in plan.tasks[0].prompt
-    assert "## Before committing, verify" in plan.tasks[0].prompt
+    assert "## Objective" in plan.tasks[0].generator_prompt
+    assert "Implement JWT auth" in plan.tasks[0].generator_prompt
+    assert "## Before committing, verify" in plan.tasks[0].generator_prompt
+    assert plan.tasks[0].prompt == plan.tasks[0].generator_prompt
+    assert (
+        plan.tasks[0].acceptance_criteria
+        == "JWT login succeeds and invalid credentials fail cleanly"
+    )
+    assert (
+        plan.tasks[0].evaluator_prompt == "Confirm token issuance and rejection behavior in auth.py"
+    )
 
 
-def test_parse_task_plan_with_string_prompt():
+def test_parse_task_plan_with_legacy_string_prompt():
     """_parse_task_plan handles string prompts (legacy format)."""
     plan_json = json.dumps(
         {
@@ -253,6 +263,7 @@ def test_parse_task_plan_with_string_prompt():
     )
     plan = _parse_task_plan("test goal", plan_json)
     assert plan.tasks[0].prompt == "Fix the login bug in auth.py"
+    assert plan.tasks[0].generator_prompt == "Fix the login bug in auth.py"
 
 
 def test_chain_continues_after_partial_failure():

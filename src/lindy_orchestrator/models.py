@@ -113,6 +113,9 @@ class TaskSpec:
     id: int
     module: str
     description: str
+    generator_prompt: str = ""
+    acceptance_criteria: str = ""
+    evaluator_prompt: str = ""
     prompt: str = ""
     depends_on: list[int] = field(default_factory=list)
     priority: int = 0  # higher = dispatched first within same dep level
@@ -191,18 +194,7 @@ def plan_to_dict(plan: TaskPlan) -> dict:
 
     return {
         "goal": plan.goal,
-        "tasks": [
-            {
-                **dataclasses.asdict(t),
-                "status": t.status.value,
-                "qa_checks": [{"gate": q.gate, "params": q.params} for q in t.qa_checks],
-                "qa_results": [
-                    {"gate": r.gate, "passed": r.passed, "output": r.output[:500]}
-                    for r in t.qa_results
-                ],
-            }
-            for t in plan.tasks
-        ],
+        "tasks": [_task_to_dict(t, dataclasses) for t in plan.tasks],
     }
 
 
@@ -210,6 +202,7 @@ def plan_from_dict(data: dict) -> TaskPlan:
     """Deserialize a TaskPlan from a dict."""
     tasks = []
     for t in data.get("tasks", []):
+        generator_prompt = t.get("generator_prompt", t.get("prompt", ""))
         qa_checks = [
             QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
         ]
@@ -218,7 +211,10 @@ def plan_from_dict(data: dict) -> TaskPlan:
                 id=t["id"],
                 module=t["module"],
                 description=t["description"],
-                prompt=t.get("prompt", ""),
+                generator_prompt=generator_prompt,
+                acceptance_criteria=t.get("acceptance_criteria", ""),
+                evaluator_prompt=t.get("evaluator_prompt", ""),
+                prompt=t.get("prompt", generator_prompt),
                 depends_on=t.get("depends_on", []),
                 priority=t.get("priority", 0),
                 qa_checks=qa_checks,
@@ -236,6 +232,20 @@ def plan_from_dict(data: dict) -> TaskPlan:
             )
         )
     return TaskPlan(goal=data["goal"], tasks=tasks)
+
+
+def _task_to_dict(task: TaskSpec, dataclasses_module: Any) -> dict[str, Any]:
+    """Serialize task fields while mirroring legacy prompt consumers."""
+    task_dict = dataclasses_module.asdict(task)
+    generator_prompt = task.generator_prompt or task.prompt
+    task_dict["generator_prompt"] = generator_prompt
+    task_dict["prompt"] = task.prompt or generator_prompt
+    task_dict["status"] = task.status.value
+    task_dict["qa_checks"] = [{"gate": q.gate, "params": q.params} for q in task.qa_checks]
+    task_dict["qa_results"] = [
+        {"gate": r.gate, "passed": r.passed, "output": r.output[:500]} for r in task.qa_results
+    ]
+    return task_dict
 
 
 # ---------------------------------------------------------------------------

@@ -79,6 +79,7 @@ def generate_plan(
                     id=1,
                     module=config.modules[0].name if config.modules else "default",
                     description="[DRY RUN] Would decompose goal into tasks",
+                    generator_prompt="[DRY RUN]",
                     prompt="[DRY RUN]",
                 )
             ],
@@ -230,14 +231,17 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
             QACheck(gate=c.get("gate", c.get("check_type", "")), params=c.get("params", {}))
             for c in t.get("qa_checks", [])
         ]
-        raw_prompt = t.get("prompt", "")
-        prompt = _format_prompt(raw_prompt) if isinstance(raw_prompt, dict) else raw_prompt
+        raw_generator_prompt = t.get("generator_prompt", t.get("prompt", ""))
+        generator_prompt = _coerce_task_text(raw_generator_prompt)
         tasks.append(
             TaskSpec(
                 id=t["id"],
                 module=t.get("module", t.get("department", "unknown")),
                 description=t["description"],
-                prompt=prompt,
+                generator_prompt=generator_prompt,
+                acceptance_criteria=_coerce_task_text(t.get("acceptance_criteria", "")),
+                evaluator_prompt=_coerce_task_text(t.get("evaluator_prompt", "")),
+                prompt=generator_prompt,
                 depends_on=t.get("depends_on", []),
                 priority=t.get("priority", 0),
                 qa_checks=qa_checks,
@@ -287,6 +291,17 @@ def _format_prompt(prompt_dict: dict) -> str:
         parts.append(f"## Before committing, verify\n{verify_list}")
 
     return "\n\n".join(parts)
+
+
+def _coerce_task_text(value: object) -> str:
+    """Normalize task fields from planner JSON into plain text."""
+    if isinstance(value, dict):
+        return _format_prompt(value)
+    if isinstance(value, list):
+        return "\n".join(f"- {item}" for item in value if item)
+    if value is None:
+        return ""
+    return str(value)
 
 
 class PlannerRunner:
