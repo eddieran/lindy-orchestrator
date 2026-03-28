@@ -65,7 +65,7 @@ class TestEmptyQAGates:
 class TestSkipQaDeliveryCheck:
     @patch("lindy_orchestrator.orchestrator._run_qa_gates")
     @patch("lindy_orchestrator.orchestrator._check_and_log_delivery")
-    @patch("lindy_orchestrator.orchestrator.create_provider")
+    @patch("lindy_orchestrator.generator_runner.create_provider")
     def test_skip_qa_skips_delivery_and_qa(
         self,
         mock_provider: MagicMock,
