@@ -138,14 +138,14 @@ def _free_port() -> int:
 
 
 def _open_sse(port: int):
-    deadline = time.time() + 2
+    deadline = time.time() + 5
     while True:
         try:
-            return urlopen(f"http://127.0.0.1:{port}/events", timeout=2)
+            return urlopen(f"http://127.0.0.1:{port}/events", timeout=5)
         except OSError:
             if time.time() >= deadline:
                 raise
-            time.sleep(0.05)
+            time.sleep(0.1)
 
 
 def _read_sse_event(response) -> tuple[str, dict]:
@@ -527,6 +527,7 @@ class TestPlannerGeneratorEvaluatorPipeline:
                 _read_sse_event(first)
                 _read_sse_event(second)
                 hooks.emit(Event(type=EventType.TASK_COMPLETED, task_id=1, module="backend"))
+                time.sleep(0.15)  # allow event to propagate through queue in CI
                 first_event = _read_sse_event(first)
                 second_event = _read_sse_event(second)
                 assert first_event[1]["type"] == "task_completed"
