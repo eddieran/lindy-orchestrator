@@ -75,6 +75,30 @@ class TestPlanSerialization:
         assert plan.tasks[0].depends_on == []
         assert plan.tasks[0].status == TaskStatus.PENDING
 
+    def test_plan_roundtrip_preserves_enriched_prompt_fields(self):
+        plan = TaskPlan(
+            goal="Test",
+            tasks=[
+                TaskSpec(
+                    id=1,
+                    module="backend",
+                    description="Add auth",
+                    generator_prompt="Implement JWT auth",
+                    acceptance_criteria="Login succeeds and invalid auth fails",
+                    evaluator_prompt="Verify token creation and auth failure paths",
+                )
+            ],
+        )
+
+        data = plan_to_dict(plan)
+        restored = plan_from_dict(data)
+
+        assert data["tasks"][0]["generator_prompt"] == "Implement JWT auth"
+        assert restored.tasks[0].generator_prompt == "Implement JWT auth"
+        assert restored.tasks[0].prompt == "Implement JWT auth"
+        assert restored.tasks[0].acceptance_criteria == "Login succeeds and invalid auth fails"
+        assert restored.tasks[0].evaluator_prompt == "Verify token creation and auth failure paths"
+
 
 class TestCheckpoint:
     def test_checkpoint_saves_plan_state(self, tmp_path):

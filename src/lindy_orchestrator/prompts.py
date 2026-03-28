@@ -33,7 +33,9 @@ Output ONLY valid JSON (no markdown, no explanation) in this exact format:
       "id": 1,
       "module": "<module-name>",
       "description": "Short description of what to do",
-      "prompt": "Detailed prompt for the module agent (must be self-contained)",
+      "generator_prompt": "Detailed prompt for the Generator agent (must be self-contained)",
+      "acceptance_criteria": "Human-readable success criteria for the task outcome",
+      "evaluator_prompt": "What the Evaluator should verify independently",
       "depends_on": [],
       "qa_checks": [
         {{"gate": "<gate-name>", "params": {{}}}}
@@ -46,8 +48,14 @@ Output ONLY valid JSON (no markdown, no explanation) in this exact format:
 
 ## Rules
 
-### Task Prompts
-Each task prompt SHOULD be a structured JSON object (preferred) or a plain string:
+### Required Task Fields
+Every task MUST include all three fields below:
+- `generator_prompt`: instructions for the Generator agent to execute the task
+- `acceptance_criteria`: concise, human-readable success criteria focused on outcomes
+- `evaluator_prompt`: instructions for the Evaluator agent describing what to check
+
+### Generator Prompt
+Each `generator_prompt` SHOULD be a structured JSON object (preferred) or a plain string:
 
 **Structured format (preferred):**
 ```json
@@ -59,11 +67,19 @@ Each task prompt SHOULD be a structured JSON object (preferred) or a plain strin
 }}
 ```
 
-**Rules for prompts:**
-- Start every prompt with "Read the STATUS.md content provided above." (if the module has one)
+**Rules for `generator_prompt`:**
+- Start every `generator_prompt` with "Read the STATUS.md content provided above." (if the module has one)
 - Agents must EXECUTE, not just plan. If a task requires running tests, say: "Run the tests and verify they pass."
 - Keep prompts concise. The agent has full codebase access — don't repeat file contents
 - Include at least one verification step so the agent can self-check before committing
+
+**Rules for `acceptance_criteria`:**
+- Describe the observable outcome, not the implementation steps
+- Keep it specific enough that a reviewer can tell when the task is done
+
+**Rules for `evaluator_prompt`:**
+- Focus on how to validate the task output independently
+- Reference expected behavior, files, or commands to inspect when useful
 
 ### Dependencies
 - Use depends_on to enforce ordering. Example: task 2 depends on task 1 → "depends_on": [1]
