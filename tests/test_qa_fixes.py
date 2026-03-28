@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from lindy_orchestrator.config import CustomGateConfig, OrchestratorConfig
 from lindy_orchestrator.hooks import Event, EventType, HookRegistry
-from lindy_orchestrator.models import QAResult, TaskSpec, TaskPlan, TaskStatus
+from lindy_orchestrator.models import DispatchResult, QAResult, TaskSpec, TaskPlan, TaskStatus
 
 
 # ---------------------------------------------------------------------------
@@ -63,24 +63,26 @@ class TestEmptyQAGates:
 
 
 class TestSkipQaDeliveryCheck:
+    @patch("lindy_orchestrator.orchestrator._run_qa_gates")
+    @patch("lindy_orchestrator.orchestrator._check_and_log_delivery")
     @patch("lindy_orchestrator.orchestrator.create_provider")
-    @patch("lindy_orchestrator.orchestrator.create_worktree", return_value=None)
     def test_skip_qa_skips_delivery_and_qa(
-        self, mock_wt: MagicMock, mock_provider: MagicMock
+        self,
+        mock_provider: MagicMock,
+        mock_check_delivery: MagicMock,
+        mock_run_qa_gates: MagicMock,
     ) -> None:
         """skip_qa=True should skip delivery_check and mark completed directly."""
         from lindy_orchestrator.orchestrator import _dispatch_loop
 
-        mock_result = MagicMock()
-        mock_result.success = True
-        mock_result.output = "done"
-        mock_result.cost_usd = 0.1
-        mock_result.duration_seconds = 10
-        mock_result.event_count = 5
-        mock_result.exit_code = 0
-        mock_result.last_tool_use = ""
-        mock_result.error = None
-        mock_provider.return_value.dispatch.return_value = mock_result
+        mock_provider.return_value.dispatch.return_value = DispatchResult(
+            module="root",
+            success=True,
+            output="done",
+            cost_usd=0.1,
+            duration_seconds=10,
+            event_count=5,
+        )
 
         task = TaskSpec(id=1, module="root", description="delete branch", skip_qa=True)
         task.prompt = "test"
@@ -97,9 +99,8 @@ class TestSkipQaDeliveryCheck:
 
         assert dispatches == 1
         assert task.status == TaskStatus.COMPLETED
-        # Should NOT have called _check_and_log_delivery (no delivery check progress)
-        delivery_calls = [c for c in progress.call_args_list if "Delivery check" in str(c)]
-        assert len(delivery_calls) == 0
+        mock_check_delivery.assert_not_called()
+        mock_run_qa_gates.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
