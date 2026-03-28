@@ -44,6 +44,8 @@ def test_default_config():
     assert cfg.project.branch_prefix == "af"
     assert cfg.planner.mode == "cli"
     assert cfg.dispatcher.timeout_seconds == 1800
+    assert cfg.generator.provider == "claude_cli"
+    assert cfg.evaluator.pass_threshold == 80
     assert cfg.safety.max_parallel == 10
     assert cfg.mailbox.enabled is True
 
@@ -51,6 +53,23 @@ def test_default_config():
 def test_config_not_found():
     with pytest.raises(FileNotFoundError):
         load_config("/nonexistent/path/config.yaml")
+
+
+def test_load_generator_provider_override(tmp_path):
+    config_data = {
+        "project": {"name": "test"},
+        "modules": [{"name": "backend", "path": "backend/"}],
+        "dispatcher": {"provider": "claude_cli"},
+        "generator": {"provider": "codex_cli"},
+    }
+    (tmp_path / ".orchestrator").mkdir(parents=True, exist_ok=True)
+    config_file = tmp_path / ".orchestrator" / "config.yaml"
+    config_file.write_text(yaml.dump(config_data))
+
+    cfg = load_config(config_file)
+
+    assert cfg.dispatcher.provider == "claude_cli"
+    assert cfg.generator.provider == "codex_cli"
 
 
 def test_qa_module_none():

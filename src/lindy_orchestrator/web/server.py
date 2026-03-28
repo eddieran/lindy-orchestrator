@@ -1,27 +1,20 @@
-"""Lightweight web dashboard for real-time plan monitoring.
-
-Serves a single-page HTML dashboard over HTTP and streams hook events
-via Server-Sent Events (SSE).  Uses only the stdlib ``http.server`` so
-no extra dependencies are required.
-"""
+"""Lightweight web dashboard for real-time pipeline monitoring."""
 
 from __future__ import annotations
 
 import json
 import logging
 import queue
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from ..command_queue import CommandQueue
 from ..hooks import Event, HookRegistry
-from ..models import TaskPlan
+from ..models import ExecutionResult, TaskPlan, TaskState, coerce_execution_result
 
 log = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# HTML page (embedded to stay zero-dependency)
-# ---------------------------------------------------------------------------
 
 _INDEX_HTML = """\
 <!DOCTYPE html>
@@ -32,88 +25,164 @@ _INDEX_HTML = """\
 <title>Lindy Orchestrator</title>
 <style>
   :root {
-    --bg: #0d1117; --bg-card: #161b22; --bg-card-active: #1c2333;
-    --border: #30363d; --text: #c9d1d9; --text-dim: #8b949e; --text-bright: #f0f6fc;
-    --blue: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922; --purple: #bc8cff;
-    --blue-bg: rgba(56,139,253,0.12); --green-bg: rgba(63,185,80,0.12);
-    --red-bg: rgba(248,81,73,0.12); --yellow-bg: rgba(210,153,34,0.12);
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-active: #1d2430;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --purple: #bc8cff;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace; background: var(--bg); color: var(--text); overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
-
-  /* Header */
-  .header { padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
-  .header h1 { font-size: 14px; color: var(--blue); font-weight: 600; white-space: nowrap; }
-  .header .goal { color: var(--text-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .header .stats { font-size: 12px; display: flex; gap: 12px; white-space: nowrap; }
-  .header .stats span { font-weight: 600; }
-  .s-ok { color: var(--green); } .s-fail { color: var(--red); } .s-run { color: var(--blue); } .s-wait { color: var(--text-dim); }
-
-  /* Main layout */
-  .main { display: flex; flex: 1; overflow: hidden; }
-  .dag-panel { flex: 1; overflow: auto; padding: 24px; position: relative; }
-  .sidebar { width: 360px; border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
-
-  /* DAG */
-  .dag-container { position: relative; min-height: 100%; }
-  svg.edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
-  svg.edges path { fill: none; stroke: var(--border); stroke-width: 1.5; }
-  svg.edges path.active { stroke: var(--blue); stroke-width: 2; }
-  svg.edges path.done { stroke: var(--green); stroke-width: 1.5; opacity: 0.6; }
-  svg.edges marker path { fill: var(--border); stroke: none; }
-
-  .dag-layer { display: flex; gap: 16px; justify-content: center; margin-bottom: 16px; position: relative; z-index: 1; }
-
-  /* Node card */
-  .node { width: 260px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); padding: 10px 12px; cursor: pointer; transition: all 0.2s; position: relative; }
-  .node:hover { border-color: var(--text-dim); }
-  .node.pending { opacity: 0.5; }
-  .node.in_progress { border-color: var(--blue); background: var(--bg-card-active); box-shadow: 0 0 16px rgba(56,139,253,0.15); }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "SF Mono", "JetBrains Mono", monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+  .header h1 { margin: 0; font-size: 14px; color: var(--blue); }
+  .goal { flex: 1; font-size: 12px; color: var(--text-dim); }
+  .stats { display: flex; gap: 12px; font-size: 12px; }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    min-height: calc(100vh - 58px);
+  }
+  .dag-panel {
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .dag-layer {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .node {
+    width: 280px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    padding: 12px;
+    cursor: pointer;
+  }
+  .node.in_progress { border-color: var(--blue); background: var(--panel-active); }
   .node.completed { border-color: var(--green); }
   .node.failed { border-color: var(--red); }
-  .node.skipped { opacity: 0.35; }
-  .node.selected { outline: 2px solid var(--purple); outline-offset: 2px; }
-
-  .node-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-  .node-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; }
-  .node-icon.pending { background: var(--border); color: var(--text-dim); }
-  .node-icon.in_progress { background: var(--blue-bg); color: var(--blue); animation: pulse 2s infinite; }
-  .node-icon.completed { background: var(--green-bg); color: var(--green); }
-  .node-icon.failed { background: var(--red-bg); color: var(--red); }
-  .node-icon.skipped { background: var(--border); color: var(--text-dim); }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-
-  .node-id { font-size: 11px; font-weight: 700; color: var(--text-dim); }
-  .node-module { font-size: 10px; color: var(--purple); background: rgba(188,140,255,0.1); padding: 1px 6px; border-radius: 4px; }
-  .node-desc { font-size: 11px; color: var(--text); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-
-  /* Live streaming on node */
-  .node-stream { font-size: 10px; color: var(--blue); margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); max-height: 40px; overflow: hidden; line-height: 1.3; }
-  .node-stream .tool { color: var(--yellow); font-weight: 600; }
-
-  /* Sidebar */
-  .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--blue); }
-  .sidebar-content { flex: 1; overflow-y: auto; }
-
-  /* Task detail */
-  .task-detail { padding: 16px; display: none; }
-  .task-detail.visible { display: block; }
-  .td-title { font-size: 13px; font-weight: 600; color: var(--text-bright); margin-bottom: 8px; }
-  .td-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 12px; }
-  .td-meta span { display: inline-block; margin-right: 12px; }
-
-  /* Streaming log */
-  .stream-log { font-size: 11px; line-height: 1.5; max-height: 300px; overflow-y: auto; }
-  .stream-log .entry { padding: 3px 0; border-bottom: 1px solid #1c2128; }
-  .stream-log .entry .ts { color: var(--text-dim); margin-right: 8px; }
-  .stream-log .entry .tool-name { color: var(--yellow); font-weight: 600; }
-  .stream-log .entry .reasoning { color: var(--text-dim); font-style: italic; }
-  .stream-log .entry .qa-pass { color: var(--green); }
-  .stream-log .entry .qa-fail { color: var(--red); }
-
-  /* Event log */
-  .event-log { border-top: 1px solid var(--border); max-height: 200px; overflow-y: auto; padding: 8px 16px; font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
-  .event-log .ev { padding: 2px 0; }
+  .node.selected { outline: 2px solid var(--purple); }
+  .node-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+  }
+  .node-desc { font-size: 12px; line-height: 1.45; margin-bottom: 8px; }
+  .node-meta, .node-phase {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .sidebar {
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 58px);
+  }
+  .section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section h2 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .task-title { font-size: 13px; margin-bottom: 8px; }
+  .task-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 10px; }
+  .phase-dots { display: flex; gap: 10px; margin-bottom: 10px; }
+  .phase-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--border);
+  }
+  .phase-dot.active.plan { background: var(--purple); }
+  .phase-dot.active.generate { background: var(--blue); }
+  .phase-dot.active.evaluate { background: var(--yellow); }
+  .phase-dot.active.done { background: var(--green); }
+  .criteria {
+    white-space: pre-wrap;
+    line-height: 1.45;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  button {
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cost-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    font-size: 11px;
+  }
+  .cost-card, .attempt-row {
+    border: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .attempts {
+    display: grid;
+    gap: 8px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .attempt-row {
+    display: grid;
+    grid-template-columns: 34px 54px 1fr;
+    gap: 8px;
+    font-size: 11px;
+    align-items: start;
+  }
+  .event-log {
+    padding: 16px;
+    overflow-y: auto;
+    font-size: 11px;
+    color: var(--text-dim);
+    flex: 1;
+  }
+  .event-log div { margin-bottom: 6px; }
+  @media (max-width: 960px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { border-left: none; border-top: 1px solid var(--border); }
+  }
 </style>
 </head>
 <body>
@@ -122,255 +191,345 @@ _INDEX_HTML = """\
   <div class="goal" id="goal"></div>
   <div class="stats" id="stats"></div>
 </div>
-<div class="main">
-  <div class="dag-panel" id="dagPanel">
-    <div class="dag-container" id="dagContainer"></div>
-  </div>
+<div class="layout">
+  <div class="dag-panel" id="dagPanel"></div>
   <div class="sidebar">
-    <div class="sidebar-header">TASK DETAIL</div>
-    <div class="sidebar-content">
-      <div class="task-detail visible" id="taskDetail">
-        <div class="td-title" id="tdTitle">Select a task node</div>
-        <div class="td-meta" id="tdMeta"></div>
-        <div class="stream-log" id="streamLog"></div>
+    <div class="section">
+      <h2>Selected Task</h2>
+      <div class="task-title" id="taskTitle">Select a task</div>
+      <div class="task-meta" id="taskMeta"></div>
+      <div class="phase-dots" id="phaseDots"></div>
+      <div class="criteria" id="acceptanceCriteria">No task selected.</div>
+    </div>
+    <div class="section">
+      <h2>Controls</h2>
+      <div class="controls">
+        <button id="pauseBtn">Pause</button>
+        <button id="resumeBtn">Resume</button>
+        <button id="skipBtn" disabled>Skip</button>
+        <button id="forcePassBtn" disabled>Force Pass</button>
       </div>
     </div>
-    <div class="sidebar-header">EVENT LOG</div>
+    <div class="section">
+      <h2>Cost Breakdown</h2>
+      <div class="cost-grid" id="costBreakdown"></div>
+    </div>
+    <div class="section">
+      <h2>Attempt History</h2>
+      <div class="attempts" id="attemptHistory"></div>
+    </div>
     <div class="event-log" id="eventLog"></div>
   </div>
 </div>
-
 <script>
-let tasks = {};
-let taskLogs = {};  // task_id -> [{ts, type, text}]
+const statusMap = {
+  task_started: "in_progress",
+  task_completed: "completed",
+  task_failed: "failed",
+  task_skipped: "skipped",
+  task_retrying: "in_progress"
+};
+const tasks = {};
 let selectedTask = null;
 
-const icons = { pending: '\\u25CB', in_progress: '\\u25CF', completed: '\\u2713', failed: '\\u2717', skipped: '\\u2015' };
-const statusMap = { task_started: 'in_progress', task_completed: 'completed', task_failed: 'failed', task_skipped: 'skipped', task_retrying: 'in_progress' };
+function esc(value) {
+  const div = document.createElement("div");
+  div.textContent = value || "";
+  return div.innerHTML;
+}
 
-/* ---- DAG Layout ---- */
 function computeLayers(taskMap) {
-  const layers = {};
   const depth = {};
   function getDepth(id) {
     if (depth[id] !== undefined) return depth[id];
-    const t = taskMap[id];
-    if (!t || !t.depends_on || t.depends_on.length === 0) { depth[id] = 0; return 0; }
-    depth[id] = 1 + Math.max(...t.depends_on.map(d => getDepth(d)));
+    const task = taskMap[id];
+    if (!task || !task.depends_on || task.depends_on.length === 0) {
+      depth[id] = 0;
+      return 0;
+    }
+    depth[id] = 1 + Math.max(...task.depends_on.map(dep => getDepth(dep)));
     return depth[id];
   }
   Object.keys(taskMap).forEach(id => getDepth(Number(id)));
-  Object.entries(depth).forEach(([id, d]) => {
-    if (!layers[d]) layers[d] = [];
-    layers[d].push(Number(id));
+  const layers = {};
+  Object.entries(depth).forEach(([id, layer]) => {
+    if (!layers[layer]) layers[layer] = [];
+    layers[layer].push(Number(id));
   });
   return layers;
 }
 
-function renderDAG() {
-  const container = document.getElementById('dagContainer');
+function renderStats() {
+  const all = Object.values(tasks);
+  const counts = { completed: 0, failed: 0, in_progress: 0, pending: 0, skipped: 0 };
+  all.forEach(task => { counts[task.status] = (counts[task.status] || 0) + 1; });
+  document.getElementById("stats").innerHTML =
+    "<span>done " + counts.completed + "</span>" +
+    "<span>fail " + counts.failed + "</span>" +
+    "<span>run " + counts.in_progress + "</span>" +
+    "<span>wait " + (counts.pending + counts.skipped) + "</span>";
+}
+
+function renderDag() {
+  const panel = document.getElementById("dagPanel");
   const layers = computeLayers(tasks);
   const maxLayer = Math.max(...Object.keys(layers).map(Number), 0);
-  let html = '';
-  for (let l = 0; l <= maxLayer; l++) {
-    const ids = (layers[l] || []).sort((a,b) => a - b);
-    html += '<div class="dag-layer" data-layer="' + l + '">';
+  let html = "";
+  for (let layer = 0; layer <= maxLayer; layer += 1) {
+    const ids = (layers[layer] || []).sort((a, b) => a - b);
+    html += '<div class="dag-layer">';
     ids.forEach(id => {
-      const t = tasks[id];
-      const streamHtml = t._lastTool
-        ? '<div class="node-stream"><span class="tool">' + esc(t._lastTool) + '</span> ' + esc(t._lastReasoning || '').substring(0,60) + '</div>'
-        : '';
-      html += '<div class="node ' + t.status + (selectedTask === id ? ' selected' : '') + '" id="node-' + id + '" onclick="selectTask(' + id + ')">'
-        + '<div class="node-header">'
-        + '<div class="node-icon ' + t.status + '">' + icons[t.status] + '</div>'
-        + '<span class="node-id">T' + id + '</span>'
-        + '<span class="node-module">' + esc(t.module) + '</span>'
-        + '</div>'
-        + '<div class="node-desc">' + esc(t.description) + '</div>'
-        + streamHtml
-        + '</div>';
+      const task = tasks[id];
+      const phase = task.phase || "pending";
+      const score = task.last_score !== undefined && task.last_score !== null
+        ? "score " + task.last_score + "/100"
+        : "score -";
+      html +=
+        '<div class="node ' + task.status + (selectedTask === id ? ' selected' : '') + '" onclick="selectTask(' + id + ')">' +
+          '<div class="node-top">' +
+            '<span>T' + id + ' [' + esc(task.module) + ']</span>' +
+            '<span>' + esc(score) + '</span>' +
+          '</div>' +
+          '<div class="node-desc">' + esc(task.description) + '</div>' +
+          '<div class="node-phase">phase ' + esc(phase) + '</div>' +
+          '<div class="node-meta">deps ' + esc((task.depends_on || []).join(", ") || "none") + '</div>' +
+        '</div>';
     });
-    html += '</div>';
+    html += "</div>";
   }
-  container.innerHTML = '<svg class="edges" id="edgeSvg"></svg>' + html;
-  requestAnimationFrame(drawEdges);
+  panel.innerHTML = html;
 }
 
-function drawEdges() {
-  const svg = document.getElementById('edgeSvg');
-  if (!svg) return;
-  const panel = document.getElementById('dagPanel');
-  const panelRect = panel.getBoundingClientRect();
-  const scrollX = panel.scrollLeft;
-  const scrollY = panel.scrollTop;
-  let paths = '';
-  Object.values(tasks).forEach(t => {
-    (t.depends_on || []).forEach(depId => {
-      const from = document.getElementById('node-' + depId);
-      const to = document.getElementById('node-' + t.id);
-      if (!from || !to) return;
-      const fr = from.getBoundingClientRect();
-      const tr = to.getBoundingClientRect();
-      const x1 = fr.left + fr.width/2 - panelRect.left + scrollX;
-      const y1 = fr.top + fr.height - panelRect.top + scrollY;
-      const x2 = tr.left + tr.width/2 - panelRect.left + scrollX;
-      const y2 = tr.top - panelRect.top + scrollY;
-      const my = (y1 + y2) / 2;
-      const cls = t.status === 'in_progress' ? 'active' : (t.status === 'completed' ? 'done' : '');
-      paths += '<path class="' + cls + '" d="M' + x1 + ',' + y1 + ' C' + x1 + ',' + my + ' ' + x2 + ',' + my + ' ' + x2 + ',' + y2 + '"/>';
-    });
+function renderCosts(task) {
+  const target = document.getElementById("costBreakdown");
+  const attempts = task ? (task.attempts || []) : [];
+  let generator = 0;
+  let evaluator = 0;
+  attempts.forEach(record => {
+    generator += (record.generator_output?.cost_usd || 0);
+    evaluator += (record.eval_result?.cost_usd || 0);
   });
-  svg.innerHTML = '<defs><marker id="arrow" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto"><path d="M0,0 L6,2 L0,4" fill="var(--border)"/></marker></defs>' + paths;
-  // Resize SVG to container
-  const cont = document.getElementById('dagContainer');
-  svg.setAttribute('width', cont.scrollWidth);
-  svg.setAttribute('height', cont.scrollHeight);
+  const total = task ? (task.total_cost_usd || generator + evaluator) : 0;
+  target.innerHTML =
+    '<div class="cost-card"><div>Generator</div><strong>$' + generator.toFixed(2) + '</strong></div>' +
+    '<div class="cost-card"><div>Evaluator</div><strong>$' + evaluator.toFixed(2) + '</strong></div>' +
+    '<div class="cost-card"><div>Total</div><strong>$' + total.toFixed(2) + '</strong></div>' +
+    '<div class="cost-card"><div>Attempts</div><strong>' + attempts.length + '</strong></div>';
 }
 
-/* ---- Stats bar ---- */
-function updateStats() {
-  const all = Object.values(tasks);
-  const ok = all.filter(t => t.status === 'completed').length;
-  const fail = all.filter(t => t.status === 'failed').length;
-  const run = all.filter(t => t.status === 'in_progress').length;
-  const wait = all.filter(t => t.status === 'pending').length;
-  const skip = all.filter(t => t.status === 'skipped').length;
-  document.getElementById('stats').innerHTML =
-    '<span class="s-ok">' + ok + ' \\u2713</span>' +
-    '<span class="s-fail">' + fail + ' \\u2717</span>' +
-    '<span class="s-run">' + run + ' \\u25CF</span>' +
-    '<span class="s-wait">' + (wait + skip) + ' \\u25CB</span>' +
-    '<span style="color:var(--text-dim)">' + all.length + ' total</span>';
+function renderAttempts(task) {
+  const target = document.getElementById("attemptHistory");
+  if (!task || !task.attempts || task.attempts.length === 0) {
+    target.innerHTML = '<div class="attempt-row"><div>-</div><div>-</div><div>No attempts yet.</div></div>';
+    return;
+  }
+  target.innerHTML = task.attempts.map(record => {
+    const summary = record.eval_result?.feedback?.summary || "No feedback";
+    const score = record.eval_result?.score ?? "-";
+    const duration = (record.generator_output?.duration_seconds || 0) + (record.eval_result?.duration_seconds || 0);
+    const cost = (record.generator_output?.cost_usd || 0) + (record.eval_result?.cost_usd || 0);
+    return '<div class="attempt-row">' +
+      '<div>#' + record.attempt + '</div>' +
+      '<div>' + score + '</div>' +
+      '<div>' + esc(summary) + '<br><span style="color:var(--text-dim)">duration ' + duration.toFixed(1) + 's, cost $' + cost.toFixed(2) + '</span></div>' +
+      '</div>';
+  }).join("");
 }
 
-/* ---- Sidebar detail ---- */
+function renderPhases(task) {
+  const target = document.getElementById("phaseDots");
+  const phase = task ? (task.phase || "pending") : "pending";
+  const active = phase.startsWith("evaluat")
+    ? "evaluate"
+    : phase.startsWith("generat")
+      ? "generate"
+      : phase === "done"
+        ? "done"
+        : "plan";
+  target.innerHTML = ["plan", "generate", "evaluate", "done"].map(name =>
+    '<div class="phase-dot ' + name + (active === name ? ' active ' + name : '') + '"></div>'
+  ).join("");
+}
+
+function syncControls(task) {
+  document.getElementById("skipBtn").disabled = !task;
+  document.getElementById("forcePassBtn").disabled = !task;
+}
+
 function selectTask(id) {
   selectedTask = id;
-  const t = tasks[id];
-  document.getElementById('tdTitle').textContent = 'T' + id + ': ' + t.description;
-  const deps = (t.depends_on || []).map(d => 'T' + d).join(', ') || 'none';
-  document.getElementById('tdMeta').innerHTML =
-    '<span>Module: <b>' + esc(t.module) + '</b></span>' +
-    '<span>Status: <b>' + t.status + '</b></span>' +
-    '<span>Deps: ' + deps + '</span>';
-  renderStreamLog(id);
-  renderDAG();
+  const task = tasks[id];
+  document.getElementById("taskTitle").textContent = "T" + id + ": " + task.description;
+  document.getElementById("taskMeta").textContent = "module " + task.module + " | status " + task.status + " | phase " + (task.phase || "pending");
+  document.getElementById("acceptanceCriteria").textContent = task.acceptance_criteria || "No acceptance criteria.";
+  renderPhases(task);
+  renderAttempts(task);
+  renderCosts(task);
+  syncControls(task);
+  renderDag();
 }
 
-function renderStreamLog(id) {
-  const log = taskLogs[id] || [];
-  const el = document.getElementById('streamLog');
-  el.innerHTML = log.map(e => {
-    let content = '';
-    if (e.tool) content += '<span class="tool-name">' + esc(e.tool) + '</span> ';
-    if (e.reasoning) content += '<span class="reasoning">' + esc(e.reasoning) + '</span>';
-    if (e.qa) content += '<span class="' + (e.qa.passed ? 'qa-pass' : 'qa-fail') + '">' + (e.qa.passed ? 'PASS' : 'FAIL') + ' ' + esc(e.qa.gate) + '</span>';
-    if (e.text) content += esc(e.text);
-    return '<div class="entry"><span class="ts">' + e.ts + '</span>' + content + '</div>';
-  }).join('');
-  el.scrollTop = el.scrollHeight;
+async function sendCommand(path) {
+  await fetch(path, { method: "POST" });
 }
 
-/* ---- Event log ---- */
-function addEventLog(ev) {
-  const el = document.getElementById('eventLog');
-  const ts = new Date().toLocaleTimeString();
-  const div = document.createElement('div');
-  div.className = 'ev';
-  div.textContent = '[' + ts + '] ' + ev.type + (ev.task_id ? ' (T' + ev.task_id + ')' : '');
-  el.prepend(div);
-  while (el.children.length > 100) el.removeChild(el.lastChild);
-}
-
-/* ---- Utilities ---- */
-function esc(s) { if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function ts() { return new Date().toLocaleTimeString(); }
-
-function addTaskLog(taskId, entry) {
-  if (!taskLogs[taskId]) taskLogs[taskId] = [];
-  taskLogs[taskId].push(entry);
-  if (taskLogs[taskId].length > 200) taskLogs[taskId].shift();
-  if (selectedTask === taskId) renderStreamLog(taskId);
-}
-
-/* ---- SSE ---- */
-const src = new EventSource('/events');
-src.addEventListener('init', e => {
-  const d = JSON.parse(e.data);
-  document.getElementById('goal').textContent = d.goal.substring(0, 120);
-  d.tasks.forEach(t => { t._lastTool = ''; t._lastReasoning = ''; tasks[t.id] = t; });
-  renderDAG();
-  updateStats();
+document.getElementById("pauseBtn").addEventListener("click", () => sendCommand("/api/pause"));
+document.getElementById("resumeBtn").addEventListener("click", () => sendCommand("/api/resume"));
+document.getElementById("skipBtn").addEventListener("click", () => {
+  if (selectedTask) sendCommand("/api/task/" + selectedTask + "/skip");
+});
+document.getElementById("forcePassBtn").addEventListener("click", () => {
+  if (selectedTask) sendCommand("/api/task/" + selectedTask + "/force-pass");
 });
 
-src.addEventListener('hook', e => {
-  const ev = JSON.parse(e.data);
-  const tid = ev.task_id;
-  if (tid && tasks[tid]) {
-    if (statusMap[ev.type]) {
-      tasks[tid].status = statusMap[ev.type];
-      addTaskLog(tid, { ts: ts(), text: ev.type.replace('task_', '').toUpperCase() });
-    }
-    if (ev.type === 'task_heartbeat' && ev.data) {
-      const tool = ev.data.tool || '';
-      const reasoning = ev.data.reasoning || '';
-      if (tool) {
-        tasks[tid]._lastTool = tool;
-        addTaskLog(tid, { ts: ts(), tool: tool });
-      }
-      if (reasoning) {
-        tasks[tid]._lastReasoning = reasoning;
-        addTaskLog(tid, { ts: ts(), reasoning: reasoning.substring(0, 120) });
-      }
-    }
-    if (ev.type === 'qa_passed' || ev.type === 'qa_failed') {
-      addTaskLog(tid, { ts: ts(), qa: { passed: ev.type === 'qa_passed', gate: ev.data?.gate || '?' } });
+function addEventLine(text) {
+  const log = document.getElementById("eventLog");
+  const row = document.createElement("div");
+  row.textContent = text;
+  log.prepend(row);
+  while (log.children.length > 80) log.removeChild(log.lastChild);
+}
+
+const source = new EventSource("/events");
+source.addEventListener("init", event => {
+  const data = JSON.parse(event.data);
+  document.getElementById("goal").textContent = data.goal;
+  data.tasks.forEach(task => {
+    task.last_score = task.attempts?.length ? task.attempts[task.attempts.length - 1].eval_result?.score : null;
+    tasks[task.id] = task;
+  });
+  renderStats();
+  renderDag();
+  renderPhases(null);
+  renderAttempts(null);
+  renderCosts(null);
+  syncControls(null);
+});
+
+source.addEventListener("hook", event => {
+  const hook = JSON.parse(event.data);
+  const task = hook.task_id ? tasks[hook.task_id] : null;
+  if (task && statusMap[hook.type]) task.status = statusMap[hook.type];
+  if (task && hook.type === "phase_changed") task.phase = hook.data?.phase || task.phase;
+  if (task && hook.type === "eval_scored") {
+    task.phase = "evaluating";
+    task.last_score = hook.data?.score;
+    const attempt = hook.data?.attempt || 1;
+    task.attempts = task.attempts || [];
+    const existing = task.attempts.find(item => item.attempt === attempt);
+    if (existing) {
+      existing.eval_result = existing.eval_result || {};
+      existing.eval_result.score = hook.data?.score || 0;
+      existing.eval_result.passed = hook.data?.passed || false;
+    } else {
+      task.attempts.push({
+        attempt: attempt,
+        generator_output: { cost_usd: 0, duration_seconds: 0 },
+        eval_result: {
+          score: hook.data?.score || 0,
+          passed: hook.data?.passed || false,
+          feedback: { summary: "" },
+          cost_usd: 0,
+          duration_seconds: 0
+        }
+      });
     }
   }
-  addEventLog(ev);
-  renderDAG();
-  updateStats();
+  if (selectedTask && task && selectedTask === task.id) selectTask(task.id);
+  renderStats();
+  renderDag();
+  addEventLine(hook.type + (hook.task_id ? " T" + hook.task_id : ""));
 });
-
-src.onerror = () => {};
-
-// Redraw edges on scroll/resize
-window.addEventListener('resize', () => requestAnimationFrame(drawEdges));
-document.getElementById('dagPanel').addEventListener('scroll', () => requestAnimationFrame(drawEdges));
 </script>
 </body>
 </html>
 """
 
 
-# ---------------------------------------------------------------------------
-# Request handler
-# ---------------------------------------------------------------------------
+def _state_payload(state: TaskState) -> dict[str, Any]:
+    return {
+        "id": state.id,
+        "module": state.module,
+        "description": state.description,
+        "status": state.status.value,
+        "depends_on": state.depends_on,
+        "acceptance_criteria": state.acceptance_criteria,
+        "phase": state.phase,
+        "total_cost_usd": state.cost_usd,
+        "attempts": [
+            {
+                "attempt": record.attempt,
+                "timestamp": record.timestamp,
+                "generator_output": {
+                    "success": record.generator_output.success,
+                    "output": record.generator_output.output,
+                    "diff": record.generator_output.diff,
+                    "cost_usd": record.generator_output.cost_usd,
+                    "duration_seconds": record.generator_output.duration_seconds,
+                    "event_count": record.generator_output.event_count,
+                    "last_tool": record.generator_output.last_tool,
+                },
+                "eval_result": {
+                    "score": record.eval_result.score,
+                    "passed": record.eval_result.passed,
+                    "retryable": record.eval_result.retryable,
+                    "feedback": {
+                        "summary": record.eval_result.feedback.summary,
+                        "failed_criteria": record.eval_result.feedback.failed_criteria,
+                        "evidence": record.eval_result.feedback.evidence,
+                    },
+                    "cost_usd": record.eval_result.cost_usd,
+                    "duration_seconds": record.eval_result.duration_seconds,
+                },
+            }
+            for record in state.attempts
+        ],
+    }
 
 
 class _Handler(BaseHTTPRequestHandler):
-    """HTTP handler for the web dashboard.
-
-    Attributes on the *server* instance (set by ``WebDashboard``):
-      - ``plan``: the current ``TaskPlan``
-      - ``event_queues``: list of ``queue.Queue`` for SSE clients
-      - ``queues_lock``: threading lock for ``event_queues``
-    """
+    """HTTP handler for the web dashboard."""
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         """Suppress default stderr logging."""
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/":
-            self._serve_html()
+            self._respond(200, "text/html; charset=utf-8", _INDEX_HTML)
         elif self.path == "/events":
             self._serve_sse()
         elif self.path == "/health":
-            self._respond(200, "application/json", json.dumps({"ok": True}))
+            self._respond_json(200, {"ok": True})
         else:
             self._respond(404, "text/plain", "Not Found")
 
-    # -- helpers --------------------------------------------------------------
+    def do_POST(self) -> None:  # noqa: N802
+        queue_obj: CommandQueue | None = self.server.command_queue  # type: ignore[attr-defined]
+        if queue_obj is None:
+            self._respond_json(503, {"ok": False, "error": "command queue unavailable"})
+            return
+
+        if self.path == "/api/pause":
+            queue_obj.pause()
+            self._respond_json(200, {"ok": True})
+            return
+        if self.path == "/api/resume":
+            queue_obj.resume()
+            self._respond_json(200, {"ok": True})
+            return
+
+        match = re.fullmatch(r"/api/task/(\d+)/(skip|force-pass)", self.path)
+        if match:
+            task_id = int(match.group(1))
+            action = match.group(2)
+            if action == "skip":
+                queue_obj.skip(task_id)
+            else:
+                queue_obj.force_pass(task_id)
+            self._respond_json(200, {"ok": True})
+            return
+
+        self._respond_json(404, {"ok": False, "error": "not found"})
 
     def _respond(self, code: int, content_type: str, body: str) -> None:
         self.send_response(code)
@@ -379,8 +538,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body.encode())
 
-    def _serve_html(self) -> None:
-        self._respond(200, "text/html; charset=utf-8", _INDEX_HTML)
+    def _respond_json(self, code: int, payload: dict[str, Any]) -> None:
+        self._respond(code, "application/json", json.dumps(payload))
 
     def _serve_sse(self) -> None:
         self.send_response(200)
@@ -390,30 +549,21 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        # Send initial plan snapshot
-        plan: TaskPlan = self.server.plan  # type: ignore[attr-defined]
-        init_data = {
-            "goal": plan.goal,
-            "tasks": [
-                {
-                    "id": t.id,
-                    "module": t.module,
-                    "description": t.description,
-                    "status": t.status.value,
-                    "depends_on": t.depends_on,
-                }
-                for t in plan.tasks
-            ],
-        }
-        self._write_sse("init", init_data)
+        result: ExecutionResult = self.server.execution  # type: ignore[attr-defined]
+        self._write_sse(
+            "init",
+            {
+                "goal": result.resolved_goal,
+                "tasks": [_state_payload(state) for state in result.states],
+            },
+        )
 
-        # Stream events
-        q: queue.Queue[dict | None] = queue.Queue()
+        client_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         with self.server.queues_lock:  # type: ignore[attr-defined]
-            self.server.event_queues.append(q)  # type: ignore[attr-defined]
+            self.server.event_queues.append(client_queue)  # type: ignore[attr-defined]
         try:
             while True:
-                msg = q.get()
+                msg = client_queue.get()
                 if msg is None:
                     break
                 self._write_sse("hook", msg)
@@ -421,45 +571,30 @@ class _Handler(BaseHTTPRequestHandler):
             pass
         finally:
             with self.server.queues_lock:  # type: ignore[attr-defined]
-                if q in self.server.event_queues:  # type: ignore[attr-defined]
-                    self.server.event_queues.remove(q)  # type: ignore[attr-defined]
+                if client_queue in self.server.event_queues:  # type: ignore[attr-defined]
+                    self.server.event_queues.remove(client_queue)  # type: ignore[attr-defined]
 
-    def _write_sse(self, event: str, data: dict) -> None:
+    def _write_sse(self, event: str, data: dict[str, Any]) -> None:
         payload = f"event: {event}\ndata: {json.dumps(data)}\n\n"
         self.wfile.write(payload.encode())
         self.wfile.flush()
 
 
-# ---------------------------------------------------------------------------
-# WebDashboard public API
-# ---------------------------------------------------------------------------
-
-
 class WebDashboard:
-    """Browser-based dashboard that streams plan events over SSE.
-
-    Parameters
-    ----------
-    plan : TaskPlan
-        The execution plan to monitor.
-    hooks : HookRegistry
-        Hook registry to subscribe to for events.
-    metrics_collector : object | None
-        Optional metrics collector (reserved for future use).
-    port : int
-        HTTP port to listen on (default 8420).
-    """
+    """Browser-based dashboard that streams pipeline events over SSE."""
 
     def __init__(
         self,
-        plan: TaskPlan,
+        plan: TaskPlan | ExecutionResult | list[TaskState],
         hooks: HookRegistry,
         metrics_collector: Any | None = None,
+        command_queue: CommandQueue | None = None,
         port: int = 8420,
     ) -> None:
-        self._plan = plan
+        self._execution = coerce_execution_result(plan)
         self._hooks = hooks
         self._metrics_collector = metrics_collector
+        self._command_queue = command_queue
         self._port = port
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -475,8 +610,8 @@ class WebDashboard:
     def start(self) -> None:
         """Start the HTTP server in a daemon thread and subscribe to hooks."""
         server = ThreadingHTTPServer(("127.0.0.1", self._port), _Handler)
-        # Attach shared state to server so handlers can access it
-        server.plan = self._plan  # type: ignore[attr-defined]
+        server.execution = self._execution  # type: ignore[attr-defined]
+        server.command_queue = self._command_queue  # type: ignore[attr-defined]
         server.event_queues = []  # type: ignore[attr-defined]
         server.queues_lock = threading.Lock()  # type: ignore[attr-defined]
         self._server = server
@@ -488,13 +623,11 @@ class WebDashboard:
         self._thread = thread
 
     def stop(self) -> None:
-        """Shut down the server and unsubscribe from hooks."""
         self._hooks.remove_any(self._on_event)
         if self._server is not None:
-            # Signal all SSE clients to disconnect
             with self._server.queues_lock:  # type: ignore[attr-defined]
-                for q in self._server.event_queues:  # type: ignore[attr-defined]
-                    q.put(None)
+                for client_queue in self._server.event_queues:  # type: ignore[attr-defined]
+                    client_queue.put(None)
             self._server.shutdown()
             self._server = None
         if self._thread is not None:
@@ -502,7 +635,6 @@ class WebDashboard:
             self._thread = None
 
     def _on_event(self, event: Event) -> None:
-        """Forward hook events to all connected SSE clients."""
         if self._server is None:
             return
         data = {
@@ -513,5 +645,5 @@ class WebDashboard:
             "timestamp": event.timestamp,
         }
         with self._server.queues_lock:  # type: ignore[attr-defined]
-            for q in self._server.event_queues:  # type: ignore[attr-defined]
-                q.put(data)
+            for client_queue in self._server.event_queues:  # type: ignore[attr-defined]
+                client_queue.put(data)

@@ -25,6 +25,8 @@ class EventType(str, Enum):
     TASK_FAILED = "task_failed"
     TASK_RETRYING = "task_retrying"
     TASK_SKIPPED = "task_skipped"
+    PHASE_CHANGED = "phase_changed"
+    EVAL_SCORED = "eval_scored"
     QA_PASSED = "qa_passed"
     QA_FAILED = "qa_failed"
     STALL_WARNING = "stall_warning"
@@ -270,6 +272,14 @@ def _event_to_progress_string(event: Event) -> str:
             retry = event.data.get("retry", 0)
             max_retries = event.data.get("max_retries", 0)
             return f"    [yellow]QA failed, retrying with feedback[/] ({retry}/{max_retries})..."
+        case EventType.PHASE_CHANGED:
+            phase = event.data.get("phase", "")
+            return f"    [dim]Phase[/]: {phase}"
+        case EventType.EVAL_SCORED:
+            score = event.data.get("score", 0)
+            passed = event.data.get("passed", False)
+            verdict = "pass" if passed else "fail"
+            return f"      [cyan]Evaluator score[/]: {score} ({verdict})"
         case EventType.QA_PASSED:
             gate = event.data.get("gate", "")
             output = event.data.get("output", "")[:100]

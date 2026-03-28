@@ -14,7 +14,14 @@ from rich.table import Table
 from rich.text import Text
 
 from .dag import truncate_goal
-from .models import TaskSpec, TaskPlan, TaskStatus
+from .models import (
+    ExecutionResult,
+    TaskPlan,
+    TaskSpec,
+    TaskState,
+    TaskStatus,
+    coerce_execution_result,
+)
 
 
 class PlanProgress:
@@ -240,31 +247,71 @@ def _qa_summary(task: TaskSpec) -> str:
     return ", ".join(parts)
 
 
+def _qa_summary_for(item: TaskSpec | TaskState) -> str:
+    return _qa_summary(item)
+
+
+def _attempt_rows(state: TaskState) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for record in state.attempts:
+        rows.append(
+            [
+                str(record.attempt),
+                str(record.eval_result.score),
+                record.eval_result.feedback.summary or "-",
+                _format_duration(
+                    record.generator_output.duration_seconds + record.eval_result.duration_seconds
+                ),
+                f"${record.generator_output.cost_usd + record.eval_result.cost_usd:.2f}",
+            ]
+        )
+    return rows
+
+
+def _cost_breakdown(result: ExecutionResult) -> tuple[float, float, float, float]:
+    planner_cost = result.plan.planner_cost_usd if result.plan else 0.0
+    generator_cost = sum(
+        record.generator_output.cost_usd for state in result.states for record in state.attempts
+    )
+    evaluator_cost = sum(
+        record.eval_result.cost_usd for state in result.states for record in state.attempts
+    )
+    total_cost = result.total_cost_usd or planner_cost + generator_cost + evaluator_cost
+    if total_cost <= 0:
+        total_cost = sum(state.cost_usd for state in result.states)
+    return planner_cost, generator_cost, evaluator_cost, total_cost
+
+
 def generate_execution_summary(
-    plan: TaskPlan,
-    duration: float,
-    session_id: str,
+    plan: TaskPlan | ExecutionResult | list[TaskState],
+    duration: float | None = None,
+    session_id: str | None = None,
     console: Console | None = None,
 ) -> None:
     """Print a detailed per-task execution summary to the console."""
     con = console or Console()
+    result = coerce_execution_result(plan, duration_seconds=duration, session_id=session_id)
+    tasks: list[TaskSpec | TaskState] = result.states
+    duration = result.duration_seconds
+    session_id = result.session_id
+    goal = result.resolved_goal
 
-    completed = [t for t in plan.tasks if t.status == TaskStatus.COMPLETED]
-    failed = [t for t in plan.tasks if t.status == TaskStatus.FAILED]
-    skipped = [t for t in plan.tasks if t.status == TaskStatus.SKIPPED]
+    completed = [t for t in tasks if t.status == TaskStatus.COMPLETED]
+    failed = [t for t in tasks if t.status == TaskStatus.FAILED]
+    skipped = [t for t in tasks if t.status == TaskStatus.SKIPPED]
 
     # Header panel
     if failed:
-        title = f"GOAL PAUSED: {truncate_goal(plan.goal)}"
+        title = f"GOAL PAUSED: {truncate_goal(goal)}"
         border = "red"
     else:
-        title = f"GOAL COMPLETED: {truncate_goal(plan.goal)}"
+        title = f"GOAL COMPLETED: {truncate_goal(goal)}"
         border = "green"
 
     header_lines = [
         f"Session: {session_id}",
         f"Tasks: {len(completed)} passed, {len(failed)} failed, "
-        f"{len(skipped)} skipped / {len(plan.tasks)} total",
+        f"{len(skipped)} skipped / {len(tasks)} total",
         f"Duration: {_format_duration(duration)}",
     ]
     con.print()
@@ -282,7 +329,7 @@ def generate_execution_summary(
     table.add_column("QA Results", min_width=16)
     table.add_column("Output", min_width=20, max_width=40)
 
-    for task in plan.tasks:
+    for task in tasks:
         style, label = _STATUS_STYLE.get(task.status, ("white", "?"))
         dur = _task_duration(task)
         cost = f"${task.cost_usd:.2f}" if task.cost_usd > 0 else "-"
@@ -297,7 +344,7 @@ def generate_execution_summary(
             _format_duration(dur),
             str(task.retries) if task.retries else "-",
             cost,
-            _qa_summary(task),
+            _qa_summary_for(task),
             output_preview or "-",
         )
 
@@ -307,47 +354,85 @@ def generate_execution_summary(
     metrics = Table(title="Execution Metrics")
     metrics.add_column("Metric", style="bold")
     metrics.add_column("Value", justify="right")
-    metrics.add_row("Total tasks", str(len(plan.tasks)))
+    metrics.add_row("Total tasks", str(len(tasks)))
     metrics.add_row("Completed", f"[green]{len(completed)}[/]")
     metrics.add_row("Failed", f"[red]{len(failed)}[/]" if failed else "0")
     metrics.add_row("Skipped", str(len(skipped)))
     metrics.add_row("Total duration", _format_duration(duration))
-    total_cost = sum(t.cost_usd for t in plan.tasks)
+    planner_cost, generator_cost, evaluator_cost, total_cost = _cost_breakdown(result)
     if total_cost > 0:
+        metrics.add_row("Planner", f"${planner_cost:.2f}")
+        metrics.add_row("Generator", f"${generator_cost:.2f}")
+        metrics.add_row("Evaluator", f"${evaluator_cost:.2f}")
         metrics.add_row("Cost", f"${total_cost:.2f}")
     else:
-        metrics.add_row("Est. cost", f"${len(plan.tasks) * 2.0:.2f}")
+        metrics.add_row("Est. cost", f"${len(tasks) * 2.0:.2f}")
     con.print(metrics)
+
+    attempt_states = [state for state in result.states if state.attempts]
+    if attempt_states:
+        attempt_table = Table(title="Attempt History", show_lines=True)
+        attempt_table.add_column("Task", style="bold", width=6)
+        attempt_table.add_column("#", width=3, justify="center")
+        attempt_table.add_column("Score", width=7, justify="right")
+        attempt_table.add_column("Summary", min_width=20)
+        attempt_table.add_column("Duration", width=9, justify="right")
+        attempt_table.add_column("Cost", width=8, justify="right")
+        for state in attempt_states:
+            for index, row in enumerate(_attempt_rows(state)):
+                attempt_table.add_row(
+                    f"T{state.id}" if index == 0 else "",
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                )
+        con.print(attempt_table)
 
 
 def save_summary_report(
-    plan: TaskPlan,
-    duration: float,
-    session_id: str,
-    root: Path,
+    plan: TaskPlan | ExecutionResult | list[TaskState],
+    duration: float | None = None,
+    session_id: str | None = None,
+    root: Path | None = None,
 ) -> Path:
     """Save a Markdown execution summary to .orchestrator/reports/."""
+    result = coerce_execution_result(plan, duration_seconds=duration, session_id=session_id)
+    tasks: list[TaskSpec | TaskState] = result.states
+    duration = result.duration_seconds
+    session_id = result.session_id or "session"
+    goal = result.resolved_goal
+    if root is None:
+        raise ValueError("root is required")
     reports_dir = root / ".orchestrator" / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     report_path = reports_dir / f"{session_id}_summary.md"
 
-    completed = [t for t in plan.tasks if t.status == TaskStatus.COMPLETED]
-    failed = [t for t in plan.tasks if t.status == TaskStatus.FAILED]
-    skipped = [t for t in plan.tasks if t.status == TaskStatus.SKIPPED]
+    completed = [t for t in tasks if t.status == TaskStatus.COMPLETED]
+    failed = [t for t in tasks if t.status == TaskStatus.FAILED]
+    skipped = [t for t in tasks if t.status == TaskStatus.SKIPPED]
 
     status_word = "PAUSED" if failed else "COMPLETED"
-    total_cost = sum(t.cost_usd for t in plan.tasks)
-    cost_str = f"${total_cost:.2f}" if total_cost > 0 else f"~${len(plan.tasks) * 2.0:.2f} (est.)"
+    planner_cost, generator_cost, evaluator_cost, total_cost = _cost_breakdown(result)
+    cost_str = f"${total_cost:.2f}" if total_cost > 0 else f"~${len(tasks) * 2.0:.2f} (est.)"
     lines = [
         "# Execution Summary",
         "",
-        f"- **Goal**: {plan.goal}",
+        f"- **Goal**: {goal}",
         f"- **Status**: {status_word}",
         f"- **Session**: {session_id}",
         f"- **Duration**: {_format_duration(duration)}",
         f"- **Cost**: {cost_str}",
         f"- **Tasks**: {len(completed)} passed, {len(failed)} failed, "
-        f"{len(skipped)} skipped / {len(plan.tasks)} total",
+        f"{len(skipped)} skipped / {len(tasks)} total",
+        "",
+        "## Cost Breakdown",
+        "",
+        f"- Planner: ${planner_cost:.2f}",
+        f"- Generator: ${generator_cost:.2f}",
+        f"- Evaluator: ${evaluator_cost:.2f}",
+        f"- Total: {cost_str}",
         "",
         "## Task Details",
         "",
@@ -355,10 +440,10 @@ def save_summary_report(
         "|---|--------|-------------|--------|----------|------|---------|-----|",
     ]
 
-    for task in plan.tasks:
+    for task in tasks:
         _, label = _STATUS_STYLE.get(task.status, ("white", "?"))
         dur = _format_duration(_task_duration(task))
-        qa = _qa_summary(task)
+        qa = _qa_summary_for(task)
         retries = str(task.retries) if task.retries else "-"
         cost = f"${task.cost_usd:.2f}" if task.cost_usd > 0 else "-"
         lines.append(
@@ -369,7 +454,24 @@ def save_summary_report(
     lines.append("")
 
     # Per-task output sections for tasks with results
-    for task in plan.tasks:
+    attempt_states = [state for state in result.states if state.attempts]
+    if attempt_states:
+        lines.extend(
+            [
+                "## Attempt History",
+                "",
+                "| Task | # | Score | Summary | Duration | Cost |",
+                "|------|---|-------|---------|----------|------|",
+            ]
+        )
+        for state in attempt_states:
+            for row in _attempt_rows(state):
+                lines.append(
+                    f"| T{state.id} | {row[0]} | {row[1]} | {row[2]} | {row[3]} | {row[4]} |"
+                )
+        lines.append("")
+
+    for task in tasks:
         if not task.result:
             continue
         _, label = _STATUS_STYLE.get(task.status, ("white", "?"))

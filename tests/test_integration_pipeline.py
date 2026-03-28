@@ -212,7 +212,7 @@ class TestPlannerGeneratorEvaluatorPipeline:
         mock_remove_worktree.return_value = None
         seen_worktrees: list[Path | None] = []
         mock_dispatch_loop.side_effect = (
-            lambda task, config, logger, progress, detail, max_retries, hooks, branch_name, worktree_path: (
+            lambda task, config, logger, progress, detail, max_retries, hooks, branch_name, worktree_path, command_queue=None: (
                 (
                     seen_worktrees.append(worktree_path),
                     1,
@@ -419,9 +419,10 @@ class TestPlannerGeneratorEvaluatorPipeline:
         )
 
         assert should_continue is True
-        assert "Previous attempt failed QA verification" in task.prompt
-        assert "tests/test_api.py" in task.prompt
-        assert "AssertionError" in task.prompt
+        assert task.retries == 1
+        assert len(task.feedback_history) == 1
+        assert task.feedback_history[0]["retry"] == 1
+        assert task.feedback_history[0]["summary"] == "QA failed"
 
     @patch("lindy_orchestrator.orchestrator.create_worktree", return_value=None)
     @patch("lindy_orchestrator.orchestrator.create_provider")
@@ -559,14 +560,12 @@ class TestPlannerGeneratorEvaluatorPipeline:
         assert evaluator.dispatch_calls[0]["module"] == "reviewer"
         assert Path(evaluator.dispatch_calls[0]["working_dir"]) == (tmp_path / "qa").resolve()
 
-    @patch("lindy_orchestrator.providers.create_provider")
-    @patch("lindy_orchestrator.orchestrator.create_provider")
+    @patch("lindy_orchestrator.generator_runner.create_provider")
     @patch("lindy_orchestrator.planner_runner.create_provider")
     def test_pipeline_can_use_distinct_provider_instances_per_role(
         self,
         mock_planner_create_provider,
         mock_generator_create_provider,
-        mock_evaluator_create_provider,
         tmp_path: Path,
     ) -> None:
         from lindy_orchestrator.orchestrator import _dispatch_loop
@@ -594,17 +593,8 @@ class TestPlannerGeneratorEvaluatorPipeline:
                 duration_seconds=0.1,
             )
         )
-        evaluator_provider = RecordingProvider(
-            side_effect=lambda call: DispatchResult(
-                module=str(call["module"]),
-                success=True,
-                output="QA_RESULT: PASS",
-                duration_seconds=0.1,
-            )
-        )
         mock_planner_create_provider.return_value = planner_provider
         mock_generator_create_provider.return_value = generator_provider
-        mock_evaluator_create_provider.return_value = evaluator_provider
 
         plan = generate_plan("Ship auth", cfg)
         task = plan.tasks[0]
@@ -620,19 +610,11 @@ class TestPlannerGeneratorEvaluatorPipeline:
             None,
             "af/task-1",
             None,
-        )
-        result = AgentCheckGate().check(
-            params={"description": "Review"},
-            project_root=tmp_path,
-            task_output="generator done",
-            dispatcher_config=cfg.dispatcher,
-            qa_module=cfg.qa_module(),
+            None,
         )
 
         assert planner_provider.dispatch_calls[0]["module"] == "planner"
         assert generator_provider.dispatch_calls[0]["module"] == "backend"
-        assert evaluator_provider.dispatch_calls[0]["module"] == "reviewer"
-        assert result.passed is True
 
     @patch("lindy_orchestrator.orchestrator.run_qa_gate")
     def test_evaluator_uses_worktree_module_path_for_context_isolation(
