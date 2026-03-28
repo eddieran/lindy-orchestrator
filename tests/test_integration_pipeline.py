@@ -503,8 +503,9 @@ class TestPlannerGeneratorEvaluatorPipeline:
 
         try:
             with closing(_open_sse(port)) as response:
-                _read_sse_event(response)
+                _read_sse_event(response)  # consume init event
                 hooks.emit(Event(type=EventType.TASK_STARTED, task_id=1, module="backend"))
+                time.sleep(0.15)  # allow event to propagate through queue in CI
                 event_name, payload = _read_sse_event(response)
                 assert event_name == "hook"
                 assert payload["type"] == "task_started"
