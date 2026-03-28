@@ -62,6 +62,12 @@ class GeneratorConfig(BaseModel):
         return self.provider or dispatcher_provider
 
 
+class EvaluatorConfig(DispatcherConfig):
+    timeout_seconds: int = 300
+    pass_threshold: int = 80
+    prompt_prefix: str = ""
+
+
 class CICheckConfig(BaseModel):
     timeout_seconds: int = 900
     poll_interval: int = 30
@@ -153,6 +159,7 @@ class OrchestratorConfig(BaseModel):
     planner: PlannerConfig = Field(default_factory=PlannerConfig)
     dispatcher: DispatcherConfig = Field(default_factory=DispatcherConfig)
     generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
+    evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

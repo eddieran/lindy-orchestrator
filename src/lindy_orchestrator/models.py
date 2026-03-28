@@ -118,8 +118,8 @@ class TaskSpec:
     evaluator_prompt: str = ""
     prompt: str = ""
     generator_prompt: str = ""
+    acceptance_criteria: str = ""
     evaluator_prompt: str = ""
-    acceptance_criteria: list[str] = field(default_factory=list)
     depends_on: list[int] = field(default_factory=list)
     priority: int = 0  # higher = dispatched first within same dep level
     qa_checks: list[QACheck] = field(default_factory=list)
@@ -135,6 +135,13 @@ class TaskSpec:
     timeout_seconds: int | None = None  # per-task override
     stall_seconds: int | None = None  # per-task stall override
     cost_usd: float = 0.0  # actual cost from dispatch provider
+
+    def __post_init__(self) -> None:
+        """Keep legacy ``prompt`` and new ``generator_prompt`` in sync."""
+        if not self.generator_prompt and self.prompt:
+            self.generator_prompt = self.prompt
+        elif not self.prompt and self.generator_prompt:
+            self.prompt = self.generator_prompt
 
 
 @dataclass
@@ -270,6 +277,39 @@ class DispatchResult:
     cost_usd: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+
+
+@dataclass
+class GeneratorOutput:
+    success: bool
+    output: str
+    diff: str = ""
+    cost_usd: float = 0.0
+    duration_seconds: float = 0.0
+    event_count: int = 0
+    last_tool_use: str = ""
+
+
+@dataclass
+class EvalFeedback:
+    summary: str = ""
+    specific_errors: list[str] = field(default_factory=list)
+    files_to_check: list[str] = field(default_factory=list)
+    remediation_steps: list[str] = field(default_factory=list)
+    failed_criteria: list[str] = field(default_factory=list)
+    evidence: str = ""
+    missing_behaviors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class EvalResult:
+    score: int
+    passed: bool
+    retryable: bool = True
+    feedback: EvalFeedback = field(default_factory=EvalFeedback)
+    qa_results: list[QAResult] = field(default_factory=list)
+    cost_usd: float = 0.0
+    duration_seconds: float = 0.0
 
 
 # ---------------------------------------------------------------------------
