@@ -252,8 +252,10 @@ class RoleProviderConfig:
 
 @dataclass
 class GeneratorOutput:
+    """Generator execution output captured per attempt."""
+
     success: bool
-    output: str
+    output: str = ""
     diff: str = ""
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
@@ -263,6 +265,8 @@ class GeneratorOutput:
 
 @dataclass
 class EvalFeedback:
+    """Evaluator feedback for retries and debugging."""
+
     summary: str = ""
     specific_errors: list[str] = field(default_factory=list)
     files_to_check: list[str] = field(default_factory=list)
@@ -274,8 +278,10 @@ class EvalFeedback:
 
 @dataclass
 class EvalResult:
-    score: int
-    passed: bool
+    """Evaluator verdict for a single attempt."""
+
+    score: int = 0
+    passed: bool = False
     retryable: bool = True
     feedback: EvalFeedback = field(default_factory=EvalFeedback)
     qa_results: list[QAResult] = field(default_factory=list)
@@ -285,14 +291,18 @@ class EvalResult:
 
 @dataclass
 class AttemptRecord:
+    """One generator/evaluator cycle for a task."""
+
     attempt: int
-    generator_output: GeneratorOutput
-    eval_result: EvalResult
-    timestamp: str
+    generator_output: GeneratorOutput = field(default_factory=lambda: GeneratorOutput(False))
+    eval_result: EvalResult = field(default_factory=EvalResult)
+    timestamp: str = ""
 
 
 @dataclass
 class TaskState:
+    """Runtime execution state for a task."""
+
     _checkpoint_version: ClassVar[int] = 2
 
     spec: TaskSpec
@@ -302,6 +312,53 @@ class TaskState:
     started_at: str = ""
     completed_at: str = ""
     total_cost_usd: float = 0.0
+
+    @property
+    def id(self) -> int:
+        return self.spec.id
+
+    @property
+    def module(self) -> str:
+        return self.spec.module
+
+    @property
+    def description(self) -> str:
+        return self.spec.description
+
+    @property
+    def depends_on(self) -> list[int]:
+        return self.spec.depends_on
+
+    @property
+    def acceptance_criteria(self) -> str:
+        return self.spec.acceptance_criteria
+
+    @property
+    def retries(self) -> int:
+        if self.attempts:
+            return max(len(self.attempts) - 1, 0)
+        return self.spec.retries
+
+    @property
+    def result(self) -> str:
+        if not self.attempts:
+            return self.spec.result
+        return self.attempts[-1].generator_output.output
+
+    @property
+    def qa_results(self) -> list[QAResult]:
+        if not self.attempts:
+            return self.spec.qa_results
+        return self.attempts[-1].eval_result.qa_results
+
+    @property
+    def cost_usd(self) -> float:
+        if self.total_cost_usd > 0:
+            return self.total_cost_usd
+        return sum(
+            record.generator_output.cost_usd + record.eval_result.cost_usd
+            for record in self.attempts
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -422,14 +479,84 @@ class TaskState:
             total_cost_usd=data.get("total_cost_usd", 0.0),
         )
 
+    @classmethod
+    def from_task(cls, task: TaskSpec) -> TaskState:
+        if task.status == TaskStatus.IN_PROGRESS:
+            phase = "generating"
+        elif task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.SKIPPED):
+            phase = "done"
+        else:
+            phase = "pending"
+        return cls(
+            spec=task,
+            status=task.status,
+            phase=phase,
+            started_at=task.started_at or "",
+            completed_at=task.completed_at or "",
+            total_cost_usd=task.cost_usd,
+        )
+
 
 @dataclass
 class ExecutionResult:
-    plan: TaskPlan
-    states: list[TaskState]
+    """Complete execution state consumed by dashboards and reporters."""
+
+    plan: TaskPlan | None = None
+    states: list[TaskState] = field(default_factory=list)
+    goal: str = ""
     duration_seconds: float = 0.0
     total_cost_usd: float = 0.0
     session_id: str = ""
+    checkpoint_version: int = 2
+
+    @property
+    def resolved_goal(self) -> str:
+        return self.goal or (self.plan.goal if self.plan else "")
+
+
+def coerce_execution_result(
+    source: TaskPlan | ExecutionResult | list[TaskState],
+    *,
+    goal: str | None = None,
+    duration_seconds: float | None = None,
+    session_id: str | None = None,
+) -> ExecutionResult:
+    """Normalize legacy and pipeline execution shapes."""
+
+    if isinstance(source, ExecutionResult):
+        if goal and not source.goal:
+            source.goal = goal
+        if duration_seconds is not None and not source.duration_seconds:
+            source.duration_seconds = duration_seconds
+        if session_id and not source.session_id:
+            source.session_id = session_id
+        if source.total_cost_usd <= 0:
+            source.total_cost_usd = sum(state.cost_usd for state in source.states)
+        return source
+
+    if isinstance(source, TaskPlan):
+        states = [TaskState.from_task(task) for task in source.tasks]
+        total_cost = sum(task.cost_usd for task in source.tasks)
+        return ExecutionResult(
+            plan=source,
+            states=states,
+            goal=goal or source.goal,
+            duration_seconds=duration_seconds or 0.0,
+            total_cost_usd=total_cost,
+            session_id=session_id or "",
+        )
+
+    states = list(source)
+    total_cost = sum(state.cost_usd for state in states)
+    derived_plan = TaskPlan(goal=goal or "", tasks=[state.spec for state in states])
+    return ExecutionResult(
+        plan=derived_plan,
+        states=states,
+        goal=goal or "",
+        duration_seconds=duration_seconds or 0.0,
+        total_cost_usd=total_cost,
+        session_id=session_id or "",
+    )
 
 
 def _task_spec_to_dict(task: TaskSpec) -> dict[str, Any]:
@@ -508,7 +635,6 @@ def _task_spec_from_dict(data: dict[str, Any]) -> TaskSpec:
         stall_seconds=data.get("stall_seconds"),
         cost_usd=data.get("cost_usd", 0.0),
     )
-
 
 
 # ---------------------------------------------------------------------------

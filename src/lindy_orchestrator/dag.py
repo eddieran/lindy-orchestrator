@@ -1,4 +1,4 @@
-"""DAG visualization for TaskPlan.
+"""DAG visualization for task execution state.
 
 Renders a task dependency graph as a compact ASCII tree with box-drawing
 characters inspired by Elixir's supervisor tree visualization.  Each task
@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from lindy_orchestrator.models import TaskSpec, TaskPlan, TaskStatus
+from lindy_orchestrator.models import (
+    ExecutionResult,
+    TaskPlan,
+    TaskSpec,
+    TaskState,
+    TaskStatus,
+    coerce_execution_result,
+)
 
 # -- text helpers -------------------------------------------------------------
 
@@ -57,7 +64,10 @@ _MAX_WIDTH = 78  # content width (80 minus 2-char margin)
 # -- topology -----------------------------------------------------------------
 
 
-def _compute_levels(tasks: list[TaskSpec]) -> list[list[TaskSpec]]:
+DagTask = TaskSpec | TaskState
+
+
+def _compute_levels(tasks: list[DagTask]) -> list[list[DagTask]]:
     """Group tasks into topological levels.
 
     Level 0 contains tasks with no (valid) dependencies.  Level *n* contains
@@ -91,8 +101,8 @@ def _compute_levels(tasks: list[TaskSpec]) -> list[list[TaskSpec]]:
 
 
 def _build_tree(
-    tasks: list[TaskSpec],
-) -> tuple[list[TaskSpec], dict[int, list[TaskSpec]], dict[int, list[int]]]:
+    tasks: list[DagTask],
+) -> tuple[list[DagTask], dict[int, list[DagTask]], dict[int, list[int]]]:
     """Build a tree structure from the task DAG for rendering.
 
     Each task is assigned to exactly one tree parent (the dependency at the
@@ -114,7 +124,7 @@ def _build_tree(
         for t in level_tasks:
             level_of[t.id] = i
 
-    children: dict[int, list[TaskSpec]] = {t.id: [] for t in tasks}
+    children: dict[int, list[DagTask]] = {t.id: [] for t in tasks}
     extra_deps: dict[int, list[int]] = {}
     roots: list[TaskSpec] = []
 
@@ -140,7 +150,7 @@ def _build_tree(
 # -- node formatting ----------------------------------------------------------
 
 
-def _node_text(task: TaskSpec, extra_deps: dict[int, list[int]]) -> str:
+def _node_text(task: DagTask, extra_deps: dict[int, list[int]]) -> str:
     """Build the display text for a single task node."""
     icon = STATUS_ICONS[task.status]
     desc = task.description
@@ -180,10 +190,10 @@ def _format_line(
 
 
 def _walk_tree(
-    tasks: list[TaskSpec],
+    tasks: list[DagTask],
     annotations: dict[int, str] | None = None,
     verbose: bool = False,
-) -> list[tuple[str, str, str, str, str, TaskSpec]]:
+) -> list[tuple[str, str, str, str, str, DagTask]]:
     """Walk the task DAG tree and yield rendering tuples.
 
     Returns a list of ``(prefix, connector, node, annotation, style, task)``
@@ -194,9 +204,9 @@ def _walk_tree(
 
     roots, children, extra_deps = _build_tree(tasks)
     annotations = annotations or {}
-    result: list[tuple[str, str, str, str, str, TaskSpec]] = []
+    result: list[tuple[str, str, str, str, str, DagTask]] = []
 
-    def _emit(task: TaskSpec, prefix: str, is_last: bool) -> None:
+    def _emit(task: DagTask, prefix: str, is_last: bool) -> None:
         connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
         node = _node_text(task, extra_deps)
         ann = ""
@@ -222,25 +232,28 @@ def _walk_tree(
 
 
 def render_dag(
-    plan: TaskPlan,
+    plan: TaskPlan | ExecutionResult | list[TaskState],
     annotations: dict[int, str] | None = None,
     verbose: bool = False,
 ) -> Text:
-    """Render a TaskPlan DAG as a :class:`rich.text.Text` renderable.
+    """Render a task DAG as a :class:`rich.text.Text` renderable.
 
     Nodes are coloured by status; tree connectors use dim box-drawing
     characters.  When *verbose* is True and *annotations* are provided,
     activity bubbles appear next to active nodes.
     """
+    execution = coerce_execution_result(plan)
+    goal = execution.resolved_goal
+    tasks: list[DagTask] = execution.states
     text = Text()
 
-    if not plan.tasks:
+    if not tasks:
         text.append("(empty plan)", style="dim")
         return text
 
-    text.append(f"DAG: {truncate_goal(plan.goal)}\n", style="bold")
+    text.append(f"DAG: {truncate_goal(goal)}\n", style="bold")
 
-    for prefix, connector, node, ann, style, _task in _walk_tree(plan.tasks, annotations, verbose):
+    for prefix, connector, node, ann, style, _task in _walk_tree(tasks, annotations, verbose):
         text.append(prefix, style="dim")
         text.append(connector, style="dim")
         text.append(node, style=style)
