@@ -5,11 +5,16 @@ Loads orchestrator.yaml from the target project root.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
+
+from .models import RoleProviderConfig
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -27,11 +32,16 @@ class ModuleConfig(BaseModel):
 
 
 class PlannerConfig(BaseModel):
+    provider: str = "claude_cli"
     mode: str = "cli"  # "cli" or "api"
     model: str = "claude-sonnet-4-20250514"
     max_tokens: int = 4096
     timeout_seconds: int = 120
+    prompt: str = ""
     prompt_template: str | None = None  # Path to custom Jinja2 template
+
+    def to_role_provider_config(self) -> RoleProviderConfig:
+        return RoleProviderConfig(provider=self.provider, timeout_seconds=self.timeout_seconds)
 
 
 class StallEscalationConfig(BaseModel):
@@ -47,6 +57,37 @@ class DispatcherConfig(BaseModel):
     permission_mode: str = "bypassPermissions"
     max_output_chars: int = 50_000
     prompt_template: str = ""
+
+    def to_role_provider_config(self) -> RoleProviderConfig:
+        return RoleProviderConfig(provider=self.provider, timeout_seconds=self.timeout_seconds)
+
+
+class GeneratorConfig(BaseModel):
+    provider: str = "claude_cli"
+    timeout_seconds: int = 1800
+    stall_timeout: int = 600
+    permission_mode: str = "bypassPermissions"
+    max_output_chars: int = 200_000
+    prompt_prefix: str = ""
+
+    def to_role_provider_config(self) -> RoleProviderConfig:
+        return RoleProviderConfig(provider=self.provider, timeout_seconds=self.timeout_seconds)
+
+
+class EvaluatorConfig(BaseModel):
+    provider: str = "claude_cli"
+    timeout_seconds: int = 300
+    pass_threshold: int = 80
+    prompt_prefix: str = ""
+
+    def to_role_provider_config(self) -> RoleProviderConfig:
+        return RoleProviderConfig(provider=self.provider, timeout_seconds=self.timeout_seconds)
+
+
+class EvaluatorConfig(DispatcherConfig):
+    timeout_seconds: int = 300
+    pass_threshold: int = 80
+    prompt_prefix: str = ""
 
 
 class CICheckConfig(BaseModel):
@@ -71,6 +112,7 @@ class StructuralCheckConfig(BaseModel):
 
 
 class LayerCheckConfig(BaseModel):
+    # DEPRECATED: removed in v0.15
     enabled: bool = True
     unknown_file_policy: str = "skip"  # skip | warn
 
@@ -98,12 +140,14 @@ class SafetyConfig(BaseModel):
 
 
 class MailboxConfig(BaseModel):
+    # DEPRECATED: removed in v0.15
     enabled: bool = True  # enabled by default
     dir: str = ".orchestrator/mailbox"
     inject_on_dispatch: bool = True  # auto-inject pending messages into prompts
 
 
 class TrackerConfig(BaseModel):
+    # DEPRECATED: removed in v0.15
     enabled: bool = False
     provider: str = "github"  # github | linear
     repo: str = ""
@@ -112,6 +156,7 @@ class TrackerConfig(BaseModel):
 
 
 class OTelConfig(BaseModel):
+    # DEPRECATED: removed in v0.15
     enabled: bool = False
     exporter: str = "console"  # "console" or "otlp"
     endpoint: str = ""
@@ -138,7 +183,11 @@ class OrchestratorConfig(BaseModel):
     project: ProjectConfig = Field(default_factory=ProjectConfig)
     modules: list[ModuleConfig] = Field(default_factory=list)
     planner: PlannerConfig = Field(default_factory=PlannerConfig)
+    generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
+    evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     dispatcher: DispatcherConfig = Field(default_factory=DispatcherConfig)
+    generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
+    evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -151,6 +200,21 @@ class OrchestratorConfig(BaseModel):
     _config_dir: Path = PrivateAttr(default_factory=lambda: Path("."))
     _config_path: Path | None = PrivateAttr(default=None)
     _config_mtime: float = PrivateAttr(default=0.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_dispatcher(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        if "dispatcher" in values and "generator" not in values:
+            log.warning("'dispatcher' config is deprecated, use 'generator' instead")
+            values["generator"] = values["dispatcher"]
+        for deprecated in ("mailbox", "tracker", "otel"):
+            if deprecated in values:
+                log.warning(
+                    "'%s' config is deprecated and ignored by the pipeline runtime", deprecated
+                )
+        return values
 
     @property
     def root(self) -> Path:
@@ -250,6 +314,8 @@ class OrchestratorConfig(BaseModel):
         except Exception:
             return None
         self.safety = fresh.safety
+        self.generator = fresh.generator
+        self.evaluator = fresh.evaluator
         self.dispatcher = fresh.dispatcher
         self.qa_gates = fresh.qa_gates
         self.lifecycle_hooks = fresh.lifecycle_hooks
@@ -362,6 +428,16 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
     if "provider" not in raw.get("dispatcher", {}):
         global_cfg = load_global_config()
         raw.setdefault("dispatcher", {})["provider"] = global_cfg.provider
+    if "provider" not in raw.get("generator", {}):
+        raw.setdefault("generator", {})["provider"] = raw.get("dispatcher", {}).get(
+            "provider",
+            load_global_config().provider,
+        )
+    if "provider" not in raw.get("evaluator", {}):
+        raw.setdefault("evaluator", {})["provider"] = raw.get("planner", {}).get(
+            "provider",
+            "claude_cli",
+        )
 
     cfg = OrchestratorConfig.model_validate(raw)
     # When loaded from .orchestrator/config.yaml, _config_dir must be the
@@ -378,7 +454,7 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
     return cfg
 
 
-_QA_GATES_KNOWN_KEYS = {"ci_check", "structural", "layer_check", "custom"}
+_QA_GATES_KNOWN_KEYS = {"ci_check", "structural", "structural_check", "layer_check", "custom"}
 
 
 def _normalize_qa_gates(raw: dict[str, Any]) -> None:
@@ -410,6 +486,9 @@ def _normalize_qa_gates(raw: dict[str, Any]) -> None:
     qa = raw.get("qa_gates")
     if not isinstance(qa, dict):
         return
+
+    if "structural_check" in qa and "structural" not in qa:
+        qa["structural"] = qa["structural_check"]
 
     custom: list[dict[str, Any]] = list(qa.get("custom", []))
     for key in list(qa.keys()):

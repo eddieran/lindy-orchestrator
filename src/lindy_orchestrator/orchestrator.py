@@ -20,26 +20,71 @@ from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
+from .evaluator_runner import EvaluatorRunner
+from .generator_runner import GeneratorRunner
 from .scheduler_helpers import (
     _autofill_ci_params,
     _check_delivery,
-    build_prompt,
     extract_event_info,
     prepare_qa_checks,
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
 from .logger import ActionLogger
 from .metrics import MetricsCollector
-from .models import TaskSpec, TaskPlan, TaskStatus, plan_to_dict
+from .models import EvalFeedback, EvalResult, TaskSpec, TaskPlan, TaskStatus, plan_to_dict
 from .providers import create_provider
 from .qa import run_qa_gate
-from .qa.feedback import StructuredFeedback, build_retry_prompt, build_structured_feedback
 from .worktree import cleanup_all_worktrees, create_worktree, remove_worktree
 
 log = logging.getLogger(__name__)
 
 # Shell metacharacters that require sh -c wrapping
 _SHELL_META_RE = re.compile(r"&&|\|\||[|;<>]")
+
+
+class CommandQueue:
+    """Thread-safe command bus for runtime task controls."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._paused = False
+        self._skip_ids: set[int] = set()
+        self._force_pass_ids: set[int] = set()
+
+    def pause(self) -> None:
+        with self._lock:
+            self._paused = True
+
+    def resume(self) -> None:
+        with self._lock:
+            self._paused = False
+
+    def skip(self, task_id: int) -> None:
+        with self._lock:
+            self._skip_ids.add(task_id)
+
+    def force_pass(self, task_id: int) -> None:
+        with self._lock:
+            self._force_pass_ids.add(task_id)
+
+    @property
+    def is_paused(self) -> bool:
+        with self._lock:
+            return self._paused
+
+    def pop_skip(self, task_id: int) -> bool:
+        with self._lock:
+            if task_id in self._skip_ids:
+                self._skip_ids.remove(task_id)
+                return True
+            return False
+
+    def pop_force_pass(self, task_id: int) -> bool:
+        with self._lock:
+            if task_id in self._force_pass_ids:
+                self._force_pass_ids.remove(task_id)
+                return True
+            return False
 
 
 def _run_lifecycle_hook(
@@ -179,6 +224,7 @@ def execute_plan(
     hooks: HookRegistry | None = None,
     session_mgr: object | None = None,
     session: object | None = None,
+    command_queue: CommandQueue | None = None,
 ) -> TaskPlan:
     """Execute a task plan with parallel dispatch and QA gates.
 
@@ -189,9 +235,10 @@ def execute_plan(
     """
     # Pre-flight: validate provider is available before starting execution
     if not config.safety.dry_run:
-        provider = create_provider(config.dispatcher)
-        if hasattr(provider, "validate"):
-            provider.validate()
+        for role_config in (config.generator, config.evaluator):
+            provider = create_provider(role_config)
+            if hasattr(provider, "validate"):
+                provider.validate()
 
     max_retries = config.safety.max_retries_per_task
     max_parallel = config.safety.max_parallel
@@ -245,6 +292,10 @@ def execute_plan(
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as pool:
                 while not plan.all_terminal() and not _interrupted:
+                    if command_queue and command_queue.is_paused:
+                        time.sleep(1)
+                        continue
+
                     # Hot-reload config (safe sections only)
                     if config.check_reload() is not None:
                         max_retries = config.safety.max_retries_per_task
@@ -283,6 +334,26 @@ def execute_plan(
 
                     futures: dict[concurrent.futures.Future, TaskSpec] = {}
                     for task in ready:
+                        if command_queue and command_queue.pop_skip(task.id):
+                            task.status = TaskStatus.SKIPPED
+                            task.completed_at = datetime.now(timezone.utc).isoformat()
+                            task.result = "Skipped by command queue"
+                            hooks.emit(
+                                Event(
+                                    type=EventType.TASK_SKIPPED,
+                                    task_id=task.id,
+                                    module=task.module,
+                                    data={
+                                        "reason": task.result,
+                                        "description": task.description,
+                                    },
+                                )
+                            )
+                            progress(
+                                f"    [dim]Task {task.id} SKIPPED[/] ({task.module}): command queue"
+                            )
+                            continue
+
                         task.status = TaskStatus.IN_PROGRESS
                         task.started_at = datetime.now(timezone.utc).isoformat()
                         hooks.emit(
@@ -319,6 +390,7 @@ def execute_plan(
                             max_retries,
                             hooks,
                             module_semaphores.get(task.module),
+                            command_queue,
                         )
                         futures[future] = task
 
@@ -404,6 +476,7 @@ def _execute_single_task(
     max_retries: int,
     hooks: HookRegistry | None = None,
     module_semaphore: threading.Semaphore | None = None,
+    command_queue: CommandQueue | None = None,
 ) -> int:
     """Execute a single task with dispatch, QA gates, and retry logic.
 
@@ -414,7 +487,7 @@ def _execute_single_task(
 
     try:
         return _execute_single_task_inner(
-            task, config, logger, progress, detail, max_retries, hooks
+            task, config, logger, progress, detail, max_retries, hooks, command_queue
         )
     finally:
         if module_semaphore:
@@ -429,6 +502,7 @@ def _execute_single_task_inner(
     detail: Callable[[str], None],
     max_retries: int,
     hooks: HookRegistry | None = None,
+    command_queue: CommandQueue | None = None,
 ) -> int:
     """Core single-task execution (inside optional semaphore)."""
     prepare_qa_checks(task, config, progress)
@@ -460,6 +534,7 @@ def _execute_single_task_inner(
             hooks,
             branch_name,
             worktree_path,
+            command_queue,
         )
     finally:
         if worktree_path:
@@ -505,8 +580,9 @@ def _prepare_task_prompt(
     dispatches: int,
     progress: Callable[[str], None],
 ) -> None:
-    """Build the full task prompt via build_prompt()."""
-    task.prompt = build_prompt(task, config, branch_name, worktree_path, dispatches, progress)
+    """Backward-compatible no-op placeholder for older call sites."""
+    del config, branch_name, worktree_path, dispatches, progress
+    task.prompt = task.generator_prompt or task.prompt
 
 
 def _log_dispatch(logger: ActionLogger, task: TaskSpec, result: object) -> None:
@@ -664,22 +740,25 @@ def _mark_completed(
 
 def _handle_retry(
     task: TaskSpec,
-    original_prompt: str,
+    eval_result: EvalResult | str,
     max_retries: int,
     logger: ActionLogger,
     progress: Callable[[str], None],
     hooks: HookRegistry | None,
 ) -> bool:
     """Handle retry logic after QA failure. Returns True to continue loop, False to stop."""
-    # If all failures are non-retryable (pre-existing violations), skip retry entirely
-    failed_results = [r for r in task.qa_results if not r.passed]
-    if failed_results and all(not r.retryable for r in failed_results):
+    if isinstance(eval_result, EvalResult):
+        retryable = eval_result.retryable
+        feedback = eval_result.feedback
+    else:
+        failed_results = [r for r in task.qa_results if not r.passed]
+        retryable = not failed_results or any(result.retryable for result in failed_results)
+        feedback = EvalFeedback(summary="QA failed")
+
+    if not retryable:
         task.status = TaskStatus.FAILED
         task.completed_at = datetime.now(timezone.utc).isoformat()
-        progress(
-            f"    [bold red]Task {task.id} FAILED[/] — "
-            f"all {len(failed_results)} failure(s) are pre-existing (non-retryable)"
-        )
+        progress(f"    [bold red]Task {task.id} FAILED[/] — evaluator marked result non-retryable")
         if hooks:
             hooks.emit(
                 Event(
@@ -695,6 +774,18 @@ def _handle_retry(
         return False
 
     task.retries += 1
+    task.feedback_history.append(
+        {
+            "retry": task.retries,
+            "summary": feedback.summary,
+            "specific_errors": list(feedback.specific_errors),
+            "files": list(feedback.files_to_check),
+            "remediation": list(feedback.remediation_steps),
+            "failed_criteria": list(feedback.failed_criteria),
+            "evidence": feedback.evidence,
+            "missing_behaviors": list(feedback.missing_behaviors),
+        }
+    )
     if task.retries > max_retries:
         task.status = TaskStatus.FAILED
         task.completed_at = datetime.now(timezone.utc).isoformat()
@@ -739,31 +830,6 @@ def _handle_retry(
                 },
             )
         )
-
-    # Build structured feedback for each failed gate, filtering out
-    # pre-existing violations when we can determine changed files.
-    failed_checks = [r for r in task.qa_results if not r.passed]
-    feedback_objs: list[StructuredFeedback] = []
-    for r in failed_checks:
-        fb = build_structured_feedback(
-            r.gate,
-            r.output,
-            retry_number=task.retries,
-            changed_files=r.details.get("changed_files"),
-        )
-        feedback_objs.append(fb)
-        task.feedback_history.append(
-            {
-                "retry": task.retries,
-                "gate": r.gate,
-                "category": fb.category.value,
-                "summary": fb.summary,
-                "errors": fb.specific_errors,
-                "files": fb.files_to_check,
-                "remediation": fb.remediation_steps,
-            }
-        )
-    task.prompt = build_retry_prompt(original_prompt, feedback_objs, task.retries, max_retries)
     task.qa_results = []
     progress(f"    [yellow]QA failed, retrying with feedback[/] ({task.retries}/{max_retries})...")
     return True
@@ -784,82 +850,140 @@ def _dispatch_loop(
     hooks: HookRegistry | None,
     branch_name: str,
     worktree_path: Path | None,
+    command_queue: CommandQueue | None = None,
 ) -> int:
     """Inner dispatch loop with retry logic. Extracted for worktree cleanup."""
     dispatches = 0
-    original_prompt = task.prompt
-    working_dir, module_dir = _resolve_working_dir(task, config, worktree_path)
+    working_dir, _module_dir = _resolve_working_dir(task, config, worktree_path)
 
     lc = config.lifecycle_hooks
     hook_cwd = worktree_path or config.root
-    provider = create_provider(config.dispatcher)
+    generator = GeneratorRunner(config.generator, config)
+    evaluator = EvaluatorRunner(config.evaluator, config)
+    feedback: EvalFeedback | None = None
 
     while True:
-        progress(f"    Dispatching to [bold]{task.module}[/] agent...")
-
         hb = _HeartbeatTracker(task.id, task.module, progress, detail, hooks)
-        _prepare_task_prompt(task, config, branch_name, worktree_path, dispatches, progress)
+
+        progress("    [dim]Phase[/]: generating")
+        if hooks:
+            hooks.emit(
+                Event(
+                    type=EventType.PHASE_CHANGED,
+                    task_id=task.id,
+                    module=task.module,
+                    data={"phase": "generating", "attempt": task.retries + 1},
+                )
+            )
 
         if lc.before_run:
             _run_lifecycle_hook("before_run", lc.before_run, hook_cwd, progress, lc.timeout)
-        result = provider.dispatch(
-            module=task.module,
-            working_dir=working_dir,
-            prompt=task.prompt,
+        gen_output = generator.execute(
+            task=task,
+            worktree=working_dir,
+            branch_name=branch_name,
+            feedback=feedback,
             on_event=hb.on_event,
-            stall_seconds=task.stall_seconds,
         )
         dispatches += 1
-        task.result = result.output
-        task.cost_usd += result.cost_usd
-        _log_dispatch(logger, task, result)
+        task.result = gen_output.output
+        task.cost_usd += gen_output.cost_usd
+        logger.log_dispatch(
+            task.module,
+            (task.generator_prompt or task.prompt or task.description)[:200],
+            {
+                "success": gen_output.success,
+                "duration": gen_output.duration_seconds,
+                "exit_code": 0 if gen_output.success else 1,
+                "event_count": gen_output.event_count,
+                "last_tool_use": gen_output.last_tool,
+                "cost_usd": gen_output.cost_usd,
+            },
+        )
 
-        if result.success and lc.after_run:
+        if gen_output.success and lc.after_run:
             _run_lifecycle_hook("after_run", lc.after_run, hook_cwd, progress, lc.timeout)
 
-        if not result.success:
-            _handle_dispatch_failure(task, result, progress, hooks)
+        if not gen_output.success:
+            task.status = TaskStatus.FAILED
+            task.completed_at = datetime.now(timezone.utc).isoformat()
+            progress(f"    [red]GENERATOR FAILED[/]: {gen_output.output[:200]}")
+            if hooks:
+                hooks.emit(
+                    Event(
+                        type=EventType.TASK_FAILED,
+                        task_id=task.id,
+                        module=task.module,
+                        data={"reason": "generator_failed", "description": task.description},
+                    )
+                )
             return dispatches
 
         progress(
             f"    [green]Dispatch completed[/] "
-            f"({result.duration_seconds}s, {result.event_count} events)"
+            f"({gen_output.duration_seconds}s, {gen_output.event_count} events)"
         )
-        detail(f"    Output preview: {result.output[:500]}")
+        detail(f"    Output preview: {gen_output.output[:500]}")
 
         if task.skip_qa:
-            # skip_qa tasks skip delivery check and QA gates entirely
             _mark_completed(task, logger, progress, hooks)
             return dispatches
 
         _check_and_log_delivery(config.root, branch_name, logger, task, progress)
         _autofill_ci_params(task.qa_checks, branch_name, config, task.module)
 
-        qa_root = worktree_path or config.root
-        all_qa_passed = _run_qa_gates(
-            task,
-            config,
-            logger,
-            qa_root,
-            module_dir,
-            progress,
-            detail,
-            hooks,
-        )
+        progress("    [dim]Phase[/]: evaluating")
+        if hooks:
+            hooks.emit(
+                Event(
+                    type=EventType.PHASE_CHANGED,
+                    task_id=task.id,
+                    module=task.module,
+                    data={"phase": "evaluating", "attempt": task.retries + 1},
+                )
+            )
 
-        if all_qa_passed:
+        eval_result = evaluator.evaluate(task, gen_output, working_dir)
+        task.qa_results = list(eval_result.qa_results)
+        task.cost_usd += eval_result.cost_usd
+        progress(
+            f"      [cyan]Evaluator score[/]: {eval_result.score} "
+            f"({'pass' if eval_result.passed else 'fail'})"
+        )
+        if hooks:
+            hooks.emit(
+                Event(
+                    type=EventType.EVAL_SCORED,
+                    task_id=task.id,
+                    module=task.module,
+                    data={
+                        "score": eval_result.score,
+                        "passed": eval_result.passed,
+                        "attempt": task.retries + 1,
+                    },
+                )
+            )
+
+        if command_queue and command_queue.pop_force_pass(task.id):
+            progress("    [yellow]Command queue force-pass applied[/]")
             _mark_completed(task, logger, progress, hooks)
             return dispatches
 
-        if not _handle_retry(task, original_prompt, max_retries, logger, progress, hooks):
+        if eval_result.passed:
+            _mark_completed(task, logger, progress, hooks)
+            return dispatches
+
+        feedback = eval_result.feedback
+        if not _handle_retry(task, eval_result, max_retries, logger, progress, hooks):
             return dispatches
 
 
 class Orchestrator:
     """Wrapper around the execution engine."""
 
-    def __init__(self, config: OrchestratorConfig):
+    def __init__(self, config: OrchestratorConfig, command_queue: CommandQueue | None = None):
         self.config = config
+        self.command_queue = command_queue
 
     def run(
         self,
@@ -868,6 +992,7 @@ class Orchestrator:
         on_progress: Callable[[str], None] | None = None,
         verbose: bool = False,
         hooks: HookRegistry | None = None,
+        command_queue: CommandQueue | None = None,
     ) -> TaskPlan:
         return execute_plan(
             plan,
@@ -876,4 +1001,5 @@ class Orchestrator:
             on_progress=on_progress,
             verbose=verbose,
             hooks=hooks,
+            command_queue=command_queue or self.command_queue,
         )

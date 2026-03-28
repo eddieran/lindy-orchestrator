@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 
 class TaskStatus(str, Enum):
@@ -108,7 +108,11 @@ class QAResult:
 
 @dataclass
 class TaskSpec:
-    """A single task in a goal's execution plan."""
+    """A single task in a goal's execution plan.
+
+    `generator_prompt` is only for the generator role. `acceptance_criteria`
+    and `evaluator_prompt` are only for the evaluator role.
+    """
 
     id: int
     module: str
@@ -133,6 +137,13 @@ class TaskSpec:
     stall_seconds: int | None = None  # per-task stall override
     cost_usd: float = 0.0  # actual cost from dispatch provider
 
+    def __post_init__(self) -> None:
+        """Keep legacy ``prompt`` and new ``generator_prompt`` in sync."""
+        if not self.generator_prompt and self.prompt:
+            self.generator_prompt = self.prompt
+        elif not self.prompt and self.generator_prompt:
+            self.prompt = self.generator_prompt
+
 
 @dataclass
 class TaskPlan:
@@ -141,6 +152,7 @@ class TaskPlan:
     goal: str
     tasks: list[TaskSpec] = field(default_factory=list)
     planner_cost_usd: float = 0.0
+    tasks_v2: list[TaskSpec] = field(default_factory=list)
 
     def next_ready(self) -> list[TaskSpec]:
         """Return all tasks whose dependencies are satisfied.
@@ -191,79 +203,23 @@ class TaskPlan:
 
 def plan_to_dict(plan: TaskPlan) -> dict:
     """Serialize a TaskPlan to a JSON-safe dict."""
-    import dataclasses
-
     return {
         "goal": plan.goal,
         "planner_cost_usd": plan.planner_cost_usd,
-        "tasks": [
-            {
-                **dataclasses.asdict(t),
-                "status": t.status.value,
-                "qa_checks": [{"gate": q.gate, "params": q.params} for q in t.qa_checks],
-                "qa_results": [
-                    {
-                        "gate": r.gate,
-                        "passed": r.passed,
-                        "output": r.output[:500],
-                        "details": r.details,
-                        "retryable": r.retryable,
-                    }
-                    for r in t.qa_results
-                ],
-            }
-            for t in plan.tasks
-        ],
+        "tasks": [_task_spec_to_dict(t) for t in plan.tasks],
+        "tasks_v2": [_task_spec_to_dict(t) for t in plan.tasks_v2],
     }
 
 
 def plan_from_dict(data: dict) -> TaskPlan:
     """Deserialize a TaskPlan from a dict."""
-    tasks = []
-    for t in data.get("tasks", []):
-        qa_checks = [
-            QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
-        ]
-        qa_results = [
-            QAResult(
-                gate=r["gate"],
-                passed=r["passed"],
-                output=r.get("output", ""),
-                details=r.get("details", {}),
-                retryable=r.get("retryable", True),
-            )
-            for r in t.get("qa_results", [])
-        ]
-        tasks.append(
-            TaskSpec(
-                id=t["id"],
-                module=t["module"],
-                description=t["description"],
-                prompt=t.get("prompt", ""),
-                generator_prompt=t.get("generator_prompt", ""),
-                acceptance_criteria=t.get("acceptance_criteria", ""),
-                evaluator_prompt=t.get("evaluator_prompt", ""),
-                depends_on=t.get("depends_on", []),
-                priority=t.get("priority", 0),
-                qa_checks=qa_checks,
-                status=TaskStatus(t.get("status", "pending")),
-                result=t.get("result", ""),
-                qa_results=qa_results,
-                retries=t.get("retries", 0),
-                feedback_history=t.get("feedback_history", []),
-                started_at=t.get("started_at"),
-                completed_at=t.get("completed_at"),
-                timeout_seconds=t.get("timeout_seconds"),
-                skip_qa=t.get("skip_qa", False),
-                skip_gates=t.get("skip_gates", []),
-                stall_seconds=t.get("stall_seconds"),
-                cost_usd=t.get("cost_usd", 0.0),
-            )
-        )
+    tasks = [_task_spec_from_dict(t) for t in data.get("tasks", [])]
+    tasks_v2 = [_task_spec_from_dict(t) for t in data.get("tasks_v2", [])]
     return TaskPlan(
         goal=data["goal"],
         tasks=tasks,
         planner_cost_usd=data.get("planner_cost_usd", 0.0),
+        tasks_v2=tasks_v2,
     )
 
 
@@ -286,6 +242,12 @@ class DispatchResult:
     cost_usd: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+
+
+@dataclass
+class RoleProviderConfig:
+    provider: str = "claude_cli"
+    timeout_seconds: int = 300
 
 
 @dataclass
@@ -341,14 +303,15 @@ class AttemptRecord:
 class TaskState:
     """Runtime execution state for a task."""
 
+    _checkpoint_version: ClassVar[int] = 2
+
     spec: TaskSpec
-    status: TaskStatus
+    status: TaskStatus = TaskStatus.PENDING
     phase: str = "pending"
     attempts: list[AttemptRecord] = field(default_factory=list)
     started_at: str = ""
     completed_at: str = ""
     total_cost_usd: float = 0.0
-    checkpoint_version: int = 2
 
     @property
     def id(self) -> int:
@@ -399,124 +362,94 @@ class TaskState:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "spec": {
-                "id": self.spec.id,
-                "module": self.spec.module,
-                "description": self.spec.description,
-                "prompt": self.spec.prompt,
-                "generator_prompt": self.spec.generator_prompt,
-                "acceptance_criteria": self.spec.acceptance_criteria,
-                "evaluator_prompt": self.spec.evaluator_prompt,
-                "depends_on": self.spec.depends_on,
-                "priority": self.spec.priority,
-                "qa_checks": [{"gate": q.gate, "params": q.params} for q in self.spec.qa_checks],
-                "status": self.spec.status.value,
-                "result": self.spec.result,
-                "qa_results": [
-                    {
-                        "gate": r.gate,
-                        "passed": r.passed,
-                        "output": r.output,
-                        "details": r.details,
-                        "retryable": r.retryable,
-                    }
-                    for r in self.spec.qa_results
-                ],
-                "retries": self.spec.retries,
-                "feedback_history": self.spec.feedback_history,
-                "started_at": self.spec.started_at,
-                "completed_at": self.spec.completed_at,
-                "skip_qa": self.spec.skip_qa,
-                "skip_gates": self.spec.skip_gates,
-                "timeout_seconds": self.spec.timeout_seconds,
-                "stall_seconds": self.spec.stall_seconds,
-                "cost_usd": self.spec.cost_usd,
-            },
+            "_checkpoint_version": self._checkpoint_version,
+            "spec": _task_spec_to_dict(self.spec),
             "status": self.status.value,
             "phase": self.phase,
             "attempts": [
                 {
-                    "attempt": record.attempt,
-                    "timestamp": record.timestamp,
+                    "attempt": attempt.attempt,
                     "generator_output": {
-                        "success": record.generator_output.success,
-                        "output": record.generator_output.output,
-                        "diff": record.generator_output.diff,
-                        "cost_usd": record.generator_output.cost_usd,
-                        "duration_seconds": record.generator_output.duration_seconds,
-                        "event_count": record.generator_output.event_count,
-                        "last_tool": record.generator_output.last_tool,
+                        "success": attempt.generator_output.success,
+                        "output": attempt.generator_output.output,
+                        "diff": attempt.generator_output.diff,
+                        "cost_usd": attempt.generator_output.cost_usd,
+                        "duration_seconds": attempt.generator_output.duration_seconds,
+                        "event_count": attempt.generator_output.event_count,
+                        "last_tool": attempt.generator_output.last_tool,
                     },
                     "eval_result": {
-                        "score": record.eval_result.score,
-                        "passed": record.eval_result.passed,
-                        "retryable": record.eval_result.retryable,
+                        "score": attempt.eval_result.score,
+                        "passed": attempt.eval_result.passed,
+                        "retryable": attempt.eval_result.retryable,
                         "feedback": {
-                            "summary": record.eval_result.feedback.summary,
-                            "specific_errors": record.eval_result.feedback.specific_errors,
-                            "files_to_check": record.eval_result.feedback.files_to_check,
-                            "remediation_steps": record.eval_result.feedback.remediation_steps,
-                            "failed_criteria": record.eval_result.feedback.failed_criteria,
-                            "evidence": record.eval_result.feedback.evidence,
-                            "missing_behaviors": record.eval_result.feedback.missing_behaviors,
+                            "summary": attempt.eval_result.feedback.summary,
+                            "specific_errors": list(attempt.eval_result.feedback.specific_errors),
+                            "files_to_check": list(attempt.eval_result.feedback.files_to_check),
+                            "remediation_steps": list(
+                                attempt.eval_result.feedback.remediation_steps
+                            ),
+                            "failed_criteria": list(attempt.eval_result.feedback.failed_criteria),
+                            "evidence": attempt.eval_result.feedback.evidence,
+                            "missing_behaviors": list(
+                                attempt.eval_result.feedback.missing_behaviors
+                            ),
                         },
                         "qa_results": [
                             {
-                                "gate": r.gate,
-                                "passed": r.passed,
-                                "output": r.output,
-                                "details": r.details,
-                                "retryable": r.retryable,
+                                "gate": qa.gate,
+                                "passed": qa.passed,
+                                "output": qa.output,
+                                "details": qa.details,
+                                "retryable": qa.retryable,
                             }
-                            for r in record.eval_result.qa_results
+                            for qa in attempt.eval_result.qa_results
                         ],
-                        "cost_usd": record.eval_result.cost_usd,
-                        "duration_seconds": record.eval_result.duration_seconds,
+                        "cost_usd": attempt.eval_result.cost_usd,
+                        "duration_seconds": attempt.eval_result.duration_seconds,
                     },
+                    "timestamp": attempt.timestamp,
                 }
-                for record in self.attempts
+                for attempt in self.attempts
             ],
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "total_cost_usd": self.total_cost_usd,
-            "_checkpoint_version": self.checkpoint_version,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TaskState":
-        spec = plan_from_dict({"goal": "", "tasks": [data["spec"]]}).tasks[0]
+    def from_dict(cls, data: dict[str, Any]) -> TaskState:
         attempts = []
-        for record in data.get("attempts", []):
-            feedback_data = record.get("eval_result", {}).get("feedback", {})
+        for attempt in data.get("attempts", []):
+            feedback_data = attempt.get("eval_result", {}).get("feedback", {})
             qa_results = [
                 QAResult(
-                    gate=item["gate"],
-                    passed=item["passed"],
-                    output=item.get("output", ""),
-                    details=item.get("details", {}),
-                    retryable=item.get("retryable", True),
+                    gate=qa.get("gate", ""),
+                    passed=qa.get("passed", False),
+                    output=qa.get("output", ""),
+                    details=qa.get("details", {}),
+                    retryable=qa.get("retryable", True),
                 )
-                for item in record.get("eval_result", {}).get("qa_results", [])
+                for qa in attempt.get("eval_result", {}).get("qa_results", [])
             ]
             attempts.append(
                 AttemptRecord(
-                    attempt=record["attempt"],
-                    timestamp=record.get("timestamp", ""),
+                    attempt=attempt.get("attempt", 0),
                     generator_output=GeneratorOutput(
-                        success=record.get("generator_output", {}).get("success", False),
-                        output=record.get("generator_output", {}).get("output", ""),
-                        diff=record.get("generator_output", {}).get("diff", ""),
-                        cost_usd=record.get("generator_output", {}).get("cost_usd", 0.0),
-                        duration_seconds=record.get("generator_output", {}).get(
+                        success=attempt.get("generator_output", {}).get("success", False),
+                        output=attempt.get("generator_output", {}).get("output", ""),
+                        diff=attempt.get("generator_output", {}).get("diff", ""),
+                        cost_usd=attempt.get("generator_output", {}).get("cost_usd", 0.0),
+                        duration_seconds=attempt.get("generator_output", {}).get(
                             "duration_seconds", 0.0
                         ),
-                        event_count=record.get("generator_output", {}).get("event_count", 0),
-                        last_tool=record.get("generator_output", {}).get("last_tool", ""),
+                        event_count=attempt.get("generator_output", {}).get("event_count", 0),
+                        last_tool=attempt.get("generator_output", {}).get("last_tool", ""),
                     ),
                     eval_result=EvalResult(
-                        score=record.get("eval_result", {}).get("score", 0),
-                        passed=record.get("eval_result", {}).get("passed", False),
-                        retryable=record.get("eval_result", {}).get("retryable", True),
+                        score=attempt.get("eval_result", {}).get("score", 0),
+                        passed=attempt.get("eval_result", {}).get("passed", False),
+                        retryable=attempt.get("eval_result", {}).get("retryable", True),
                         feedback=EvalFeedback(
                             summary=feedback_data.get("summary", ""),
                             specific_errors=feedback_data.get("specific_errors", []),
@@ -527,24 +460,27 @@ class TaskState:
                             missing_behaviors=feedback_data.get("missing_behaviors", []),
                         ),
                         qa_results=qa_results,
-                        cost_usd=record.get("eval_result", {}).get("cost_usd", 0.0),
-                        duration_seconds=record.get("eval_result", {}).get("duration_seconds", 0.0),
+                        cost_usd=attempt.get("eval_result", {}).get("cost_usd", 0.0),
+                        duration_seconds=attempt.get("eval_result", {}).get(
+                            "duration_seconds", 0.0
+                        ),
                     ),
+                    timestamp=attempt.get("timestamp", ""),
                 )
             )
+
         return cls(
-            spec=spec,
-            status=TaskStatus(data.get("status", "pending")),
+            spec=_task_spec_from_dict(data.get("spec", {})),
+            status=TaskStatus(data.get("status", TaskStatus.PENDING.value)),
             phase=data.get("phase", "pending"),
             attempts=attempts,
             started_at=data.get("started_at", ""),
             completed_at=data.get("completed_at", ""),
             total_cost_usd=data.get("total_cost_usd", 0.0),
-            checkpoint_version=data.get("_checkpoint_version", 2),
         )
 
     @classmethod
-    def from_task(cls, task: TaskSpec) -> "TaskState":
+    def from_task(cls, task: TaskSpec) -> TaskState:
         if task.status == TaskStatus.IN_PROGRESS:
             phase = "generating"
         elif task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.SKIPPED):
@@ -620,6 +556,84 @@ def coerce_execution_result(
         duration_seconds=duration_seconds or 0.0,
         total_cost_usd=total_cost,
         session_id=session_id or "",
+    )
+
+
+def _task_spec_to_dict(task: TaskSpec) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "module": task.module,
+        "description": task.description,
+        "generator_prompt": task.generator_prompt,
+        "acceptance_criteria": task.acceptance_criteria,
+        "evaluator_prompt": task.evaluator_prompt,
+        "prompt": task.prompt or task.generator_prompt,
+        "depends_on": list(task.depends_on),
+        "priority": task.priority,
+        "qa_checks": [{"gate": q.gate, "params": q.params} for q in task.qa_checks],
+        "status": task.status.value,
+        "result": task.result,
+        "qa_results": [
+            {
+                "gate": r.gate,
+                "passed": r.passed,
+                "output": r.output,
+                "details": r.details,
+                "retryable": r.retryable,
+            }
+            for r in task.qa_results
+        ],
+        "retries": task.retries,
+        "feedback_history": list(task.feedback_history),
+        "started_at": task.started_at,
+        "completed_at": task.completed_at,
+        "skip_qa": task.skip_qa,
+        "skip_gates": list(task.skip_gates),
+        "timeout_seconds": task.timeout_seconds,
+        "stall_seconds": task.stall_seconds,
+        "cost_usd": task.cost_usd,
+    }
+
+
+def _task_spec_from_dict(data: dict[str, Any]) -> TaskSpec:
+    qa_checks = [
+        QACheck(gate=c.get("gate", ""), params=c.get("params", {}))
+        for c in data.get("qa_checks", [])
+    ]
+    qa_results = [
+        QAResult(
+            gate=r.get("gate", ""),
+            passed=r.get("passed", False),
+            output=r.get("output", ""),
+            details=r.get("details", {}),
+            retryable=r.get("retryable", True),
+        )
+        for r in data.get("qa_results", [])
+    ]
+    generator_prompt = data.get("generator_prompt", data.get("prompt", ""))
+    return TaskSpec(
+        id=data["id"],
+        module=data["module"],
+        description=data["description"],
+        generator_prompt=generator_prompt,
+        acceptance_criteria=data.get("acceptance_criteria", []),
+        evaluator_prompt=data.get("evaluator_prompt", ""),
+        prompt=data.get("prompt", generator_prompt),
+        depends_on=data.get("depends_on", []),
+        priority=data.get("priority", 0),
+        qa_checks=qa_checks,
+        status=TaskStatus(data.get("status", TaskStatus.PENDING.value)),
+        result=data.get("result", ""),
+        qa_results=qa_results,
+        retries=data.get("retries", 0),
+        feedback_history=data.get("feedback_history", []),
+        started_at=data.get("started_at"),
+        completed_at=data.get("completed_at"),
+        skip_qa=data.get("skip_qa", False),
+        skip_gates=data.get("skip_gates", []),
+        timeout_seconds=data.get("timeout_seconds"),
+        stall_seconds=data.get("stall_seconds"),
+        cost_usd=data.get("cost_usd", 0.0),
     )
 
 

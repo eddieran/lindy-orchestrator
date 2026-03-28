@@ -122,6 +122,16 @@ class TestRenderPlanPrompt:
         assert "### backend" in result
         assert "### infra" in result
 
+    def test_enriched_task_fields_are_documented(self):
+        result = render_plan_prompt(
+            goal="Goal",
+            module_summaries={"x": "y"},
+        )
+        assert '"generator_prompt"' in result
+        assert '"acceptance_criteria"' in result
+        assert '"evaluator_prompt"' in result
+        assert "Every task MUST include all three fields below" in result
+
 
 class TestRenderReportPrompt:
     def test_basic_render(self):
