@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
+from .generator_runner import GeneratorRunner
 from .scheduler_helpers import (
     _autofill_ci_params,
     _check_delivery,
-    build_prompt,
     extract_event_info,
     prepare_qa_checks,
 )
@@ -478,37 +478,6 @@ def _execute_single_task_inner(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_working_dir(
-    task: TaskSpec,
-    config: OrchestratorConfig,
-    worktree_path: Path | None,
-) -> tuple[Path, Path]:
-    """Resolve working_dir and module_dir (fixed for all retries)."""
-    if worktree_path:
-        working_dir = worktree_path
-        if task.module in ("root", "*"):
-            module_dir = worktree_path
-        else:
-            mod = config.get_module(task.module)
-            module_dir = (worktree_path / mod.path).resolve()
-    else:
-        working_dir = config.root.resolve()
-        module_dir = config.module_path(task.module)
-    return working_dir, module_dir
-
-
-def _prepare_task_prompt(
-    task: TaskSpec,
-    config: OrchestratorConfig,
-    branch_name: str,
-    worktree_path: Path | None,
-    dispatches: int,
-    progress: Callable[[str], None],
-) -> None:
-    """Build the full task prompt via build_prompt()."""
-    task.prompt = build_prompt(task, config, branch_name, worktree_path, dispatches, progress)
-
-
 def _log_dispatch(logger: ActionLogger, task: TaskSpec, result: object) -> None:
     """Log dispatch result to action logger."""
     logger.log_dispatch(
@@ -787,27 +756,27 @@ def _dispatch_loop(
 ) -> int:
     """Inner dispatch loop with retry logic. Extracted for worktree cleanup."""
     dispatches = 0
-    original_prompt = task.prompt
-    working_dir, module_dir = _resolve_working_dir(task, config, worktree_path)
+    runner = GeneratorRunner(config)
+    original_prompt = runner.generator_prompt(task)
+    _, module_dir = runner.resolve_working_dir(task, worktree_path)
 
     lc = config.lifecycle_hooks
     hook_cwd = worktree_path or config.root
-    provider = create_provider(config.dispatcher)
 
     while True:
         progress(f"    Dispatching to [bold]{task.module}[/] agent...")
 
         hb = _HeartbeatTracker(task.id, task.module, progress, detail, hooks)
-        _prepare_task_prompt(task, config, branch_name, worktree_path, dispatches, progress)
 
         if lc.before_run:
             _run_lifecycle_hook("before_run", lc.before_run, hook_cwd, progress, lc.timeout)
-        result = provider.dispatch(
-            module=task.module,
-            working_dir=working_dir,
-            prompt=task.prompt,
+        result, module_dir = runner.dispatch(
+            task=task,
+            branch_name=branch_name,
+            worktree_path=worktree_path,
+            dispatches=dispatches,
+            progress=progress,
             on_event=hb.on_event,
-            stall_seconds=task.stall_seconds,
         )
         dispatches += 1
         task.result = result.output
