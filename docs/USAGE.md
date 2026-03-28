@@ -42,14 +42,15 @@
 
 ```bash
 # 使用 uv（推荐）
-uv pip install lindy-orchestrator
-uv pip install -e ".[dev]"               # 从源码安装
+uvx lindy-orchestrate --version          # 直接运行，无需安装
+# 或从源码：
+git clone https://github.com/eddieran/lindy-orchestrator.git && cd lindy-orchestrator
+uv sync --extra dev                      # 创建 .venv + 安装依赖
+uv run lindy-orchestrate --version
 
 # 使用 pip
 pip install lindy-orchestrator
 pip install -e ".[dev]"                  # 从源码安装
-
-# 验证安装
 lindy-orchestrate --version
 ```
 

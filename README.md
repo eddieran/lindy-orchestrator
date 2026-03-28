@@ -16,12 +16,16 @@ The orchestrator owns dependency ordering, worktree isolation, retries, QA gates
 
 ```bash
 # With uv (recommended)
-uv pip install lindy-orchestrator
-uv pip install -e ".[dev]"            # from source
+uvx lindy-orchestrate --version       # run directly, no install needed
+# Or from source:
+git clone https://github.com/eddieran/lindy-orchestrator.git && cd lindy-orchestrator
+uv sync --extra dev                   # creates .venv + installs everything
+uv run lindy-orchestrate --version    # run via uv
 
 # With pip
 pip install lindy-orchestrator
-pip install -e ".[dev]"               # from source
+# Or from source:
+pip install -e ".[dev]"
 ```
 
 Requirements:
