@@ -1,146 +1,132 @@
-"""Role-aware generator dispatch and prompt construction."""
+"""Generator role runner."""
 
 from __future__ import annotations
 
-import logging
+import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-from .config import OrchestratorConfig
-from .models import DispatchResult, TaskSpec
+from .config import GeneratorConfig, OrchestratorConfig
+from .models import EvalFeedback, GeneratorOutput, TaskSpec
 from .providers import create_provider
 
-log = logging.getLogger(__name__)
+
+def _read_if_exists(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 class GeneratorRunner:
-    """Owns generator-visible prompt assembly and dispatch execution."""
+    """Execute the generator role for a task."""
 
-    def __init__(self, config: OrchestratorConfig):
+    def __init__(self, config: GeneratorConfig, project_config: OrchestratorConfig) -> None:
         self.config = config
-        self.provider = create_provider(config.dispatcher)
+        self.project_config = project_config
 
-    def generator_prompt(self, task: TaskSpec) -> str:
-        return task.generator_prompt or task.prompt
-
-    def resolve_working_dir(
+    def _build_prompt(
         self,
         task: TaskSpec,
-        worktree_path: Path | None,
-    ) -> tuple[Path, Path]:
-        """Resolve working_dir and module_dir for generator dispatch."""
-        if worktree_path:
-            working_dir = worktree_path
-            if task.module in ("root", "*"):
-                module_dir = worktree_path
-            else:
-                mod = self.config.get_module(task.module)
-                module_dir = (worktree_path / mod.path).resolve()
-            return working_dir, module_dir
-
-        return self.config.root.resolve(), self.config.module_path(task.module)
-
-    def build_prompt(
-        self,
-        task: TaskSpec,
+        worktree: Path,
         branch_name: str,
-        worktree_path: Path | None,
-        dispatches: int,
-        progress: Callable[[str], None],
+        feedback: EvalFeedback | None,
     ) -> str:
-        """Build the generator-visible prompt for the current dispatch."""
-        if dispatches != 0:
-            return task.prompt
+        provider_dir = "codex" if self.config.provider == "codex_cli" else "claude"
+        orch_dir = self.project_config.root / ".orchestrator"
+        root_instructions = _read_if_exists(orch_dir / provider_dir / "root.md")
+        module_instructions = _read_if_exists(orch_dir / provider_dir / f"{task.module}.md")
+        status_text = _read_if_exists(orch_dir / "status" / f"{task.module}.md")
 
-        status_content = self._status_section(task, progress)
-        instructions = self._instructions_section(task, progress)
-        branch_instructions = self._branch_section(branch_name, worktree_path)
-        parts = [
-            part
-            for part in [
-                status_content,
-                instructions,
-                self.generator_prompt(task),
-                branch_instructions,
-            ]
-            if part
-        ]
-        return "\n\n".join(parts)
+        parts = [self.config.prompt_prefix.strip()]
+        if root_instructions or module_instructions:
+            header = "CODEX.md" if provider_dir == "codex" else "CLAUDE.md"
+            parts.append(
+                f"## {header} Instructions\n\n"
+                + "\n\n".join(p for p in [root_instructions, module_instructions] if p)
+            )
+        if status_text:
+            parts.append(f"## Current STATUS.md\n\n{status_text}")
 
-    def dispatch(
+        generator_prompt = task.generator_prompt or task.prompt or task.description
+        parts.append(generator_prompt)
+        parts.append(
+            "## Branch Delivery\n\n"
+            f"You are already on branch `{branch_name}` in `{worktree}`.\n"
+            "Do not switch branches. Commit and push your work to this branch when done."
+        )
+
+        if feedback is not None:
+            feedback_parts = [feedback.summary]
+            if feedback.failed_criteria:
+                feedback_parts.append(
+                    "Failed criteria:\n"
+                    + "\n".join(f"- {item}" for item in feedback.failed_criteria)
+                )
+            if feedback.specific_errors:
+                feedback_parts.append(
+                    "Specific errors:\n"
+                    + "\n".join(f"- {item}" for item in feedback.specific_errors)
+                )
+            if feedback.files_to_check:
+                feedback_parts.append(
+                    "Files to check:\n" + "\n".join(f"- {item}" for item in feedback.files_to_check)
+                )
+            if feedback.remediation_steps:
+                feedback_parts.append(
+                    "Remediation steps:\n"
+                    + "\n".join(f"- {item}" for item in feedback.remediation_steps)
+                )
+            if feedback.missing_behaviors:
+                feedback_parts.append(
+                    "Missing behaviors:\n"
+                    + "\n".join(f"- {item}" for item in feedback.missing_behaviors)
+                )
+            if feedback.evidence:
+                feedback_parts.append(f"Evidence:\n{feedback.evidence}")
+            parts.append("## Retry Feedback\n\n" + "\n\n".join(p for p in feedback_parts if p))
+
+        return "\n\n".join(part for part in parts if part)
+
+    def execute(
         self,
         task: TaskSpec,
+        worktree: Path,
         branch_name: str,
-        worktree_path: Path | None,
-        dispatches: int,
-        progress: Callable[[str], None],
-        on_event: Callable[[dict], None],
-    ) -> tuple[DispatchResult, Path]:
-        """Dispatch the generator task and return the module directory."""
-        task.prompt = self.build_prompt(task, branch_name, worktree_path, dispatches, progress)
-        working_dir, module_dir = self.resolve_working_dir(task, worktree_path)
-        result = self.provider.dispatch(
+        feedback: EvalFeedback | None = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> GeneratorOutput:
+        prompt = self._build_prompt(task, worktree, branch_name, feedback)
+        provider = create_provider(self.config)
+        result = provider.dispatch(
             module=task.module,
-            working_dir=working_dir,
-            prompt=task.prompt,
+            working_dir=worktree,
+            prompt=prompt,
             on_event=on_event,
-            stall_seconds=task.stall_seconds,
+            stall_seconds=task.stall_seconds or self.config.stall_timeout,
         )
-        return result, module_dir
 
-    def _status_section(self, task: TaskSpec, progress: Callable[[str], None]) -> str:
-        path = self.config.status_path(task.module)
-        if not path.exists():
-            return ""
+        diff = ""
         try:
-            progress(f"    [dim]Injected STATUS.md for {task.module}[/]")
-            return f"## Current STATUS.md\n\n{path.read_text()}"
-        except Exception:
-            log.warning("Failed to read %s", path, exc_info=True)
-            return ""
-
-    def _instructions_section(self, task: TaskSpec, progress: Callable[[str], None]) -> str:
-        provider = self.config.generator.resolved_provider(self.config.dispatcher.provider)
-        provider_dir = "codex" if provider == "codex_cli" else "claude"
-        header = "CODEX.md" if provider_dir == "codex" else "CLAUDE.md"
-        orch_base = self.config.root / ".orchestrator"
-        primary = orch_base / provider_dir
-        fallback = orch_base / "claude" if provider_dir != "claude" else None
-
-        sections: list[str] = []
-        for name in ("root.md", f"{task.module}.md"):
-            path = primary / name
-            if not path.exists() and fallback:
-                path = fallback / name
-            if path.exists():
-                try:
-                    sections.append(path.read_text())
-                except Exception:
-                    log.warning("Failed to read %s", path, exc_info=True)
-        if not sections:
-            return ""
-
-        progress("    [dim]Injected agent instructions[/]")
-        return f"## {header} Instructions\n\n" + "\n\n".join(sections)
-
-    def _branch_section(self, branch_name: str, worktree_path: Path | None) -> str:
-        if worktree_path:
-            return (
-                "## IMPORTANT: Branch delivery requirements\n\n"
-                f"You are already on branch `{branch_name}` (worktree isolation).\n"
-                "Do NOT switch branches or run `git checkout`.\n"
-                "When done:\n"
-                "1. `git add` and `git commit` your changes\n"
-                f"2. `git push -u origin {branch_name}` (push to remote)\n"
-                "Do NOT skip the push step."
+            proc = subprocess.run(
+                ["git", "diff", "HEAD"],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
-        return (
-            "## IMPORTANT: Branch delivery requirements\n\n"
-            f"You MUST deliver your work on branch `{branch_name}`.\n"
-            "Before starting work:\n"
-            f"1. `git checkout -b {branch_name}` (create the branch)\n"
-            "When done:\n"
-            "2. `git add` and `git commit` your changes\n"
-            f"3. `git push -u origin {branch_name}` (push to remote)\n"
-            "Do NOT skip the push step."
+            diff = proc.stdout
+        except Exception:
+            diff = ""
+
+        return GeneratorOutput(
+            success=result.success,
+            output=result.output,
+            diff=diff,
+            cost_usd=result.cost_usd,
+            duration_seconds=result.duration_seconds,
+            event_count=result.event_count,
+            last_tool=result.last_tool_use,
         )
