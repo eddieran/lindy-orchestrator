@@ -30,6 +30,8 @@ class EventType(str, Enum):
     STALL_WARNING = "stall_warning"
     STALL_KILLED = "stall_killed"
     TASK_HEARTBEAT = "task_heartbeat"
+    PHASE_CHANGED = "phase_changed"
+    EVAL_SCORED = "eval_scored"
     CHECKPOINT_SAVED = "checkpoint_saved"
     MAILBOX_MESSAGE = "mailbox_message"
     SESSION_START = "session_start"

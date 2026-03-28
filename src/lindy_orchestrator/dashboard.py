@@ -18,7 +18,7 @@ from rich.text import Text
 
 from .dag import STATUS_ICONS, render_dag
 from .hooks import Event, EventType, HookRegistry
-from .models import TaskPlan, TaskStatus
+from .models import ExecutionResult, TaskPlan, TaskState, TaskStatus, coerce_execution_result
 
 
 @dataclass
@@ -29,6 +29,9 @@ class _TaskDetail:
     reasoning: str = ""
     event_count: int = 0
     started_at: float = 0.0
+    phase: str = "pending"
+    attempt: int = 0
+    last_score: int | None = None
 
     def add_tool(self, name: str) -> None:
         self.tool_trail.append(name)
@@ -52,12 +55,14 @@ class Dashboard:
 
     def __init__(
         self,
-        plan: TaskPlan,
+        plan: TaskPlan | ExecutionResult | list[TaskState],
         hooks: HookRegistry,
         console: Console | None = None,
         verbose: bool = False,
+        goal: str | None = None,
     ) -> None:
-        self._plan = plan
+        self._pipeline_mode = not isinstance(plan, TaskPlan)
+        self._execution = coerce_execution_result(plan, goal=goal)
         self._hooks = hooks
         self._console = console or Console()
         self._verbose = verbose
@@ -84,6 +89,8 @@ class Dashboard:
         self._hooks.on(EventType.TASK_HEARTBEAT, self._on_heartbeat)
         self._hooks.on(EventType.QA_PASSED, self._on_qa_event)
         self._hooks.on(EventType.QA_FAILED, self._on_qa_event)
+        self._hooks.on(EventType.PHASE_CHANGED, self._on_phase_changed)
+        self._hooks.on(EventType.EVAL_SCORED, self._on_eval_scored)
         self._hooks.on(EventType.CHECKPOINT_SAVED, self._on_generic)
         self._hooks.on(EventType.STALL_WARNING, self._on_generic)
 
@@ -115,14 +122,31 @@ class Dashboard:
     def _on_task_started(self, event: Event) -> None:
         with self._lock:
             if event.task_id is not None:
-                self._annotations[event.task_id] = "starting\u2026"
-                self._task_details[event.task_id] = _TaskDetail(started_at=time.monotonic())
+                detail = self._task_details.get(event.task_id) or _TaskDetail()
+                detail.started_at = time.monotonic()
+                detail.phase = detail.phase if detail.phase != "pending" else "generating"
+                if detail.attempt <= 0:
+                    detail.attempt = self._attempt_for(event.task_id)
+                self._task_details[event.task_id] = detail
+                if self._pipeline_mode:
+                    self._annotations[event.task_id] = (
+                        self._pipeline_annotation(detail) or "starting\u2026"
+                    )
+                else:
+                    self._annotations[event.task_id] = "starting\u2026"
         self._refresh()
 
     def _on_task_completed(self, event: Event) -> None:
         with self._lock:
             if event.task_id is not None:
-                self._annotations[event.task_id] = "done"
+                detail = self._task_details.get(event.task_id)
+                if detail and detail.last_score is not None:
+                    self._annotations[event.task_id] = f"({detail.last_score}/100)"
+                else:
+                    last_score = self._last_score_for(event.task_id)
+                    self._annotations[event.task_id] = (
+                        f"({last_score}/100)" if last_score is not None else "done"
+                    )
         self._refresh()
 
     def _on_task_failed(self, event: Event) -> None:
@@ -149,8 +173,6 @@ class Dashboard:
         with self._lock:
             if event.task_id is not None:
                 tool = event.data.get("tool", "")
-                if tool:
-                    self._annotations[event.task_id] = f"tool: {tool}"
                 detail = self._task_details.get(event.task_id)
                 if detail:
                     if tool:
@@ -159,6 +181,13 @@ class Dashboard:
                     reasoning = event.data.get("reasoning", "")
                     if reasoning:
                         detail.set_reasoning(reasoning)
+                    detail.phase = event.data.get("phase", detail.phase)
+                    detail.attempt = event.data.get("attempt", detail.attempt)
+                annotation = self._pipeline_annotation(detail) if self._pipeline_mode else ""
+                if annotation:
+                    self._annotations[event.task_id] = annotation
+                elif tool:
+                    self._annotations[event.task_id] = f"tool: {tool}"
         self._refresh()
 
     def _on_qa_event(self, event: Event) -> None:
@@ -169,6 +198,39 @@ class Dashboard:
                 self._annotations[event.task_id] = (
                     f"QA {gate}: pass" if passed else f"QA {gate}: fail"
                 )
+        self._refresh()
+
+    def _on_phase_changed(self, event: Event) -> None:
+        with self._lock:
+            if event.task_id is not None:
+                detail = self._task_details.get(event.task_id) or _TaskDetail(
+                    started_at=time.monotonic()
+                )
+                detail.phase = event.data.get("phase", detail.phase)
+                detail.attempt = event.data.get(
+                    "attempt", detail.attempt or self._attempt_for(event.task_id)
+                )
+                self._task_details[event.task_id] = detail
+                annotation = self._pipeline_annotation(detail)
+                if annotation:
+                    self._annotations[event.task_id] = annotation
+        self._refresh()
+
+    def _on_eval_scored(self, event: Event) -> None:
+        with self._lock:
+            if event.task_id is not None:
+                detail = self._task_details.get(event.task_id) or _TaskDetail(
+                    started_at=time.monotonic()
+                )
+                detail.phase = "evaluating"
+                detail.attempt = event.data.get(
+                    "attempt", detail.attempt or self._attempt_for(event.task_id)
+                )
+                detail.last_score = event.data.get("score")
+                self._task_details[event.task_id] = detail
+                annotation = self._pipeline_annotation(detail)
+                if annotation:
+                    self._annotations[event.task_id] = annotation
         self._refresh()
 
     def _on_generic(self, event: Event) -> None:
@@ -187,7 +249,7 @@ class Dashboard:
             task_details = dict(self._task_details)
 
         dag_text = render_dag(
-            self._plan,
+            self._execution,
             annotations=annotations if self._verbose else None,
             verbose=self._verbose,
         )
@@ -202,8 +264,8 @@ class Dashboard:
                 parts.append(detail_section)
 
         title = "Execution Complete" if final else "Executing"
-        border = "green" if final and not self._plan.has_failures() else "cyan"
-        if final and self._plan.has_failures():
+        border = "green" if final and not self._has_failures() else "cyan"
+        if final and self._has_failures():
             border = "red"
 
         return Panel(
@@ -214,7 +276,7 @@ class Dashboard:
 
     def _build_detail_section(self, task_details: dict[int, _TaskDetail]) -> Text | None:
         """Build a per-task detail section for running tasks."""
-        running = [t for t in self._plan.tasks if t.status == TaskStatus.IN_PROGRESS]
+        running = [t for t in self._execution.states if t.status == TaskStatus.IN_PROGRESS]
         if not running:
             return None
 
@@ -234,6 +296,10 @@ class Dashboard:
             text.append(f"  {STATUS_ICONS[TaskStatus.IN_PROGRESS]} ", style="bold blue")
             text.append(f"task-{task.id}", style="bold")
             text.append(f" [{elapsed_str}] ", style="cyan")
+            annotation = self._pipeline_annotation(detail)
+            if annotation:
+                text.append(annotation, style="bold blue")
+                text.append(" ", style="dim")
 
             if detail.tool_trail:
                 trail = " \u2192 ".join(detail.tool_trail)
@@ -253,7 +319,7 @@ class Dashboard:
 
     def _build_summary(self) -> Text:
         """Build the summary bar with task counts and elapsed time."""
-        counts = _count_statuses(self._plan)
+        counts = _count_statuses(self._execution)
         elapsed = time.monotonic() - self._start_time
         mins, secs = divmod(int(elapsed), 60)
 
@@ -274,12 +340,49 @@ class Dashboard:
             text.append("  ", style="dim")
             text.append(f"{STATUS_ICONS[TaskStatus.SKIPPED]}", style="dim")
             text.append(f" {counts['skipped']} skipped", style="dim")
+        total_cost = self._execution.total_cost_usd or sum(
+            state.cost_usd for state in self._execution.states
+        )
+        if total_cost > 0:
+            text.append("  ", style="dim")
+            text.append(f"${total_cost:.2f}", style="bold magenta")
         text.append(f"  {mins}:{secs:02d}", style="bold cyan")
         return text
 
+    def _attempt_for(self, task_id: int) -> int:
+        state = next((state for state in self._execution.states if state.id == task_id), None)
+        if state is None:
+            return 1
+        return len(state.attempts) + (1 if state.status == TaskStatus.IN_PROGRESS else 0) or 1
 
-def _count_statuses(plan: TaskPlan) -> dict[str, int]:
+    def _last_score_for(self, task_id: int) -> int | None:
+        state = next((state for state in self._execution.states if state.id == task_id), None)
+        if state and state.attempts:
+            return state.attempts[-1].eval_result.score
+        return None
+
+    @staticmethod
+    def _pipeline_annotation(detail: _TaskDetail | None) -> str:
+        if detail is None:
+            return ""
+        phase = detail.phase.lower()
+        if phase.startswith("generat"):
+            attempt = detail.attempt or 1
+            return f"[Generate -> att. {attempt}]"
+        if phase.startswith("evaluat"):
+            if detail.last_score is not None:
+                return f"[Evaluate -> {detail.last_score}/100]"
+            attempt = detail.attempt or 1
+            return f"[Evaluate -> att. {attempt}]"
+        return ""
+
+    def _has_failures(self) -> bool:
+        return any(state.status == TaskStatus.FAILED for state in self._execution.states)
+
+
+def _count_statuses(plan: TaskPlan | ExecutionResult | list[TaskState]) -> dict[str, int]:
     """Count tasks in each status."""
+    execution = coerce_execution_result(plan)
     counts = {
         "completed": 0,
         "failed": 0,
@@ -287,6 +390,6 @@ def _count_statuses(plan: TaskPlan) -> dict[str, int]:
         "pending": 0,
         "skipped": 0,
     }
-    for t in plan.tasks:
+    for t in execution.states:
         counts[t.status.value] = counts.get(t.status.value, 0) + 1
     return counts
