@@ -189,7 +189,16 @@ class TestE2ERun:
     def test_run_with_failures(self, mock_plan, mock_exec, mock_cli, cfg_path):
         """When some tasks fail, report shows PAUSED."""
 
-        def exec_with_failure(plan, cfg, logger, on_progress=None, verbose=False, hooks=None):
+        def exec_with_failure(
+            plan,
+            cfg,
+            logger,
+            on_progress=None,
+            verbose=False,
+            hooks=None,
+            session_mgr=None,
+            session=None,
+        ):
             plan.tasks[0].status = TaskStatus.COMPLETED
             plan.tasks[1].status = TaskStatus.FAILED
             plan.tasks[1].result = "error occurred"
@@ -254,7 +263,16 @@ class TestE2ERun:
     def test_run_failure_report_shows_task_details(self, mock_plan, mock_exec, mock_cli, cfg_path):
         """When tasks fail, execution summary shows FAIL status and retry count."""
 
-        def exec_with_retries(plan, cfg, logger, on_progress=None, verbose=False, hooks=None):
+        def exec_with_retries(
+            plan,
+            cfg,
+            logger,
+            on_progress=None,
+            verbose=False,
+            hooks=None,
+            session_mgr=None,
+            session=None,
+        ):
             plan.tasks[0].status = TaskStatus.COMPLETED
             plan.tasks[0].result = "done"
             plan.tasks[1].status = TaskStatus.FAILED

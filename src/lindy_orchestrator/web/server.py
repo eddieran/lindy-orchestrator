@@ -7,7 +7,7 @@ import logging
 import queue
 import re
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from ..command_queue import CommandQueue
@@ -596,7 +596,7 @@ class WebDashboard:
         self._metrics_collector = metrics_collector
         self._command_queue = command_queue
         self._port = port
-        self._server: HTTPServer | None = None
+        self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     @property
@@ -608,7 +608,8 @@ class WebDashboard:
         return f"http://localhost:{self._port}"
 
     def start(self) -> None:
-        server = HTTPServer(("127.0.0.1", self._port), _Handler)
+        """Start the HTTP server in a daemon thread and subscribe to hooks."""
+        server = ThreadingHTTPServer(("127.0.0.1", self._port), _Handler)
         server.execution = self._execution  # type: ignore[attr-defined]
         server.command_queue = self._command_queue  # type: ignore[attr-defined]
         server.event_queues = []  # type: ignore[attr-defined]

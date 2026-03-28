@@ -192,11 +192,27 @@ def run(
             dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
             dashboard.start()
             # Dashboard takes over display; suppress on_progress text output
-            plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
+            plan = execute_plan(
+                plan,
+                cfg,
+                logger,
+                on_progress=None,
+                verbose=False,
+                hooks=hooks,
+                session_mgr=sessions,
+                session=session,
+            )
             dashboard.stop()
         else:
             plan = execute_plan(
-                plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+                plan,
+                cfg,
+                logger,
+                on_progress=on_progress,
+                verbose=verbose,
+                hooks=hooks,
+                session_mgr=sessions,
+                session=session,
             )
     finally:
         if web_dashboard is not None:
@@ -372,11 +388,27 @@ def resume(
         if console.is_terminal:
             dashboard = Dashboard(plan, hooks, console=console, verbose=verbose)
             dashboard.start()
-            plan = execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=hooks)
+            plan = execute_plan(
+                plan,
+                cfg,
+                logger,
+                on_progress=None,
+                verbose=False,
+                hooks=hooks,
+                session_mgr=sessions,
+                session=session,
+            )
             dashboard.stop()
         else:
             plan = execute_plan(
-                plan, cfg, logger, on_progress=on_progress, verbose=verbose, hooks=hooks
+                plan,
+                cfg,
+                logger,
+                on_progress=on_progress,
+                verbose=verbose,
+                hooks=hooks,
+                session_mgr=sessions,
+                session=session,
             )
     finally:
         if web_dashboard is not None:
