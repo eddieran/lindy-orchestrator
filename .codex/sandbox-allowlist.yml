@@ -1,0 +1,9 @@
+# Network domains required for Symphony orchestration
+# These are needed for git operations, PR management, and issue tracking.
+allow:
+  - github.com
+  - api.github.com
+  - ssh.github.com
+  - api.linear.app
+  - pypi.org
+  - files.pythonhosted.org
