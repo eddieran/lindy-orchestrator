@@ -15,14 +15,19 @@ The orchestrator owns dependency ordering, worktree isolation, retries, QA gates
 ## Install
 
 ```bash
+# With uv (recommended)
+uv pip install lindy-orchestrator
+uv pip install -e ".[dev]"            # from source
+
+# With pip
 pip install lindy-orchestrator
-pip install -e ".[dev]"
+pip install -e ".[dev]"               # from source
 ```
 
 Requirements:
 
 - Python 3.11+
-- `claude` or `codex` in `PATH`
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) or [Codex CLI](https://github.com/openai/codex) in `PATH`
 
 ## Quick Start
 
@@ -45,11 +50,13 @@ The intended flow is:
 
 Key runtime pieces:
 
-- `planner_runner.py`
-- `orchestrator.py`
-- `providers/claude_cli.py`
-- `providers/codex_cli.py`
-- `qa/`
+- `planner_runner.py` ... goal decomposition into TaskSpec DAG
+- `generator_runner.py` ... role-aware code dispatch with context isolation
+- `evaluator_runner.py` ... QA gates + agent scoring (0-100 rubric)
+- `orchestrator.py` ... pipeline coordinator with retry loop
+- `command_queue.py` ... interactive controls (pause/skip/force-pass)
+- `providers/` ... claude_cli and codex_cli dispatch backends
+- `qa/` ... pluggable QA gates (ci_check, command_check, structural_check, agent_check)
 
 ## Configuration
 

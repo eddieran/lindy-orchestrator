@@ -1,4 +1,4 @@
-# lindy-orchestrator v0.8.0 使用指南
+# lindy-orchestrator v0.15.0 使用指南
 
 > 轻量级、git 原生的多 Agent 编排框架。
 > 辅助功能文档参见 [USAGE_helpers.md](USAGE_helpers.md)。
@@ -23,7 +23,7 @@
 7. [目标描述最佳实践](#目标描述最佳实践)
 8. [项目结构示例](#项目结构示例)
 
-辅助功能：gc、scan、mailbox、issues、run-issue、DAG 仪表盘、Hook 事件系统、QA 门禁、Dispatch 模式、执行报告、会话管理、常见问题排查 → 参见 [USAGE_helpers.md](USAGE_helpers.md)
+辅助功能：gc、scan、DAG 仪表盘、Hook 事件系统、QA 门禁、执行报告、会话管理、常见问题排查 → 参见 [USAGE_helpers.md](USAGE_helpers.md)
 
 ---
 
@@ -34,16 +34,23 @@
 - 至少安装以下一种 Agent CLI：
   - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)（默认 provider）
   - [Codex CLI](https://github.com/openai/codex)（可选 provider）
-- GitHub CLI (`gh`)（如使用 tracker 集成或 CI check QA 门禁）
+- GitHub CLI (`gh`)（如使用 CI check QA 门禁）
 
 ---
 
 ## 安装
 
 ```bash
-pip install lindy-orchestrator            # 基础安装
-pip install lindy-orchestrator[api]       # 含 Anthropic API 模式
-lindy-orchestrate --version              # 验证安装
+# 使用 uv（推荐）
+uv pip install lindy-orchestrator
+uv pip install -e ".[dev]"               # 从源码安装
+
+# 使用 pip
+pip install lindy-orchestrator
+pip install -e ".[dev]"                  # 从源码安装
+
+# 验证安装
+lindy-orchestrate --version
 ```
 
 ---
@@ -141,40 +148,40 @@ modules:
 
 # ─── 规划器 ───
 planner:
-  mode: cli                    # cli = claude -p | api = Anthropic SDK
-  model: claude-sonnet-4-20250514  # api 模式使用的模型
-  max_tokens: 4096             # 规划器最大输出 token
+  provider: claude_cli         # claude_cli（默认）或 codex_cli
   timeout_seconds: 120         # 规划器超时
-  # prompt_template: path/to/template.j2  # 自定义 Jinja2 模板
+  prompt: ""                   # 自定义规划 prompt（空 = 使用默认）
 
-# ─── 派发器 ───
-dispatcher:
+# ─── 生成器 ───
+generator:
   provider: claude_cli         # claude_cli（默认）或 codex_cli
   timeout_seconds: 1800        # 单任务硬超时（30 分钟）
-  stall_timeout_seconds: 600   # 向后兼容的 stall 超时
-  stall_escalation:            # 两阶段 stall 升级
-    warn_after_seconds: 300    # 300 秒无输出 → 警告事件
-    kill_after_seconds: 600    # 600 秒无输出 → 终止进程
+  stall_timeout: 600           # 600 秒无输出 → 终止进程
   permission_mode: bypassPermissions
   max_output_chars: 50000      # 输出截断阈值
+  prompt_prefix: ""            # 注入到每个生成器 prompt 前
+
+# ─── 评估器 ───
+evaluator:
+  provider: claude_cli         # claude_cli（默认）或 codex_cli
+  timeout_seconds: 300         # 评估器超时
+  pass_threshold: 80           # 低于此分数（0-100）触发重试
+  prompt_prefix: ""            # 注入到每个评估器 prompt 前
 
 # ─── QA 门禁 ───
 qa_gates:
   ci_check:                    # CI 检查参数
     timeout_seconds: 900
     poll_interval: 30
-  structural:                  # 结构化检查
+  structural_check:            # 结构化检查
     max_file_lines: 500
-    enforce_module_boundary: true
     sensitive_patterns: [".env", "*.key", "*.pem"]
-  layer_check:                 # 层级检查
-    enabled: true
-    unknown_file_policy: skip  # skip | warn
   custom:                      # 自定义 QA 门禁
     - name: backend-pytest
       command: "pytest --tb=short -q"
       cwd: "{module_path}"    # {module_path} 替换为模块路径
       timeout: 600
+      diff_only: false
       modules: []              # 空 = 所有模块
 
 # ─── 安全设置 ───
@@ -189,24 +196,11 @@ logging:
   session_dir: ".orchestrator/sessions"
   log_file: "actions.jsonl"
 
-# ─── 邮箱系统 ───
-mailbox:
-  enabled: true
-  dir: ".orchestrator/mailbox"
-  inject_on_dispatch: true     # 派发时自动注入待处理消息
-
-# ─── Tracker 集成 ───
-tracker:
-  enabled: false
-  provider: github             # github | linear
-  repo: ""
-  labels: [orchestrator]
-  sync_on_complete: true       # 完成时自动评论并关闭 issue
 ```
 
 **qa_gates 模块级快捷语法：** 支持按模块名分组的写法（如 `backend:` 列表），会被自动规范化为 `custom` 列表并添加 `modules` 字段。
 
-**stall_escalation 两阶段停滞升级：** Stage 1 警告（`warn_after_seconds`）→ Stage 2 终止（`kill_after_seconds`）。首次事件有宽限期（阈值翻倍，最低 300s/600s）。Bash 工具感知：最后工具为 Bash 时阈值增加 50%。
+**向后兼容：** 旧格式 YAML 使用 `dispatcher:` 而非 `generator:` 仍可正常加载，会输出弃用警告。
 
 ---
 
@@ -297,12 +291,12 @@ lindy-orchestrate status -n 20           # 指定日志条数
 | 选项 | 短选项 | 说明 |
 |------|--------|------|
 | `--config PATH` | `-c` | 指定配置文件路径 |
-| `--json` | — | JSON 输出（含 modules、logs、mailbox） |
+| `--json` | — | JSON 输出（含 modules、logs） |
 | `--last N` | `-n` | 最近 N 条日志，默认 10 |
 | `--logs-only` | — | 仅显示日志 |
 | `--status-only` | — | 仅显示状态表 |
 
-输出内容：模块健康度（GREEN/YELLOW/RED）、活跃任务数、待处理请求数、阻塞项数、邮箱汇总、最近日志。
+输出内容：模块健康度（GREEN/YELLOW/RED）、活跃任务数、待处理请求数、阻塞项数、最近日志。
 
 ### logs — 查看日志
 
@@ -346,7 +340,7 @@ lindy-orchestrate -V               # 短选项
 
 ## Provider 系统
 
-v0.8.0 引入了 provider 抽象层，支持多种 Agent CLI 后端。
+每个角色（planner/generator/evaluator）可独立配置不同的 provider，默认都是 `claude_cli`。
 
 | Provider | 值 | CLI 工具 | 说明 |
 |----------|----|----------|------|
@@ -356,21 +350,15 @@ v0.8.0 引入了 provider 抽象层，支持多种 Agent CLI 后端。
 配置方式：
 
 ```yaml
-dispatcher:
+generator:
   provider: claude_cli  # 或 codex_cli
+evaluator:
+  provider: codex_cli   # 可以用不同的 provider
 ```
 
 ```bash
 lindy-orchestrate run "Add tests" --provider codex_cli  # CLI 参数覆盖
 ```
-
-两种 provider 共享相同的 dispatch 抽象：流式/阻塞 dispatch、两阶段 stall 升级、输出截断保护。
-
-| 特性 | claude_cli | codex_cli |
-|------|-----------|-----------|
-| 流式命令 | `claude -p <prompt> --output-format stream-json --verbose` | `codex --prompt <prompt> --output-format stream-json` |
-| 阻塞命令 | `claude -p <prompt> --output-format json` | `codex --prompt <prompt> --output-format json` |
-| 权限参数 | `--permission-mode bypassPermissions` | `--approval-mode full-auto` |
 
 ---
 
@@ -405,7 +393,6 @@ my-app/
 ├── .orchestrator/
 │   ├── logs/actions.jsonl
 │   ├── sessions/
-│   ├── mailbox/
 │   ├── plans/
 │   └── reports/
 ├── pyproject.toml
@@ -428,7 +415,6 @@ my-platform/
 ├── .orchestrator/
 │   ├── logs/actions.jsonl
 │   ├── sessions/
-│   ├── mailbox/{module}.jsonl
 │   ├── plans/latest.json
 │   └── reports/{session_id}_summary.md
 ├── backend/
