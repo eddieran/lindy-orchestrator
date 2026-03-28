@@ -113,7 +113,16 @@ def mock_generate_plan(goal, cfg, on_progress=None, progress=None):
     return plan
 
 
-def mock_execute_plan(plan, cfg, logger, on_progress=None, verbose=False, hooks=None):
+def mock_execute_plan(
+    plan,
+    cfg,
+    logger,
+    on_progress=None,
+    verbose=False,
+    hooks=None,
+    session_mgr=None,
+    session=None,
+):
     """Mock scheduler.execute_plan — marks all pending tasks completed."""
     for t in plan.tasks:
         if t.status == TaskStatus.PENDING:

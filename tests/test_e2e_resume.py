@@ -153,7 +153,16 @@ class TestE2EResume:
         from lindy_orchestrator.models import plan_to_dict
         from lindy_orchestrator.session import SessionManager
 
-        def exec_still_fails(plan, cfg, logger, on_progress=None, verbose=False, hooks=None):
+        def exec_still_fails(
+            plan,
+            cfg,
+            logger,
+            on_progress=None,
+            verbose=False,
+            hooks=None,
+            session_mgr=None,
+            session=None,
+        ):
             for t in plan.tasks:
                 if t.status == TaskStatus.PENDING:
                     t.status = TaskStatus.FAILED
