@@ -7,6 +7,49 @@ status: pending
 
 ## T5: Generator Runner
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs:**
+- T1: `TaskSpec`, `GeneratorOutput`, `EvalFeedback` in `models.py`
+- T2: `GeneratorConfig` in `config.py` with fields: `provider`, `timeout_seconds`, `stall_timeout`, `permission_mode`, `max_output_chars`, `prompt_prefix`, and `to_role_provider_config()` method
+- T2b: `create_provider(RoleProviderConfig)` factory; dispatch_core simplified to single stall timeout
+
+**Key imports for this task:**
+```python
+from lindy_orchestrator.models import TaskSpec, GeneratorOutput, EvalFeedback, RoleProviderConfig
+from lindy_orchestrator.config import GeneratorConfig, OrchestratorConfig
+from lindy_orchestrator.providers import create_provider
+```
+
+**Provider API contract (from `providers/base.py`):**
+```python
+class DispatchProvider(Protocol):
+    def dispatch(self, module: str, working_dir: Path, prompt: str,
+                 on_event: Callable[[dict], None] | None = None,
+                 stall_seconds: int | None = None) -> DispatchResult: ...
+    def dispatch_simple(self, module: str, working_dir: Path, prompt: str) -> DispatchResult: ...
+```
+`DispatchResult` has: `success`, `output`, `exit_code`, `duration_seconds`, `cost_usd`, `event_count`, `last_tool_use`, `input_tokens`, `output_tokens`.
+
+**EvalFeedback vs StructuredFeedback:** `EvalFeedback` (from T1) is the NEW feedback model with `failed_criteria`, `evidence`, `missing_behaviors` fields. `StructuredFeedback` is the OLD model — do NOT use it. On retry, receive `EvalFeedback` and format its fields into the retry prompt section.
+
+**Diff collection:** Run `subprocess.run(["git", "diff", "HEAD"], cwd=worktree, capture_output=True, text=True)` — return stdout as the diff string. No truncation needed here (truncation happens in EvaluatorRunner when building eval prompt).
+
+**CLAUDE.md/CODEX.md selection:** Based on `self.config.provider`:
+- `"claude_cli"` → read from `.orchestrator/claude/root.md` and `.orchestrator/claude/{module}.md`
+- `"codex_cli"` → read from `.orchestrator/codex/root.md` and `.orchestrator/codex/{module}.md`
+Reference `gather_claude_md()` in `scheduler_helpers.py` (lines ~319-345) for the pattern, but use `self.config.provider` instead of `config.dispatcher.provider`.
+
 **ID:** 5
 **Depends on:** [2b]
 **Module:** `src/lindy_orchestrator/generator_runner.py` (new)

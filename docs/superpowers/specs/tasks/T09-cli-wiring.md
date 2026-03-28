@@ -7,6 +7,69 @@ status: pending
 
 ## T9: CLI Wiring + Non-Runtime Consumers
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs:**
+- T7: `Orchestrator` class in `orchestrator.py`:
+  ```python
+  class Orchestrator:
+      def __init__(self, config: OrchestratorConfig, hooks: HookRegistry | None = None,
+                   logger: ActionLogger | None = None, on_progress: Callable | None = None,
+                   verbose: bool = False, command_queue: CommandQueue | None = None): ...
+      def run(self, goal: str) -> ExecutionResult: ...
+      def resume(self, states: list[TaskState], plan: TaskPlan) -> ExecutionResult: ...
+  ```
+- T7: `CommandQueue` class (also in `orchestrator.py`)
+- T4: `PlannerRunner` in `planner_runner.py`:
+  ```python
+  class PlannerRunner:
+      def __init__(self, config: PlannerConfig, project_config: OrchestratorConfig): ...
+      def plan(self, goal: str) -> TaskPlan: ...
+  ```
+- T8: `WebDashboard` updated to accept `command_queue` parameter
+- T1: `TaskState` with `to_dict()`/`from_dict()`, `ExecutionResult`
+
+**CLI framework:** The project uses `click` (see `cli.py` imports). Commands are decorated with `@click.command()` and grouped with `@click.group()`.
+
+**Current run command pattern (in `cli.py`):**
+```python
+@cli.command()
+@click.argument("goal")
+@click.option("--web/--no-web", ...)
+def run(goal, web, ...):
+    config = load_config(config_path)
+    plan = generate_plan(goal, config, ...)
+    result = execute_plan(plan, config, logger, ...)
+```
+Replace `generate_plan()` + `execute_plan()` with `Orchestrator(config, ...).run(goal)`.
+
+**Session checkpoint format (from `session.py`):**
+```python
+class SessionManager:
+    def save(self, session_id, data: dict): ...  # writes to {session_dir}/{session_id}.json
+    def load(self, session_id) -> dict | None: ...
+    def load_latest(self) -> tuple[str, dict] | None: ...
+```
+For resume: load checkpoint → deserialize each task via `TaskState.from_dict()` → call `orchestrator.resume(states, plan)`.
+
+**YAML generation (discovery/generator.py):**
+Current code generates YAML with `planner:` and `dispatcher:` blocks. Change `dispatcher:` to `generator:`, add `evaluator:` block, remove `mailbox:` and `tracker:` sections. Look for the `_generate_config_yaml()` or similar function.
+
+**Files with mailbox references to clean (from grep):**
+- `cli_status.py` — `_collect_mailbox_data()` function + mailbox import
+- `discovery/generator.py` — `(orch_dir / "mailbox").mkdir(...)` line
+- `discovery/templates/agent_docs.py` — mailbox documentation reference
+
 **ID:** 9
 **Depends on:** [7]
 **Module:** `src/lindy_orchestrator/cli.py`, `src/lindy_orchestrator/cli_ext.py`, `src/lindy_orchestrator/cli_onboard*.py`, `src/lindy_orchestrator/discovery/`, `src/lindy_orchestrator/cli_status.py`

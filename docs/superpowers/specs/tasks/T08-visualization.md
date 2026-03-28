@@ -7,6 +7,74 @@ status: pending
 
 ## T8: Visualization Update
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs:**
+- T7: `Orchestrator` in `orchestrator.py`, `CommandQueue` class, new EventTypes (`PHASE_CHANGED`, `EVAL_SCORED`) in `hooks.py`
+- T1: `TaskState`, `ExecutionResult`, `AttemptRecord`, `EvalFeedback` in `models.py`
+
+**Key imports:**
+```python
+from lindy_orchestrator.models import TaskState, ExecutionResult, AttemptRecord, TaskStatus
+from lindy_orchestrator.hooks import EventType  # includes PHASE_CHANGED, EVAL_SCORED
+```
+
+**Dashboard signature change:**
+```python
+# OLD:
+class Dashboard:
+    def __init__(self, plan: TaskPlan, hooks: HookRegistry, console=None, verbose=False): ...
+
+# NEW:
+class Dashboard:
+    def __init__(self, states: list[TaskState], goal: str, hooks: HookRegistry, console=None, verbose=False): ...
+```
+Access task info via `state.spec.id`, `state.spec.module`, `state.spec.description`, `state.status`, `state.phase`, `state.attempts`.
+
+**DAG renderer change:** `dag.py` functions currently take `TaskPlan` and access `task.status`, `task.id`, `task.module`, `task.description`, `task.depends_on`. Update to accept `list[TaskState]` and access via `state.spec.*` and `state.status`.
+
+**New SSE event payloads:**
+```json
+{"type": "phase_changed", "task_id": 2, "module": "backend", "data": {"phase": "generating"}}
+{"type": "eval_scored", "task_id": 2, "module": "backend", "data": {"score": 72, "passed": false, "attempt": 1}}
+```
+
+**Init event enhancement — include per-task:**
+```json
+{"id": 1, "module": "backend", "description": "...", "status": "pending",
+ "depends_on": [], "acceptance_criteria": "All tests pass", "phase": "pending", "attempts": []}
+```
+
+**POST handler pattern:**
+```python
+def do_POST(self):
+    if self.path == "/api/pause":
+        self.server.command_queue.pause()
+        self._respond(200, "application/json", '{"ok": true}')
+    elif self.path.startswith("/api/task/") and self.path.endswith("/skip"):
+        task_id = int(self.path.split("/")[3])
+        self.server.command_queue.skip(task_id)
+        self._respond(200, "application/json", '{"ok": true}')
+    # ... etc
+```
+
+**Phase annotation format for terminal:**
+- Generating: `[Generate → att. 1]`
+- Evaluating with score: `[Evaluate → 72/100]`
+- Completed with score: `(95/100)`
+
+**Reporter change:** `generate_execution_summary()` and `save_summary_report()` now accept `ExecutionResult` instead of `TaskPlan + duration + session_id`. Access tasks via `result.states`, cost via `state.total_cost_usd`.
+
 **ID:** 8
 **Depends on:** [7]
 **Module:** `src/lindy_orchestrator/dashboard.py`, `src/lindy_orchestrator/dag.py`, `src/lindy_orchestrator/web/server.py`, `src/lindy_orchestrator/reporter.py`

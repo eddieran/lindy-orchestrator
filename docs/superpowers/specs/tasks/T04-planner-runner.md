@@ -7,6 +7,34 @@ status: pending
 
 # T4: Planner Runner
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs:**
+- T1: `TaskSpec`, `TaskPlan` (with `tasks_v2` field), `RoleProviderConfig` in `models.py`
+- T2: `PlannerConfig` in `config.py` with `provider`, `timeout_seconds`, `prompt` fields and `to_role_provider_config()` method
+- T2b: `create_provider(RoleProviderConfig)` factory in `providers/__init__.py`
+
+**Key imports for this task:**
+```python
+from lindy_orchestrator.models import TaskSpec, TaskPlan, QACheck, RoleProviderConfig
+from lindy_orchestrator.config import PlannerConfig, OrchestratorConfig
+from lindy_orchestrator.providers import create_provider
+```
+
+**Existing planner to reference (DO NOT modify):** `src/lindy_orchestrator/planner.py` — study `generate_plan()`, `_plan_via_cli()`, `_read_all_statuses()`, and `_parse_task_plan()` for patterns to reuse.
+
+**Existing prompt template:** `src/lindy_orchestrator/prompts.py` contains `PLAN_PROMPT_TEMPLATE`. Modify this template to add the three new output fields (generator_prompt, acceptance_criteria, evaluator_prompt).
+
 **ID:** 4
 **Depends on:** [2b]
 **Module:** `src/lindy_orchestrator/planner_runner.py` (new)

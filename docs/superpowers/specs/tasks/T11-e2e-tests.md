@@ -7,6 +7,90 @@ status: pending
 
 ## T11: End-to-End Tests
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs:** All pipeline code exists: Orchestrator, PlannerRunner, GeneratorRunner, EvaluatorRunner, WebDashboard, CommandQueue, all new models.
+
+**Fixture YAML (new format):**
+```yaml
+project:
+  name: test-project
+  branch_prefix: test
+
+modules:
+  - name: backend
+    path: backend/
+
+planner:
+  provider: claude_cli
+  timeout_seconds: 60
+
+generator:
+  provider: claude_cli
+  timeout_seconds: 120
+  stall_timeout: 30
+  permission_mode: bypassPermissions
+
+evaluator:
+  provider: claude_cli
+  timeout_seconds: 60
+  pass_threshold: 80
+
+safety:
+  max_retries_per_task: 2
+  max_parallel: 2
+```
+
+**Old format YAML (for backward compat test):**
+```yaml
+project:
+  name: test-project
+dispatcher:
+  provider: claude_cli
+  timeout_seconds: 120
+modules:
+  - name: backend
+    path: backend/
+```
+
+**Mock CLI binary pattern (from existing test infrastructure):**
+The existing test suite mocks CLI binaries by:
+1. Creating a shell script in `tmp_path/bin/claude` that echoes canned JSON
+2. Adding `tmp_path/bin` to PATH via `monkeypatch.setenv("PATH", ...)`
+Search existing tests for pattern: `grep -rn "mock.*claude\|bin/claude\|monkeypatch.*PATH" tests/`
+
+**WebDashboard for SSE test:**
+```python
+from lindy_orchestrator.web.server import WebDashboard
+dashboard = WebDashboard(plan, hooks, command_queue=cmd_queue, port=0)  # port=0 for random
+dashboard.start()
+# Connect: urllib.request.urlopen(f"http://localhost:{dashboard.port}/events")
+```
+
+**Checkpoint file format (JSON):**
+```json
+{
+  "_checkpoint_version": 2,
+  "session_id": "20260328_120000_abc12345",
+  "goal": "add a feature",
+  "plan": {"goal": "...", "tasks": [...]},
+  "states": [
+    {"spec": {...}, "status": "completed", "phase": "done", "attempts": [...], ...},
+    {"spec": {...}, "status": "pending", "phase": "pending", "attempts": [], ...}
+  ]
+}
+```
+
 **ID:** 11
 **Depends on:** [10]
 **Module:** `tests/`

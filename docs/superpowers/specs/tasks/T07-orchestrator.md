@@ -7,6 +7,102 @@ status: pending
 
 ## T7: Orchestrator
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs:**
+- T1: All new models in `models.py`: `TaskSpec`, `GeneratorOutput`, `EvalResult`, `EvalFeedback`, `AttemptRecord`, `TaskState` (with `to_dict()`/`from_dict()`), `ExecutionResult`, `RoleProviderConfig`
+- T2: `PlannerConfig`, `GeneratorConfig`, `EvaluatorConfig` in `config.py`
+- T2b: `create_provider(RoleProviderConfig)` factory
+- T3: Deprecated features soft-removed (inject_* no-op, layer_check disabled, API mode disabled)
+- T4: `PlannerRunner` in `planner_runner.py` — `PlannerRunner(config.planner, config).plan(goal) -> TaskPlan`
+- T5: `GeneratorRunner` in `generator_runner.py` — `GeneratorRunner(config.generator, config).execute(task, worktree, branch, feedback) -> GeneratorOutput`
+- T6: `EvaluatorRunner` in `evaluator_runner.py` — `EvaluatorRunner(config.evaluator, config).evaluate(task, gen_output, worktree) -> EvalResult`
+
+**Key imports for this task:**
+```python
+from lindy_orchestrator.models import (TaskSpec, TaskPlan, TaskState, AttemptRecord,
+    GeneratorOutput, EvalResult, EvalFeedback, ExecutionResult, TaskStatus)
+from lindy_orchestrator.config import OrchestratorConfig
+from lindy_orchestrator.planner_runner import PlannerRunner
+from lindy_orchestrator.generator_runner import GeneratorRunner
+from lindy_orchestrator.evaluator_runner import EvaluatorRunner
+from lindy_orchestrator.hooks import HookRegistry, EventType
+from lindy_orchestrator.worktree import create_worktree, remove_worktree, cleanup_all_worktrees
+from lindy_orchestrator.logger import ActionLogger
+```
+
+**Worktree API (from `worktree.py`):**
+```python
+def create_worktree(project_root: Path, branch_name: str, task_id: int) -> Path:
+    # Creates .worktrees/task-{task_id}, returns worktree path
+def remove_worktree(project_root: Path, task_id: int) -> None:
+    # Removes .worktrees/task-{task_id}
+def cleanup_all_worktrees(project_root: Path) -> None:
+    # Removes all .worktrees/*
+```
+
+**Hook system (from `hooks.py`):**
+```python
+hooks.emit(EventType.TASK_STARTED, task_id=task.spec.id, module=task.spec.module, data={...})
+```
+New EventTypes to add: `PHASE_CHANGED = "phase_changed"`, `EVAL_SCORED = "eval_scored"`.
+
+**Branch name computation:** `f"{config.project.branch_prefix}/task-{task.spec.id}"` (e.g., `"af/task-3"`).
+
+**Session ID generation:** `f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}"` or reuse `SessionManager` from `session.py` if preferred.
+
+**CommandQueue implementation detail:**
+```python
+class CommandQueue:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._paused = False
+        self._skip_ids: set[int] = set()
+        self._force_pass_ids: set[int] = set()
+
+    def pause(self): ...      # set _paused = True under lock
+    def resume(self): ...     # set _paused = False under lock
+    def skip(self, task_id): ... # add to _skip_ids under lock
+    def force_pass(self, task_id): ... # add to _force_pass_ids under lock
+
+    @property
+    def is_paused(self) -> bool: ...  # read _paused under lock
+
+    def pop_skip(self, task_id: int) -> bool:
+        # Returns True and removes if task_id was in _skip_ids, else False
+        with self._lock:
+            if task_id in self._skip_ids:
+                self._skip_ids.discard(task_id)
+                return True
+            return False
+
+    def pop_force_pass(self, task_id: int) -> bool:
+        # Same pattern for _force_pass_ids
+```
+
+**_attempt_task must return BOTH GeneratorOutput and EvalResult** (for AttemptRecord):
+```python
+def _attempt_task(self, ...) -> tuple[GeneratorOutput, EvalResult]:
+    gen_output = self.generator.execute(...)
+    if not gen_output.success:
+        return gen_output, EvalResult(score=0, passed=False, retryable=True, ...)
+    eval_result = self.evaluator.evaluate(...)
+    return gen_output, eval_result
+```
+
+**Event ordering (for tests):**
+SESSION_START → [per task: TASK_STARTED → PHASE_CHANGED(generating) → PHASE_CHANGED(evaluating) → EVAL_SCORED → TASK_COMPLETED|TASK_FAILED] → SESSION_END
+
 **ID:** 7
 **Depends on:** [3, 4, 5, 6]
 **Module:** `src/lindy_orchestrator/orchestrator.py` (new), `src/lindy_orchestrator/hooks.py`

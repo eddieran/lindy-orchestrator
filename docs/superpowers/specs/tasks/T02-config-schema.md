@@ -7,6 +7,43 @@ status: pending
 
 ## T2: Configuration Schema
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task output (T1):** `RoleProviderConfig` dataclass added to `models.py` with fields `provider: str = "claude_cli"` and `timeout_seconds: int = 300`. Import via `from ..models import RoleProviderConfig`.
+
+**Pydantic v2 validator syntax:**
+```python
+from pydantic import BaseModel, model_validator
+
+class OrchestratorConfig(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_dispatcher(cls, values: dict) -> dict:
+        # Map old dispatcher → generator if generator not set
+        if "dispatcher" in values and "generator" not in values:
+            log.warning("'dispatcher' config is deprecated, use 'generator' instead")
+            values["generator"] = values["dispatcher"]
+        return values
+```
+
+**Gate name canonicalization:** Only one mapping needed: `structural` → `structural_check`. Other gates (`ci_check`, `command_check`, `structural_check`) already use canonical names.
+
+**`to_role_provider_config()` method:** Add to PlannerConfig, GeneratorConfig, and EvaluatorConfig. Also add to DispatcherConfig for backward compat:
+```python
+def to_role_provider_config(self) -> RoleProviderConfig:
+    return RoleProviderConfig(provider=self.provider, timeout_seconds=self.timeout_seconds)
+```
+
 **ID:** 2
 **Depends on:** [1]
 **Module:** `src/lindy_orchestrator/config.py`

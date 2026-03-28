@@ -7,6 +7,57 @@ status: pending
 
 ## T6: Evaluator Runner
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs:**
+- T1: `TaskSpec`, `GeneratorOutput`, `EvalResult`, `EvalFeedback` in `models.py`
+- T2: `EvaluatorConfig` in `config.py` with fields: `provider`, `timeout_seconds`, `pass_threshold`, `prompt_prefix`, and `to_role_provider_config()` method
+- T2b: `create_provider(RoleProviderConfig)` factory
+
+**Key imports for this task:**
+```python
+from lindy_orchestrator.models import TaskSpec, GeneratorOutput, EvalResult, EvalFeedback, QACheck, QAResult, RoleProviderConfig
+from lindy_orchestrator.config import EvaluatorConfig, OrchestratorConfig
+from lindy_orchestrator.providers import create_provider
+from lindy_orchestrator.qa import run_qa_gate
+```
+
+**run_qa_gate() signature (from `qa/__init__.py`):**
+```python
+def run_qa_gate(
+    check: QACheck,
+    project_root: Path,
+    module_name: str = "",
+    task_output: str = "",
+    custom_gates: list[CustomGateConfig] | None = None,
+    dispatcher_config: DispatcherConfig | None = None,
+    qa_module: ModuleConfig | None = None,
+    module_path: Path | None = None,
+) -> QAResult:
+```
+When calling from EvaluatorRunner: pass `check=qa_check`, `project_root=project_config.root`, `module_name=task.spec.module`, `task_output=gen_output.output`, `custom_gates=project_config.custom_gates`, `module_path=worktree / task.spec.module`. Leave `dispatcher_config` and `qa_module` as None.
+
+**Retryability logic for mixed QA results:**
+- If ALL failed gates have `retryable=False` → EvalResult.retryable=False (all pre-existing)
+- If ANY failed gate has `retryable=True` → EvalResult.retryable=True (at least one agent-caused)
+- If NO gates failed → EvalResult.retryable=True (default, up to evaluator agent)
+
+**Provider timeout/error handling:**
+- `dispatch_simple()` may raise `OSError` or return `DispatchResult(success=False)`. Wrap in try/except.
+- On exception: return `EvalResult(score=0, passed=False, retryable=True, feedback=EvalFeedback(summary=f"Evaluator error: {e}"))`
+
+**Scoring:** Always compute `passed = score >= self.config.pass_threshold` in Python code. Do NOT trust the LLM's boolean. Parse only the `score` integer and `feedback` dict from the JSON response.
+
 **ID:** 6
 **Depends on:** [2b]
 **Module:** `src/lindy_orchestrator/evaluator_runner.py` (new)

@@ -7,6 +7,32 @@ status: pending
 
 ## T1: Data Models + Serialization
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**This is the first task — no prior tasks to depend on.**
+
+**Key existing models to understand (in `src/lindy_orchestrator/models.py`):**
+- `TaskItem` — current task model (being replaced by TaskSpec+TaskState, but DO NOT modify it)
+- `TaskPlan` — current plan container (add fields, don't restructure)
+- `TaskStatus` — enum: PENDING, IN_PROGRESS, COMPLETED, FAILED, SKIPPED
+- `QACheck` — gate name + params dict
+- `QAResult` — gate, passed, output, details, retryable
+- `StructuredFeedback` — current feedback model (being replaced by EvalFeedback, but DO NOT modify it)
+
+**Serialization pattern:** Use `status.value` for enum serialization in `to_dict()`. Use `TaskStatus(value)` for deserialization in `from_dict()`. `_checkpoint_version` should be a class variable (not a dataclass field): `_checkpoint_version: ClassVar[int] = 2`.
+
+**Nested serialization:** `to_dict()` must recursively call `.to_dict()` on nested dataclasses (e.g., AttemptRecord contains GeneratorOutput and EvalResult).
+
 **ID:** 1
 **Depends on:** none
 **Module:** `src/lindy_orchestrator/models.py`
@@ -36,6 +62,8 @@ Add the following dataclasses to `models.py` (alongside existing models, don't m
 8. `RoleProviderConfig` — Role-agnostic provider config. Fields: `provider` (str="claude_cli"), `timeout_seconds` (int=300). This is used by the refactored `create_provider()` in T2b.
 
 9. Update existing `TaskPlan` — add `planner_cost_usd: float = 0.0` field. Do NOT change `tasks` type yet (still list[TaskItem] for backward compat). Add `tasks_v2: list[TaskSpec] = field(default_factory=list)` as transitional field.
+
+**Import conventions:** All new dataclasses go in the same `models.py` file. Use `from __future__ import annotations` (already at top of file). Add imports: `from typing import ClassVar`.
 
 Keep `TaskItem`, `DispatchResult`, `StructuredFeedback`, and all other existing models intact.
 

@@ -7,6 +7,78 @@ status: pending
 
 ## T10: Integration Tests
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task outputs — classes to mock/test:**
+- `Orchestrator(config).run(goal) -> ExecutionResult` (from `orchestrator.py`)
+- `PlannerRunner(config.planner, config).plan(goal) -> TaskPlan` (from `planner_runner.py`)
+- `GeneratorRunner(config.generator, config).execute(task, worktree, branch, feedback) -> GeneratorOutput` (from `generator_runner.py`)
+- `EvaluatorRunner(config.evaluator, config).evaluate(task, gen_output, worktree) -> EvalResult` (from `evaluator_runner.py`)
+- `CommandQueue` — pause/resume/skip/force_pass (from `orchestrator.py`)
+
+**Key model imports:**
+```python
+from lindy_orchestrator.models import (
+    TaskSpec, TaskPlan, TaskState, GeneratorOutput, EvalResult, EvalFeedback,
+    AttemptRecord, ExecutionResult, TaskStatus, QACheck, QAResult
+)
+from lindy_orchestrator.orchestrator import Orchestrator, CommandQueue
+from lindy_orchestrator.hooks import HookRegistry, EventType
+```
+
+**Mock provider pattern:** Use `unittest.mock.MagicMock` or create a simple mock:
+```python
+class MockProvider:
+    def __init__(self, responses: list[DispatchResult]):
+        self._responses = iter(responses)
+    def dispatch(self, **kwargs) -> DispatchResult:
+        return next(self._responses)
+    def dispatch_simple(self, **kwargs) -> DispatchResult:
+        return next(self._responses)
+    def validate(self): pass
+```
+Mock `create_provider` via `monkeypatch` or `unittest.mock.patch("lindy_orchestrator.providers.create_provider", return_value=mock_provider)`.
+
+**Parallel execution test pattern (use barrier, NOT wall-clock):**
+```python
+def test_parallel_execution():
+    barrier = threading.Barrier(3, timeout=10)
+    def mock_execute(task, worktree, branch, feedback=None):
+        barrier.wait()  # All 3 tasks must reach here simultaneously
+        return GeneratorOutput(success=True, output="ok", diff="")
+    # ... mock generator.execute = mock_execute
+```
+
+**Fixture TaskSpec creation:**
+```python
+def make_task_spec(id=1, module="backend", depends_on=None, **kwargs):
+    return TaskSpec(
+        id=id, module=module, description=f"Task {id}",
+        depends_on=depends_on or [],
+        generator_prompt="implement feature",
+        acceptance_criteria="all tests pass",
+        evaluator_prompt="verify tests pass",
+        qa_checks=[], **kwargs
+    )
+```
+
+**Event collection pattern:**
+```python
+collected_events = []
+hooks = HookRegistry()
+hooks.on_any(lambda event: collected_events.append(event))
+```
+
 **ID:** 10
 **Depends on:** [8, 9]
 **Module:** `tests/`

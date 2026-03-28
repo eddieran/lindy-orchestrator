@@ -7,6 +7,32 @@ status: pending
 
 ## T3: Soft Feature Deprecation
 
+## Context & Prerequisites
+
+**Architecture spec:** `docs/superpowers/specs/2026-03-28-pipeline-architecture-design.md` — read this first for full design context.
+
+**Tech stack:**
+- Models: Python dataclasses (`from dataclasses import dataclass, field`)
+- Config: Pydantic v2 (`from pydantic import BaseModel, model_validator`)
+- Testing: pytest via `uv run python -m pytest`
+- Python 3.11+, type hints throughout
+
+**Project structure:** All source in `src/lindy_orchestrator/`, tests in `tests/`.
+
+**Prior task output (T2):** Config schema updated with PlannerConfig, GeneratorConfig, EvaluatorConfig. Deprecated config sections (mailbox, tracker, otel) already warn on load. This task handles **code-level** soft deprecation.
+
+**Finding the code to modify — grep patterns:**
+- `inject_*` functions: `grep -n "^def inject_" src/lindy_orchestrator/scheduler_helpers.py`
+- Layer check injection: `grep -n "layer_check" src/lindy_orchestrator/scheduler_helpers.py`
+- Planner API mode: `grep -n "_plan_via_api" src/lindy_orchestrator/planner.py`
+- Mailbox in cli_status: `grep -n "mailbox" src/lindy_orchestrator/cli_status.py`
+- OTel in scheduler: `grep -n "otel" src/lindy_orchestrator/scheduler.py`
+
+**Tests that call inject_* functions (must be updated to expect no-ops):**
+- `tests/test_inject_claude_md.py` — primary test file for inject_claude_md and inject_status_content
+- `tests/test_scaffold_paths.py` — calls inject_status_content and inject_claude_md
+- Search for others: `grep -rn "inject_mailbox\|inject_claude_md\|inject_status_content\|inject_branch_delivery" tests/`
+
 **ID:** 3
 **Depends on:** [2]
 **Module:** multiple files (no file deletions)
