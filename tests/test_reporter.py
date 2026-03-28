@@ -11,7 +11,7 @@ from io import StringIO
 
 from rich.console import Console
 
-from lindy_orchestrator.models import QAResult, TaskItem
+from lindy_orchestrator.models import QAResult, TaskSpec
 from lindy_orchestrator.reporter import (
     PlanProgress,
     _format_duration,
@@ -185,7 +185,7 @@ class TestPrintStatusTable:
 
 class TestTaskDuration:
     def test_valid_timestamps(self):
-        task = TaskItem(
+        task = TaskSpec(
             id=1,
             module="x",
             description="t",
@@ -195,25 +195,25 @@ class TestTaskDuration:
         assert _task_duration(task) == 150.0
 
     def test_no_started_at(self):
-        task = TaskItem(id=1, module="x", description="t", completed_at="2026-03-07T10:02:30+00:00")
+        task = TaskSpec(id=1, module="x", description="t", completed_at="2026-03-07T10:02:30+00:00")
         assert _task_duration(task) is None
 
     def test_no_completed_at(self):
-        task = TaskItem(id=1, module="x", description="t", started_at="2026-03-07T10:00:00+00:00")
+        task = TaskSpec(id=1, module="x", description="t", started_at="2026-03-07T10:00:00+00:00")
         assert _task_duration(task) is None
 
     def test_both_none(self):
-        task = TaskItem(id=1, module="x", description="t")
+        task = TaskSpec(id=1, module="x", description="t")
         assert _task_duration(task) is None
 
     def test_invalid_timestamp_format(self):
-        task = TaskItem(
+        task = TaskSpec(
             id=1, module="x", description="t", started_at="not-a-date", completed_at="also-not"
         )
         assert _task_duration(task) is None
 
     def test_zero_duration(self):
-        task = TaskItem(
+        task = TaskSpec(
             id=1,
             module="x",
             description="t",
@@ -224,7 +224,7 @@ class TestTaskDuration:
 
     def test_naive_timestamps(self):
         """Timestamps without timezone info still work."""
-        task = TaskItem(
+        task = TaskSpec(
             id=1,
             module="x",
             description="t",
@@ -269,11 +269,11 @@ class TestFormatDuration:
 
 class TestQaSummary:
     def test_no_qa_results(self):
-        task = TaskItem(id=1, module="x", description="t")
+        task = TaskSpec(id=1, module="x", description="t")
         assert _qa_summary(task) == "-"
 
     def test_single_pass(self):
-        task = TaskItem(
+        task = TaskSpec(
             id=1,
             module="x",
             description="t",
@@ -282,7 +282,7 @@ class TestQaSummary:
         assert _qa_summary(task) == "lint:PASS"
 
     def test_single_fail(self):
-        task = TaskItem(
+        task = TaskSpec(
             id=1,
             module="x",
             description="t",
@@ -291,7 +291,7 @@ class TestQaSummary:
         assert _qa_summary(task) == "test:FAIL"
 
     def test_multiple_results(self):
-        task = TaskItem(
+        task = TaskSpec(
             id=1,
             module="x",
             description="t",

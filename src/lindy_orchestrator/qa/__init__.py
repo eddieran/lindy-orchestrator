@@ -1,8 +1,4 @@
-"""QA gate registry and runner.
-
-Built-in gates: ci_check, command_check, agent_check.
-Users can also define custom command-based gates in orchestrator.yaml.
-"""
+"""QA gate registry and runner."""
 
 from __future__ import annotations
 
@@ -204,4 +200,3 @@ from . import ci_check as _ci_check_mod  # noqa: E402, F401
 from . import command_check as _cmd_check_mod  # noqa: E402, F401
 from . import agent_check as _agent_check_mod  # noqa: E402, F401
 from . import structural_check as _struct_check_mod  # noqa: E402, F401
-from . import layer_check as _layer_check_mod  # noqa: E402, F401

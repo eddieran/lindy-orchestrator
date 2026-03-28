@@ -9,7 +9,7 @@ from io import StringIO
 
 from rich.console import Console
 
-from lindy_orchestrator.models import QAResult, TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import QAResult, TaskSpec, TaskPlan, TaskStatus
 from lindy_orchestrator.reporter import (
     generate_execution_summary,
     save_summary_report,
@@ -29,7 +29,7 @@ def _get_output(console: Console) -> str:
 def _make_plan(with_failures: bool = False) -> TaskPlan:
     """Create a sample TaskPlan for testing."""
     tasks = [
-        TaskItem(
+        TaskSpec(
             id=1,
             module="backend",
             description="Add API endpoint",
@@ -40,7 +40,7 @@ def _make_plan(with_failures: bool = False) -> TaskPlan:
             completed_at="2026-03-07T10:02:30+00:00",
             qa_results=[QAResult(gate="command_check", passed=True, output="All tests pass")],
         ),
-        TaskItem(
+        TaskSpec(
             id=2,
             module="frontend",
             description="Build user form",
@@ -58,7 +58,7 @@ def _make_plan(with_failures: bool = False) -> TaskPlan:
                 ),
             ],
         ),
-        TaskItem(
+        TaskSpec(
             id=3,
             module="docs",
             description="Update README",
@@ -214,7 +214,7 @@ class TestSaveSummaryReport:
     def test_report_no_result_no_output_section(self, tmp_path):
         """Tasks with empty result don't get output preview sections."""
         tasks = [
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="svc",
                 description="No-output task",
@@ -237,7 +237,7 @@ class TestSaveSummaryReport:
     def test_report_qa_pass_and_fail_in_same_report(self, tmp_path):
         """Both pass and fail QA results appear in the report."""
         tasks = [
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="api",
                 description="Task with mixed QA",
@@ -275,7 +275,7 @@ class TestGenerateExecutionSummaryEdgeCases:
         """Plan where all tasks are skipped."""
         con = _make_console(width=200)
         tasks = [
-            TaskItem(id=1, module="a", description="Skipped task", status=TaskStatus.SKIPPED),
+            TaskSpec(id=1, module="a", description="Skipped task", status=TaskStatus.SKIPPED),
         ]
         plan = TaskPlan(goal="Skipped goal", tasks=tasks)
         generate_execution_summary(plan, 5.0, "skip", console=con)
@@ -287,7 +287,7 @@ class TestGenerateExecutionSummaryEdgeCases:
         """Tasks with IN_PROGRESS status render with RUN label."""
         con = _make_console(width=200)
         tasks = [
-            TaskItem(id=1, module="a", description="Running task", status=TaskStatus.IN_PROGRESS),
+            TaskSpec(id=1, module="a", description="Running task", status=TaskStatus.IN_PROGRESS),
         ]
         plan = TaskPlan(goal="Running goal", tasks=tasks)
         generate_execution_summary(plan, 5.0, "run", console=con)
@@ -298,7 +298,7 @@ class TestGenerateExecutionSummaryEdgeCases:
         """Tasks with PENDING status render with PEND label."""
         con = _make_console(width=200)
         tasks = [
-            TaskItem(id=1, module="a", description="Pending task", status=TaskStatus.PENDING),
+            TaskSpec(id=1, module="a", description="Pending task", status=TaskStatus.PENDING),
         ]
         plan = TaskPlan(goal="Pending goal", tasks=tasks)
         generate_execution_summary(plan, 5.0, "pend", console=con)
@@ -309,7 +309,7 @@ class TestGenerateExecutionSummaryEdgeCases:
         """Long task results are truncated — full 200-char result not shown."""
         con = _make_console(width=300)
         tasks = [
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="a",
                 description="Verbose task",
@@ -328,7 +328,7 @@ class TestGenerateExecutionSummaryEdgeCases:
         """Tasks with 0 retries show '-' in the retries column."""
         con = _make_console(width=200)
         tasks = [
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="a",
                 description="No retry",
@@ -345,7 +345,7 @@ class TestGenerateExecutionSummaryEdgeCases:
         """Newlines in result are replaced with spaces for display."""
         con = _make_console(width=200)
         tasks = [
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="a",
                 description="Multiline",
@@ -371,7 +371,7 @@ class TestGenerateExecutionSummaryEdgeCases:
         """Task with no timestamps shows '-' for duration."""
         con = _make_console(width=200)
         tasks = [
-            TaskItem(id=1, module="a", description="No timestamps", status=TaskStatus.COMPLETED),
+            TaskSpec(id=1, module="a", description="No timestamps", status=TaskStatus.COMPLETED),
         ]
         plan = TaskPlan(goal="No ts", tasks=tasks)
         generate_execution_summary(plan, 5.0, "nots", console=con)
@@ -398,11 +398,11 @@ class TestSaveSummaryReportEdgeCases:
     def test_all_statuses_in_report(self, tmp_path):
         """Report includes all status labels."""
         tasks = [
-            TaskItem(id=1, module="a", description="d1", status=TaskStatus.COMPLETED, result="ok"),
-            TaskItem(id=2, module="a", description="d2", status=TaskStatus.FAILED, result="err"),
-            TaskItem(id=3, module="a", description="d3", status=TaskStatus.SKIPPED, result="skip"),
-            TaskItem(id=4, module="a", description="d4", status=TaskStatus.PENDING),
-            TaskItem(id=5, module="a", description="d5", status=TaskStatus.IN_PROGRESS),
+            TaskSpec(id=1, module="a", description="d1", status=TaskStatus.COMPLETED, result="ok"),
+            TaskSpec(id=2, module="a", description="d2", status=TaskStatus.FAILED, result="err"),
+            TaskSpec(id=3, module="a", description="d3", status=TaskStatus.SKIPPED, result="skip"),
+            TaskSpec(id=4, module="a", description="d4", status=TaskStatus.PENDING),
+            TaskSpec(id=5, module="a", description="d5", status=TaskStatus.IN_PROGRESS),
         ]
         plan = TaskPlan(goal="All statuses", tasks=tasks)
         path = save_summary_report(plan, 30.0, "allstat", tmp_path)
@@ -423,7 +423,7 @@ class TestSaveSummaryReportEdgeCases:
     def test_report_qa_output_truncated_to_200(self, tmp_path):
         """QA output in report is truncated to 200 chars."""
         tasks = [
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="a",
                 description="Long QA",
@@ -441,7 +441,7 @@ class TestSaveSummaryReportEdgeCases:
     def test_report_result_truncated_to_500(self, tmp_path):
         """Task result preview is truncated to 500 chars."""
         tasks = [
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="a",
                 description="Long result",

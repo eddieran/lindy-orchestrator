@@ -107,7 +107,7 @@ class QAResult:
 
 
 @dataclass
-class TaskItem:
+class TaskSpec:
     """A single task in a goal's execution plan."""
 
     id: int
@@ -136,9 +136,9 @@ class TaskPlan:
     """A goal decomposed into an ordered task DAG."""
 
     goal: str
-    tasks: list[TaskItem] = field(default_factory=list)
+    tasks: list[TaskSpec] = field(default_factory=list)
 
-    def next_ready(self) -> list[TaskItem]:
+    def next_ready(self) -> list[TaskSpec]:
         """Return all tasks whose dependencies are satisfied.
 
         A dependency is satisfied if it is COMPLETED.  If a dependency is
@@ -214,7 +214,7 @@ def plan_from_dict(data: dict) -> TaskPlan:
             QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
         ]
         tasks.append(
-            TaskItem(
+            TaskSpec(
                 id=t["id"],
                 module=t["module"],
                 description=t["description"],

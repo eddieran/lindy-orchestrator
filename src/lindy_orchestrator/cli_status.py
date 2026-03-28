@@ -54,36 +54,8 @@ def _collect_modules_data(cfg) -> list[dict]:
     return modules_data
 
 
-def _collect_mailbox_data(cfg) -> dict[str, int]:
-    """Collect pending mailbox message counts per module."""
-    from .mailbox import Mailbox
-
-    mailbox_dir = cfg.root / cfg.mailbox.dir
-    if not mailbox_dir.exists():
-        return {}
-    mb = Mailbox(mailbox_dir)
-    counts: dict[str, int] = {}
-    for mod in cfg.modules:
-        counts[mod.name] = mb.pending_count(mod.name)
-    return counts
-
-
 def register_status_commands(app: typer.Typer, console: Console, load_cfg) -> None:
     """Register status and logs commands on the Typer app."""
-
-    def _print_mailbox_summary(cfg) -> None:
-        """Print mailbox pending counts per module."""
-        counts = _collect_mailbox_data(cfg)
-        if not counts:
-            return
-        has_pending = any(c > 0 for c in counts.values())
-        if has_pending:
-            console.print("\n[bold]Mailbox[/]")
-            for name, count in counts.items():
-                if count > 0:
-                    console.print(f"  [bold]{name}[/]: {count} pending message(s)")
-        else:
-            console.print("\n[dim]Mailbox: no pending messages[/]")
 
     @app.command()
     def status(
@@ -111,17 +83,12 @@ def register_status_commands(app: typer.Typer, console: Console, load_cfg) -> No
                 result["modules"] = _collect_modules_data(cfg)
             if show_logs:
                 result["logs"] = _read_log_lines(cfg, last)
-            if show_status and cfg.mailbox.enabled:
-                result["mailbox"] = _collect_mailbox_data(cfg)
             console.print_json(json.dumps(result, indent=2))
             return
 
         if show_status:
             modules_data = _collect_modules_data(cfg)
             print_status_table(modules_data)
-
-        if show_status and cfg.mailbox.enabled:
-            _print_mailbox_summary(cfg)
 
         if show_logs:
             log_lines = _read_log_lines(cfg, last)

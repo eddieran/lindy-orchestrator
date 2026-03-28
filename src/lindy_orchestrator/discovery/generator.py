@@ -80,7 +80,6 @@ def generate_artifacts(
     # 8. Runtime directories
     (orch_dir / "logs").mkdir(parents=True, exist_ok=True)
     (orch_dir / "sessions").mkdir(parents=True, exist_ok=True)
-    (orch_dir / "mailbox").mkdir(parents=True, exist_ok=True)
 
     # 9. Update .gitignore
     _update_gitignore(output_dir)

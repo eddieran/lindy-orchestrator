@@ -24,7 +24,7 @@ runner = CliRunner()
 
 
 class TestE2EResume:
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_resume_latest_session(self, mock_exec, project_dir, cfg_path):
         """Resume picks up the latest session and re-executes pending tasks."""
         from lindy_orchestrator.models import plan_to_dict
@@ -50,7 +50,7 @@ class TestE2EResume:
         assert result.exit_code != 0
         assert "No session found" in result.output
 
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_resume_already_completed(self, mock_exec, project_dir, cfg_path):
         from lindy_orchestrator.session import SessionManager
 
@@ -63,7 +63,7 @@ class TestE2EResume:
         assert result.exit_code == 0
         assert "already completed" in result.output.lower()
 
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_resume_by_session_id(self, mock_exec, project_dir, cfg_path):
         from lindy_orchestrator.models import plan_to_dict
         from lindy_orchestrator.session import SessionManager
@@ -83,7 +83,7 @@ class TestE2EResume:
 
     # --- Execution summary report E2E tests for resume ---
 
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_resume_shows_execution_summary(self, mock_exec, project_dir, cfg_path):
         """Resume command outputs the execution summary after re-execution."""
         from lindy_orchestrator.models import plan_to_dict
@@ -104,7 +104,7 @@ class TestE2EResume:
         assert "Task Details" in result.output
         assert "Execution Metrics" in result.output
 
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_resume_shows_goal_completed(self, mock_exec, project_dir, cfg_path):
         """Resume that completes all tasks shows GOAL COMPLETED."""
         from lindy_orchestrator.models import plan_to_dict
@@ -124,7 +124,7 @@ class TestE2EResume:
         assert result.exit_code == 0
         assert "GOAL COMPLETED" in result.output
 
-    @patch("lindy_orchestrator.scheduler.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     def test_resume_saves_report_file(self, mock_exec, project_dir, cfg_path):
         """Resume command saves a Markdown report to .orchestrator/reports/."""
         from lindy_orchestrator.models import plan_to_dict
@@ -147,7 +147,7 @@ class TestE2EResume:
         report_files = list(reports_dir.glob("*_summary.md"))
         assert len(report_files) == 1
 
-    @patch("lindy_orchestrator.scheduler.execute_plan")
+    @patch("lindy_orchestrator.orchestrator.execute_plan")
     def test_resume_with_failures_shows_paused(self, mock_exec, project_dir, cfg_path):
         """Resume that still has failures shows GOAL PAUSED."""
         from lindy_orchestrator.models import plan_to_dict

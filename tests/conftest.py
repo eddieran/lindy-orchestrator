@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from lindy_orchestrator.models import TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import TaskSpec, TaskPlan, TaskStatus
 
 MINIMAL_STATUS_MD = (
     "# Status\n\n"
@@ -87,14 +87,14 @@ def make_plan(goal: str = "Test goal") -> TaskPlan:
     return TaskPlan(
         goal=goal,
         tasks=[
-            TaskItem(
+            TaskSpec(
                 id=1,
                 module="backend",
                 description="Setup API",
                 status=TaskStatus.COMPLETED,
                 result="done",
             ),
-            TaskItem(
+            TaskSpec(
                 id=2,
                 module="frontend",
                 description="Build UI",

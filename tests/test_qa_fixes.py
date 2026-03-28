@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from lindy_orchestrator.config import CustomGateConfig, OrchestratorConfig
 from lindy_orchestrator.hooks import Event, EventType, HookRegistry
-from lindy_orchestrator.models import QAResult, TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import QAResult, TaskSpec, TaskPlan, TaskStatus
 
 
 # ---------------------------------------------------------------------------
@@ -16,16 +16,16 @@ from lindy_orchestrator.models import QAResult, TaskItem, TaskPlan, TaskStatus
 
 
 class TestEmptyQAGates:
-    @patch("lindy_orchestrator.scheduler.create_provider")
+    @patch("lindy_orchestrator.orchestrator.create_provider")
     def test_skip_qa_task_no_crash(self, mock_provider: MagicMock) -> None:
         """skip_qa=True task with 0 gates should not crash."""
         from lindy_orchestrator.logger import ActionLogger
-        from lindy_orchestrator.scheduler import execute_plan
+        from lindy_orchestrator.orchestrator import execute_plan
 
         plan = TaskPlan(
             goal="test",
             tasks=[
-                TaskItem(
+                TaskSpec(
                     id=1,
                     module="root",
                     description="ops task",
@@ -43,9 +43,9 @@ class TestEmptyQAGates:
 
     def test_run_qa_gates_empty_list(self) -> None:
         """_run_qa_gates with 0 gates returns True without ThreadPoolExecutor."""
-        from lindy_orchestrator.scheduler import _run_qa_gates
+        from lindy_orchestrator.orchestrator import _run_qa_gates
 
-        task = TaskItem(id=1, module="root", description="test")
+        task = TaskSpec(id=1, module="root", description="test")
         task.qa_checks = []
         cfg = OrchestratorConfig()
         progress = MagicMock()
@@ -63,13 +63,13 @@ class TestEmptyQAGates:
 
 
 class TestSkipQaDeliveryCheck:
-    @patch("lindy_orchestrator.scheduler.create_provider")
-    @patch("lindy_orchestrator.scheduler.create_worktree", return_value=None)
+    @patch("lindy_orchestrator.orchestrator.create_provider")
+    @patch("lindy_orchestrator.orchestrator.create_worktree", return_value=None)
     def test_skip_qa_skips_delivery_and_qa(
         self, mock_wt: MagicMock, mock_provider: MagicMock
     ) -> None:
         """skip_qa=True should skip delivery_check and mark completed directly."""
-        from lindy_orchestrator.scheduler import _dispatch_loop
+        from lindy_orchestrator.orchestrator import _dispatch_loop
 
         mock_result = MagicMock()
         mock_result.success = True
@@ -82,7 +82,7 @@ class TestSkipQaDeliveryCheck:
         mock_result.error = None
         mock_provider.return_value.dispatch.return_value = mock_result
 
-        task = TaskItem(id=1, module="root", description="delete branch", skip_qa=True)
+        task = TaskSpec(id=1, module="root", description="delete branch", skip_qa=True)
         task.prompt = "test"
         cfg = OrchestratorConfig()
         logger = MagicMock()
@@ -113,9 +113,9 @@ class TestNonRetryable:
         assert r.retryable is True
 
     def test_all_non_retryable_skips_retry(self) -> None:
-        from lindy_orchestrator.scheduler import _handle_retry
+        from lindy_orchestrator.orchestrator import _handle_retry
 
-        task = TaskItem(id=1, module="root", description="test")
+        task = TaskSpec(id=1, module="root", description="test")
         task.qa_results = [
             QAResult(gate="structural_check", passed=False, output="pre-existing", retryable=False),
         ]
@@ -134,9 +134,9 @@ class TestNonRetryable:
         assert failed_events[0].data["reason"] == "non_retryable_failures"
 
     def test_mix_retryable_and_non_still_retries(self) -> None:
-        from lindy_orchestrator.scheduler import _handle_retry
+        from lindy_orchestrator.orchestrator import _handle_retry
 
-        task = TaskItem(id=1, module="root", description="test")
+        task = TaskSpec(id=1, module="root", description="test")
         task.qa_results = [
             QAResult(gate="structural_check", passed=False, output="pre-existing", retryable=False),
             QAResult(gate="command_check", passed=False, output="test failed", retryable=True),
@@ -199,19 +199,19 @@ class TestRequiredField:
 
 
 # ---------------------------------------------------------------------------
-# #6 P2: skip_gates on TaskItem
+# #6 P2: skip_gates on TaskSpec
 # ---------------------------------------------------------------------------
 
 
 class TestSkipGates:
     def test_task_item_skip_gates_default_empty(self) -> None:
-        task = TaskItem(id=1, module="root", description="test")
+        task = TaskSpec(id=1, module="root", description="test")
         assert task.skip_gates == []
 
     def test_skip_gates_excludes_structural(self) -> None:
-        from lindy_orchestrator.scheduler_helpers import inject_qa_gates
+        from lindy_orchestrator.orchestrator_helpers import inject_qa_gates
 
-        task = TaskItem(id=1, module="backend", description="test", skip_gates=["structural_check"])
+        task = TaskSpec(id=1, module="backend", description="test", skip_gates=["structural_check"])
         cfg = OrchestratorConfig()
         cfg._config_dir = Path("/tmp")
         progress = MagicMock()
@@ -222,7 +222,7 @@ class TestSkipGates:
         assert "structural_check" not in gate_names
 
     def test_skip_gates_excludes_named_command(self) -> None:
-        from lindy_orchestrator.scheduler_helpers import inject_qa_gates
+        from lindy_orchestrator.orchestrator_helpers import inject_qa_gates
 
         cfg = OrchestratorConfig()
         cfg._config_dir = Path("/tmp")
@@ -230,7 +230,7 @@ class TestSkipGates:
             CustomGateConfig(name="slow-integration", command="npm run test:e2e"),
         ]
 
-        task = TaskItem(id=1, module="backend", description="test", skip_gates=["slow-integration"])
+        task = TaskSpec(id=1, module="backend", description="test", skip_gates=["slow-integration"])
         progress = MagicMock()
 
         inject_qa_gates(task, cfg, progress)

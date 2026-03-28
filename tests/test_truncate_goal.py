@@ -5,7 +5,7 @@ import time
 from lindy_orchestrator.dag import truncate_goal
 from lindy_orchestrator.dashboard import Dashboard, _TaskDetail
 from lindy_orchestrator.hooks import Event, EventType, HookRegistry
-from lindy_orchestrator.models import TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import TaskSpec, TaskPlan, TaskStatus
 
 from io import StringIO
 from rich.console import Console
@@ -16,11 +16,11 @@ from rich.console import Console
 # ---------------------------------------------------------------------------
 
 
-def _task(tid: int, module: str = "mod", desc: str = "do thing", **kw) -> TaskItem:
-    return TaskItem(id=tid, module=module, description=desc, **kw)
+def _task(tid: int, module: str = "mod", desc: str = "do thing", **kw) -> TaskSpec:
+    return TaskSpec(id=tid, module=module, description=desc, **kw)
 
 
-def _plan(*tasks: TaskItem, goal: str = "test") -> TaskPlan:
+def _plan(*tasks: TaskSpec, goal: str = "test") -> TaskPlan:
     return TaskPlan(goal=goal, tasks=list(tasks))
 
 

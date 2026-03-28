@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from lindy_orchestrator.models import TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import TaskSpec, TaskPlan, TaskStatus
 
 # -- text helpers -------------------------------------------------------------
 
@@ -57,7 +57,7 @@ _MAX_WIDTH = 78  # content width (80 minus 2-char margin)
 # -- topology -----------------------------------------------------------------
 
 
-def _compute_levels(tasks: list[TaskItem]) -> list[list[TaskItem]]:
+def _compute_levels(tasks: list[TaskSpec]) -> list[list[TaskSpec]]:
     """Group tasks into topological levels.
 
     Level 0 contains tasks with no (valid) dependencies.  Level *n* contains
@@ -81,7 +81,7 @@ def _compute_levels(tasks: list[TaskItem]) -> list[list[TaskItem]]:
         depth(t.id)
 
     n_levels = max(memo.values()) + 1
-    levels: list[list[TaskItem]] = [[] for _ in range(n_levels)]
+    levels: list[list[TaskSpec]] = [[] for _ in range(n_levels)]
     for t in tasks:
         levels[memo[t.id]].append(t)
     return levels
@@ -91,8 +91,8 @@ def _compute_levels(tasks: list[TaskItem]) -> list[list[TaskItem]]:
 
 
 def _build_tree(
-    tasks: list[TaskItem],
-) -> tuple[list[TaskItem], dict[int, list[TaskItem]], dict[int, list[int]]]:
+    tasks: list[TaskSpec],
+) -> tuple[list[TaskSpec], dict[int, list[TaskSpec]], dict[int, list[int]]]:
     """Build a tree structure from the task DAG for rendering.
 
     Each task is assigned to exactly one tree parent (the dependency at the
@@ -114,9 +114,9 @@ def _build_tree(
         for t in level_tasks:
             level_of[t.id] = i
 
-    children: dict[int, list[TaskItem]] = {t.id: [] for t in tasks}
+    children: dict[int, list[TaskSpec]] = {t.id: [] for t in tasks}
     extra_deps: dict[int, list[int]] = {}
-    roots: list[TaskItem] = []
+    roots: list[TaskSpec] = []
 
     for t in tasks:
         valid_deps = [d for d in t.depends_on if d in task_map]
@@ -140,7 +140,7 @@ def _build_tree(
 # -- node formatting ----------------------------------------------------------
 
 
-def _node_text(task: TaskItem, extra_deps: dict[int, list[int]]) -> str:
+def _node_text(task: TaskSpec, extra_deps: dict[int, list[int]]) -> str:
     """Build the display text for a single task node."""
     icon = STATUS_ICONS[task.status]
     desc = task.description
@@ -180,10 +180,10 @@ def _format_line(
 
 
 def _walk_tree(
-    tasks: list[TaskItem],
+    tasks: list[TaskSpec],
     annotations: dict[int, str] | None = None,
     verbose: bool = False,
-) -> list[tuple[str, str, str, str, str, TaskItem]]:
+) -> list[tuple[str, str, str, str, str, TaskSpec]]:
     """Walk the task DAG tree and yield rendering tuples.
 
     Returns a list of ``(prefix, connector, node, annotation, style, task)``
@@ -194,9 +194,9 @@ def _walk_tree(
 
     roots, children, extra_deps = _build_tree(tasks)
     annotations = annotations or {}
-    result: list[tuple[str, str, str, str, str, TaskItem]] = []
+    result: list[tuple[str, str, str, str, str, TaskSpec]] = []
 
-    def _emit(task: TaskItem, prefix: str, is_last: bool) -> None:
+    def _emit(task: TaskSpec, prefix: str, is_last: bool) -> None:
         connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
         node = _node_text(task, extra_deps)
         ann = ""

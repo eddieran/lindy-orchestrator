@@ -213,7 +213,7 @@ class TestAgentDocs:
         ctx = _make_ctx()
         docs = render_agent_docs(ctx)
         assert "structural_check" in docs["protocol.md"]
-        assert "layer_check" in docs["protocol.md"]
+        assert "command_check" in docs["protocol.md"]
 
     def test_protocol_contracts_when_complex(self):
         ctx = _make_ctx(coordination_complexity=2)

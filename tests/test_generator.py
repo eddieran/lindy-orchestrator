@@ -122,14 +122,13 @@ def test_no_contracts_when_simple(tmp_path):
 
 
 def test_creates_orchestrator_dir(tmp_path):
-    """Creates .orchestrator/logs and .orchestrator/sessions."""
+    """Creates the runtime directories used by the reduced pipeline."""
     (tmp_path / "backend").mkdir()
     ctx = _make_ctx(tmp_path)
     generate_artifacts(ctx, tmp_path, force=True)
 
     assert (tmp_path / ".orchestrator" / "logs").is_dir()
     assert (tmp_path / ".orchestrator" / "sessions").is_dir()
-    assert (tmp_path / ".orchestrator" / "mailbox").is_dir()
 
 
 def test_skip_existing_files_without_force(tmp_path):

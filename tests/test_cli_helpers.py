@@ -17,7 +17,7 @@ from lindy_orchestrator.cli_helpers import (
     plan_to_dict,
     resolve_goal,
 )
-from lindy_orchestrator.models import QACheck, TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import QACheck, TaskSpec, TaskPlan, TaskStatus
 from lindy_orchestrator.session import SessionManager
 
 
@@ -101,7 +101,7 @@ class TestPlanToFromDict:
         plan = TaskPlan(
             goal="Test goal",
             tasks=[
-                TaskItem(
+                TaskSpec(
                     id=1,
                     module="backend",
                     description="Do thing",
@@ -121,8 +121,8 @@ class TestPersistPlan:
         plan = TaskPlan(
             goal="Deploy v2",
             tasks=[
-                TaskItem(id=1, module="backend", description="Update API", prompt="Do it"),
-                TaskItem(
+                TaskSpec(id=1, module="backend", description="Update API", prompt="Do it"),
+                TaskSpec(
                     id=2,
                     module="frontend",
                     description="Update UI",
@@ -166,7 +166,7 @@ class TestFinaliseSession:
     def _make_plan(self, statuses):
         tasks = []
         for i, s in enumerate(statuses, 1):
-            tasks.append(TaskItem(id=i, module=f"mod{i}", description=f"Task {i}", status=s))
+            tasks.append(TaskSpec(id=i, module=f"mod{i}", description=f"Task {i}", status=s))
         return TaskPlan(goal="Goal", tasks=tasks)
 
     def test_all_completed(self, tmp_path):
