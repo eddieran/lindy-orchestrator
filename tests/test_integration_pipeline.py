@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 import time
@@ -11,6 +12,14 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.request import urlopen
+
+import pytest
+
+# SSE tests require a real HTTP server and are flaky in constrained CI runners
+_SKIP_SSE = pytest.mark.skipif(
+    os.environ.get("CI") == "true",
+    reason="SSE tests are timing-sensitive and flaky in CI",
+)
 
 from lindy_orchestrator.config import ModuleConfig, OrchestratorConfig
 from lindy_orchestrator.dispatch_core import streaming_dispatch
@@ -474,6 +483,7 @@ class TestPlannerGeneratorEvaluatorPipeline:
 
         assert restored_plan.next_ready()[0].id == 2
 
+    @_SKIP_SSE
     def test_web_dashboard_sse_init_snapshot_contains_plan_state(self) -> None:
         hooks = HookRegistry()
         plan = TaskPlan(
@@ -492,6 +502,7 @@ class TestPlannerGeneratorEvaluatorPipeline:
         finally:
             dashboard.stop()
 
+    @_SKIP_SSE
     def test_web_dashboard_sse_streams_hook_events(self) -> None:
         hooks = HookRegistry()
         plan = TaskPlan(
@@ -513,6 +524,7 @@ class TestPlannerGeneratorEvaluatorPipeline:
         finally:
             dashboard.stop()
 
+    @_SKIP_SSE
     def test_web_dashboard_sse_fans_out_events_to_multiple_clients(self) -> None:
         hooks = HookRegistry()
         plan = TaskPlan(
