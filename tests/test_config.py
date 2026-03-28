@@ -45,6 +45,7 @@ def test_default_config():
     assert cfg.planner.mode == "cli"
     assert cfg.dispatcher.timeout_seconds == 1800
     assert cfg.generator.provider == "claude_cli"
+    assert cfg.evaluator.pass_threshold == 80
     assert cfg.safety.max_parallel == 10
     assert cfg.mailbox.enabled is True
 

@@ -84,6 +84,12 @@ class EvaluatorConfig(BaseModel):
         return RoleProviderConfig(provider=self.provider, timeout_seconds=self.timeout_seconds)
 
 
+class EvaluatorConfig(DispatcherConfig):
+    timeout_seconds: int = 300
+    pass_threshold: int = 80
+    prompt_prefix: str = ""
+
+
 class CICheckConfig(BaseModel):
     timeout_seconds: int = 900
     poll_interval: int = 30
@@ -181,6 +187,7 @@ class OrchestratorConfig(BaseModel):
     evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     dispatcher: DispatcherConfig = Field(default_factory=DispatcherConfig)
     generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
+    evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

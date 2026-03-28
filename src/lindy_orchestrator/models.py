@@ -119,8 +119,8 @@ class TaskSpec:
     description: str
     prompt: str = ""
     generator_prompt: str = ""
+    acceptance_criteria: str = ""
     evaluator_prompt: str = ""
-    acceptance_criteria: list[str] = field(default_factory=list)
     depends_on: list[int] = field(default_factory=list)
     priority: int = 0  # higher = dispatched first within same dep level
     qa_checks: list[QACheck] = field(default_factory=list)
@@ -136,6 +136,13 @@ class TaskSpec:
     timeout_seconds: int | None = None  # per-task override
     stall_seconds: int | None = None  # per-task stall override
     cost_usd: float = 0.0  # actual cost from dispatch provider
+
+    def __post_init__(self) -> None:
+        """Keep legacy ``prompt`` and new ``generator_prompt`` in sync."""
+        if not self.generator_prompt and self.prompt:
+            self.generator_prompt = self.prompt
+        elif not self.prompt and self.generator_prompt:
+            self.prompt = self.generator_prompt
 
 
 @dataclass
@@ -501,6 +508,7 @@ def _task_spec_from_dict(data: dict[str, Any]) -> TaskSpec:
         stall_seconds=data.get("stall_seconds"),
         cost_usd=data.get("cost_usd", 0.0),
     )
+
 
 
 # ---------------------------------------------------------------------------
