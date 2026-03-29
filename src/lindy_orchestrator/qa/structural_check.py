@@ -14,7 +14,7 @@ from typing import Any
 
 from ..config import StructuralCheckConfig
 from ..models import QAResult
-from . import Violation, format_violations, register
+from . import Violation, _format_violations, register
 
 
 def run_structural_check(
@@ -379,7 +379,7 @@ class StructuralCheckGate:
         return QAResult(
             gate="structural_check",
             passed=passed,
-            output=format_violations(violations),
+            output=_format_violations(violations),
             details={
                 "violation_count": len(violations),
                 "violations": [

@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lindy_orchestrator.config import StructuralCheckConfig
-from lindy_orchestrator.qa import Violation, format_violations
+from lindy_orchestrator.qa import Violation, _format_violations
 from lindy_orchestrator.qa.structural_check import (
     _check_file_size,
     _check_import_boundary,
@@ -204,7 +204,7 @@ class TestGetStagedFiles:
 
 class TestFormatViolations:
     def test_no_violations(self):
-        result = format_violations([])
+        result = _format_violations([])
         assert "passed" in result.lower()
 
     def test_formats_violations(self):
@@ -222,7 +222,7 @@ class TestFormatViolations:
                 remediation="Add to .gitignore.",
             ),
         ]
-        result = format_violations(violations)
+        result = _format_violations(violations)
         assert "2 structural violation(s)" in result
         assert "VIOLATION [file_size]" in result
         assert "FIX: Split into" in result

@@ -23,7 +23,7 @@ class Violation:
     remediation: str
 
 
-def format_violations(violations: list[Violation], label: str = "structural") -> str:
+def _format_violations(violations: list[Violation], label: str = "structural") -> str:
     """Format violations into a human/agent-readable report."""
     if not violations:
         return f"All {label} checks passed."

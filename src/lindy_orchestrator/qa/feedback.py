@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
+from . import Violation, _format_violations
+
 
 def format_qa_feedback(gate: str, raw_output: str) -> str:
     """Transform raw QA output into structured remediation.
@@ -132,6 +134,35 @@ def _parse_tsc(raw: str) -> str:
     return _truncate_with_guidance(raw, "tsc")
 
 
+def _parse_structural(raw: str) -> str:
+    """Parse structural check output using shared violation formatting.
+
+    If the raw output already contains formatted violations (from
+    ``_format_violations``), pass it through.  Otherwise fall back to the
+    generic truncated output.
+    """
+    if "VIOLATION [" in raw:
+        return raw  # already formatted by _format_violations
+    # Try to reconstruct Violation objects from the raw text
+    pattern = re.compile(
+        r"VIOLATION\s+\[([^\]]+)\]:\s*(.+?)(?:\nFIX:\s*(.+?))?(?=\nVIOLATION|\Z)",
+        re.DOTALL,
+    )
+    matches = list(pattern.finditer(raw))
+    if matches:
+        violations = [
+            Violation(
+                rule=m.group(1),
+                file="",
+                message=m.group(2).strip(),
+                remediation=(m.group(3) or "").strip(),
+            )
+            for m in matches
+        ]
+        return _format_violations(violations, label="structural")
+    return _truncate_with_guidance(raw, "structural check")
+
+
 def _parse_generic(raw: str) -> str:
     """Generic fallback: truncated output with guidance."""
     return _truncate_with_guidance(raw, "command")
@@ -161,6 +192,7 @@ _PARSERS: list[tuple[str, callable]] = [
     (r"pytest|py\.test|python.*test", _parse_pytest),
     (r"ruff|eslint|flake8|pylint", _parse_ruff),
     (r"tsc|typescript|tsc-check", _parse_tsc),
+    (r"structural|layer|boundary", _parse_structural),
 ]
 
 
