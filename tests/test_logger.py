@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-
+import threading
+from unittest.mock import ANY
 
 from lindy_orchestrator.logger import ActionLogger
 
@@ -21,6 +22,19 @@ class TestActionLoggerInit:
 
 
 class TestLogAction:
+    def test_uses_shared_append_jsonl_helper(self, tmp_path, mocker):
+        log_path = tmp_path / "actions.jsonl"
+        append_jsonl = mocker.patch("lindy_orchestrator.logger.append_jsonl")
+        logger = ActionLogger(log_path)
+
+        logger.log_action("deploy", result="success")
+
+        append_jsonl.assert_called_once_with(
+            log_path,
+            {"timestamp": ANY, "action": "deploy", "result": "success"},
+            lock=logger._lock,
+        )
+
     def test_basic_success_entry(self, tmp_path):
         log_path = tmp_path / "actions.jsonl"
         logger = ActionLogger(log_path)
@@ -112,20 +126,21 @@ class TestLogAction:
         assert json.loads(lines[0])["action"] == "first"
         assert json.loads(lines[2])["action"] == "third"
 
-    def test_os_error_fallback_to_stderr(self, tmp_path, capsys):
+    def test_os_error_fallback_to_stderr(self, tmp_path, capsys, mocker):
         log_path = tmp_path / "actions.jsonl"
         logger = ActionLogger(log_path)
-
-        # Remove the parent directory so open() raises OSError
-        import shutil
-
-        shutil.rmtree(tmp_path)
+        mocker.patch("lindy_orchestrator.logger.append_jsonl", side_effect=OSError("disk full"))
 
         logger.log_action("test", result="success")
 
         captured = capsys.readouterr()
         assert "[log fallback]" in captured.err
         assert "test" in captured.err
+
+    def test_logger_has_private_write_lock(self, tmp_path):
+        logger = ActionLogger(tmp_path / "actions.jsonl")
+
+        assert isinstance(logger._lock, type(threading.Lock()))
 
 
 class TestLogDispatch:

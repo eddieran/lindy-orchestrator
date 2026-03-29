@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .jsonl import append_jsonl
 
 _log = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ class ActionLogger:
 
     def __init__(self, log_path: Path):
         self.log_path = log_path
+        self._lock = threading.Lock()
         log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def log_action(
@@ -42,8 +45,7 @@ class ActionLogger:
                 entry["output"] = str(output)
 
         try:
-            with self.log_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+            append_jsonl(self.log_path, entry, lock=self._lock)
         except OSError:
             _log.warning("Failed to write action log to %s", self.log_path, exc_info=True)
             print(f"[log fallback] {action}: {result}", file=sys.stderr)
