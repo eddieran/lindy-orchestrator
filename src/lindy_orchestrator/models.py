@@ -233,6 +233,7 @@ class DispatchResult:
     module: str
     success: bool
     output: str
+    raw_output: str = ""
     exit_code: int = 0
     duration_seconds: float = 0.0
     truncated: bool = False
@@ -256,6 +257,7 @@ class GeneratorOutput:
 
     success: bool
     output: str = ""
+    prompt: str = ""
     diff: str = ""
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
@@ -283,6 +285,8 @@ class EvalResult:
     score: int = 0
     passed: bool = False
     retryable: bool = True
+    criteria_results: list[dict[str, Any]] = field(default_factory=list)
+    raw_output: str = ""
     feedback: EvalFeedback = field(default_factory=EvalFeedback)
     qa_results: list[QAResult] = field(default_factory=list)
     cost_usd: float = 0.0

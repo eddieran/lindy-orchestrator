@@ -7,6 +7,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Callable
 
 from .config import EvaluatorConfig, OrchestratorConfig
 from .models import EvalFeedback, EvalResult, GeneratorOutput, QACheck, QAResult, TaskSpec
@@ -16,6 +17,7 @@ from .qa import run_qa_gate
 _DIFF_LIMIT = 50_000
 _OUTPUT_LIMIT = 10_000
 _QA_OUTPUT_LIMIT = 1_000
+_AC_PREFIX_RE = re.compile(r"^(?:[-*+]\s+|\d+\.\s+|\[[ xX]\]\s+)")
 
 
 class EvaluatorRunner:
@@ -24,6 +26,11 @@ class EvaluatorRunner:
     def __init__(self, config: EvaluatorConfig, project_config: OrchestratorConfig):
         self.config = config
         self.project_config = project_config
+        self._qa_event_sink: Callable[[QAResult], None] | None = None
+
+    def set_qa_event_sink(self, sink: Callable[[QAResult], None] | None) -> None:
+        """Register a callback for each raw QA result as it completes."""
+        self._qa_event_sink = sink
 
     def evaluate(self, task: TaskSpec, gen_output: GeneratorOutput, worktree: Path) -> EvalResult:
         """Evaluate a completed generator attempt."""
@@ -48,6 +55,7 @@ class EvaluatorRunner:
                 score=0,
                 passed=False,
                 retryable=False,
+                raw_output="",
                 feedback=EvalFeedback(
                     summary="Only non-retryable QA failures remain",
                     specific_errors=[f"{result.gate}: {result.output}" for result in failed_qa],
@@ -97,7 +105,10 @@ class EvaluatorRunner:
             }
             ordered_results: dict[int, QAResult] = {}
             for future in as_completed(futures):
-                ordered_results[futures[future]] = future.result()
+                result = future.result()
+                ordered_results[futures[future]] = result
+                if self._qa_event_sink is not None:
+                    self._qa_event_sink(result)
 
         for index in range(len(selected_checks)):
             results.append(ordered_results[index])
@@ -128,6 +139,7 @@ class EvaluatorRunner:
                 score=0,
                 passed=False,
                 retryable=retryable,
+                raw_output="",
                 feedback=EvalFeedback(
                     summary=f"Evaluator timed out after {self.config.timeout_seconds}s"
                 ),
@@ -139,16 +151,20 @@ class EvaluatorRunner:
                 score=0,
                 passed=False,
                 retryable=retryable,
+                raw_output="",
                 feedback=EvalFeedback(summary=f"Evaluator failed: {exc}"),
                 qa_results=qa_results,
                 duration_seconds=time.monotonic() - started,
             )
+
+        raw_output = dispatch_result.raw_output or dispatch_result.output
 
         if not dispatch_result.success:
             return EvalResult(
                 score=0,
                 passed=False,
                 retryable=retryable,
+                raw_output=raw_output,
                 feedback=EvalFeedback(
                     summary="Evaluator failed", evidence=dispatch_result.output[:500]
                 ),
@@ -158,12 +174,13 @@ class EvaluatorRunner:
             )
 
         try:
-            payload = self._parse_json_payload(dispatch_result.output)
+            payload = self._parse_json_payload(raw_output)
         except ValueError:
             return EvalResult(
                 score=0,
                 passed=False,
                 retryable=retryable,
+                raw_output=raw_output,
                 feedback=EvalFeedback(
                     summary="Failed to parse evaluator output",
                     evidence=dispatch_result.output[:500],
@@ -188,6 +205,10 @@ class EvaluatorRunner:
             score=score,
             passed=score >= self.config.pass_threshold,
             retryable=retryable,
+            criteria_results=self._build_criteria_results(
+                task.acceptance_criteria, feedback.failed_criteria
+            ),
+            raw_output=raw_output,
             feedback=feedback,
             qa_results=qa_results,
             cost_usd=dispatch_result.cost_usd,
@@ -304,6 +325,44 @@ class EvaluatorRunner:
         if isinstance(value, list):
             return [str(item) for item in value if str(item).strip()]
         return [str(value)]
+
+    @classmethod
+    def _build_criteria_results(
+        cls,
+        acceptance_criteria: str,
+        failed_criteria: list[str],
+    ) -> list[dict[str, object]]:
+        criteria = cls._extract_acceptance_criteria(acceptance_criteria)
+        if not criteria:
+            return []
+
+        failed_lookup = {item.strip().lower() for item in failed_criteria if item.strip()}
+        results: list[dict[str, object]] = []
+        for criterion in criteria:
+            normalized = criterion.lower()
+            passed = normalized not in failed_lookup
+            if passed and failed_lookup:
+                passed = not any(
+                    failed in normalized or normalized in failed for failed in failed_lookup
+                )
+            results.append({"criterion": criterion, "passed": passed})
+        return results
+
+    @classmethod
+    def _extract_acceptance_criteria(cls, acceptance_criteria: str) -> list[str]:
+        criteria: list[str] = []
+        for raw_line in acceptance_criteria.splitlines():
+            line = cls._normalize_criterion(raw_line)
+            if line:
+                criteria.append(line)
+        return criteria
+
+    @staticmethod
+    def _normalize_criterion(line: str) -> str:
+        stripped = line.strip()
+        if not stripped:
+            return ""
+        return _AC_PREFIX_RE.sub("", stripped).strip()
 
     def _truncate(self, value: str, limit: int) -> str:
         if len(value) <= limit:

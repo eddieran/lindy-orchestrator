@@ -136,6 +136,7 @@ class TestGcCommand:
         # Verify apply=False
         call_kwargs = mock_run_gc.call_args
         assert call_kwargs[1]["apply"] is False
+        assert call_kwargs[1]["max_session_age_days"] is None
 
     @patch("lindy_orchestrator.gc.run_gc")
     @patch("lindy_orchestrator.gc.format_gc_report")

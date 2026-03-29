@@ -23,6 +23,7 @@ class EventType(str, Enum):
     AGENT_EVENT = "agent_event"
     AGENT_OUTPUT = "agent_output"
     GIT_DIFF_CAPTURED = "git_diff_captured"
+    PROMPT_SENT = "prompt_sent"
     TASK_STARTED = "task_started"
     TASK_COMPLETED = "task_completed"
     TASK_FAILED = "task_failed"
@@ -38,6 +39,7 @@ class EventType(str, Enum):
     CHECKPOINT_SAVED = "checkpoint_saved"
     MAILBOX_MESSAGE = "mailbox_message"
     SESSION_START = "session_start"
+    SESSION_RESUMED = "session_resumed"
     SESSION_END = "session_end"
 
 
@@ -221,9 +223,24 @@ class HookRegistry:
         loop = self._async_loop
         thread = self._async_thread
         if loop is not None and loop.is_running():
+
+            async def _cancel_pending() -> None:
+                current = asyncio.current_task()
+                pending = [task for task in asyncio.all_tasks() if task is not current]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+
+            try:
+                asyncio.run_coroutine_threadsafe(_cancel_pending(), loop).result(timeout=timeout)
+            except Exception:
+                log.warning("Async hook shutdown cleanup failed", exc_info=True)
             loop.call_soon_threadsafe(loop.stop)
         if thread is not None:
             thread.join(timeout=timeout)
+        if loop is not None and not loop.is_closed():
+            loop.close()
         self._async_loop = None
         self._async_thread = None
 

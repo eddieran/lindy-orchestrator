@@ -1,0 +1,576 @@
+"""Tests for SessionLogger and the L1 summary stream."""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from unittest.mock import ANY
+
+from lindy_orchestrator.hooks import Event, EventType, HookRegistry
+from lindy_orchestrator.session_logger import SessionLogger
+
+
+def _wait_for_lines(path, count: int, timeout: float = 2.0) -> list[dict]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+        if len(lines) >= count:
+            return [json.loads(line) for line in lines]
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {count} lines in {path}")
+
+
+class TestSessionLoggerInit:
+    def test_level_one_creates_summary_only(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=1)
+
+        assert logger.summary_path.exists()
+        assert not logger.decisions_path.exists()
+        assert not logger.transcript_path.exists()
+
+    def test_level_three_prepares_future_stream_files(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=3)
+
+        assert logger.summary_path.exists()
+        assert logger.decisions_path.exists()
+        assert logger.transcript_path.exists()
+
+
+class TestSessionLoggerAttach:
+    def test_uses_shared_append_jsonl_helper(self, tmp_path, mocker) -> None:
+        append_jsonl = mocker.patch("lindy_orchestrator.session_logger.append_jsonl")
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.TASK_STARTED,
+                timestamp="2026-03-29T10:18:05+00:00",
+                task_id=7,
+                module="backend",
+                data={"description": "ship it"},
+            )
+        )
+
+        append_jsonl.assert_called_once_with(
+            logger.summary_path,
+            {
+                "ts": "2026-03-29T10:18:05+00:00",
+                "level": 1,
+                "event": "task_started",
+                "task_id": 7,
+                "module": "backend",
+                "description": "ship it",
+            },
+            lock=logger._lock,
+        )
+
+    def test_routes_l1_events_to_summary_jsonl(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.SESSION_START,
+                timestamp="2026-03-29T10:18:05+00:00",
+                data={"goal": "Add SessionLogger"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_STARTED,
+                timestamp="2026-03-29T10:18:06+00:00",
+                task_id=1,
+                module="backend",
+                data={"description": "Implement logger"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_COMPLETED,
+                timestamp="2026-03-29T10:18:07+00:00",
+                task_id=1,
+                module="backend",
+                data={"description": "Implement logger", "duration_seconds": 1.0, "cost_usd": 0.12},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_FAILED,
+                timestamp="2026-03-29T10:18:08+00:00",
+                task_id=2,
+                module="frontend",
+                data={"reason": "lint", "description": "Fix UI"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_SKIPPED,
+                timestamp="2026-03-29T10:18:09+00:00",
+                task_id=3,
+                module="qa",
+                data={"reason": "dependency failed", "description": "Run QA"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.QA_PASSED,
+                timestamp="2026-03-29T10:18:10+00:00",
+                task_id=1,
+                module="backend",
+                data={"gate": "pytest", "output": "all green"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.QA_FAILED,
+                timestamp="2026-03-29T10:18:11+00:00",
+                task_id=2,
+                module="frontend",
+                data={"gate": "ruff", "output": "F401"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.SESSION_END,
+                timestamp="2026-03-29T10:18:12+00:00",
+                data={"goal": "Add SessionLogger", "total_dispatches": 2, "has_failures": True},
+            )
+        )
+
+        entries = [
+            json.loads(line)
+            for line in logger.summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+        assert [entry["event"] for entry in entries] == [
+            "session_start",
+            "task_started",
+            "task_completed",
+            "task_completed",
+            "task_completed",
+            "qa_passed",
+            "qa_failed",
+            "session_end",
+        ]
+
+        assert entries[0] == {
+            "ts": "2026-03-29T10:18:05+00:00",
+            "level": 1,
+            "event": "session_start",
+            "task_id": None,
+            "goal": "Add SessionLogger",
+        }
+        assert entries[2]["status"] == "completed"
+        assert entries[2]["duration_seconds"] == 1.0
+        assert entries[2]["cost_usd"] == 0.12
+        assert entries[3]["status"] == "failed"
+        assert entries[3]["reason"] == "lint"
+        assert entries[4]["status"] == "skipped"
+        assert entries[5]["gate"] == "pytest"
+        assert entries[6]["output"] == "F401"
+        assert entries[7]["has_failures"] is True
+
+        for entry in entries:
+            assert entry["ts"] == ANY
+            assert entry["level"] == 1
+            assert "event" in entry
+            assert "task_id" in entry
+
+    def test_routes_planning_phase_and_session_resumed(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.PHASE_CHANGED,
+                timestamp="2026-03-29T10:18:05+00:00",
+                data={"phase": "planning", "status": "failed", "error": "planner blew up"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.SESSION_RESUMED,
+                timestamp="2026-03-29T10:18:06+00:00",
+                data={"goal": "Add SessionLogger", "session_id": "abc123"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.PHASE_CHANGED,
+                timestamp="2026-03-29T10:18:07+00:00",
+                data={"phase": "qa", "status": "started"},
+            )
+        )
+
+        entries = [
+            json.loads(line)
+            for line in logger.summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+        assert entries == [
+            {
+                "ts": "2026-03-29T10:18:05+00:00",
+                "level": 1,
+                "event": "phase_changed",
+                "task_id": None,
+                "phase": "planning",
+                "status": "failed",
+                "error": "planner blew up",
+            },
+            {
+                "ts": "2026-03-29T10:18:06+00:00",
+                "level": 1,
+                "event": "session_resumed",
+                "task_id": None,
+                "goal": "Add SessionLogger",
+                "session_id": "abc123",
+            },
+        ]
+
+    def test_level_one_ignores_non_l1_events(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(Event(type=EventType.AGENT_EVENT, task_id=1, data={"kind": "tool_use"}))
+        hooks.emit(Event(type=EventType.AGENT_OUTPUT, task_id=1, data={"text": "hello"}))
+        hooks.emit(Event(type=EventType.GIT_DIFF_CAPTURED, task_id=1, data={"files": 2}))
+        hooks.emit(Event(type=EventType.TASK_HEARTBEAT, task_id=1, data={"tool": "Edit"}))
+        hooks.emit(Event(type=EventType.PHASE_CHANGED, task_id=1, data={"phase": "qa"}))
+        hooks.emit(Event(type=EventType.EVAL_SCORED, task_id=1, data={"score": 0.8}))
+        hooks.emit(Event(type=EventType.TASK_RETRYING, task_id=1, data={"retry": 1}))
+        hooks.emit(Event(type=EventType.STALL_WARNING, task_id=1, data={"stall_seconds": 45}))
+        hooks.emit(Event(type=EventType.PROMPT_SENT, task_id=1, data={"prompt": "full prompt"}))
+
+        assert logger.summary_path.read_text(encoding="utf-8") == ""
+        assert not logger.decisions_path.exists()
+
+    def test_level_two_routes_decision_events_to_decisions_jsonl(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=2)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+        full_output = "F401 " * 80
+        full_prompt = "prompt line\n" * 40
+
+        hooks.emit(
+            Event(
+                type=EventType.QA_FAILED,
+                timestamp="2026-03-29T10:18:05+00:00",
+                task_id=2,
+                module="frontend",
+                data={
+                    "gate": "ruff",
+                    "output": full_output[:200],
+                    "full_output": full_output,
+                    "retryable": True,
+                },
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.EVAL_SCORED,
+                timestamp="2026-03-29T10:18:06+00:00",
+                task_id=2,
+                module="frontend",
+                data={
+                    "score": 42,
+                    "passed": False,
+                    "criteria_results": [
+                        {"criterion": "Lint passes", "passed": False},
+                        {"criterion": "Tests pass", "passed": True},
+                    ],
+                    "reasoning": {"summary": "Lint failed", "failed_criteria": ["Lint passes"]},
+                    "raw_output": '{"score": 42}',
+                },
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_RETRYING,
+                timestamp="2026-03-29T10:18:07+00:00",
+                task_id=2,
+                module="frontend",
+                data={"decision": "retry", "feedback_summary": "Fix lint"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.STALL_KILLED,
+                timestamp="2026-03-29T10:18:08+00:00",
+                task_id=2,
+                module="frontend",
+                data={"stall_seconds": 300},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.PROMPT_SENT,
+                timestamp="2026-03-29T10:18:09+00:00",
+                task_id=2,
+                module="frontend",
+                data={"prompt": full_prompt},
+            )
+        )
+
+        summary_entries = [
+            json.loads(line)
+            for line in logger.summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        decision_entries = [
+            json.loads(line)
+            for line in logger.decisions_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+        assert summary_entries == [
+            {
+                "ts": "2026-03-29T10:18:05+00:00",
+                "level": 1,
+                "event": "qa_failed",
+                "task_id": 2,
+                "module": "frontend",
+                "gate": "ruff",
+                "output": full_output[:200],
+                "retryable": True,
+            }
+        ]
+        assert [entry["event"] for entry in decision_entries] == [
+            "qa_failed",
+            "eval_scored",
+            "task_retrying",
+            "stall_killed",
+            "prompt_sent",
+        ]
+        assert decision_entries[0]["output"] == full_output
+        assert "full_output" not in decision_entries[0]
+        assert decision_entries[1]["criteria_results"][0]["passed"] is False
+        assert decision_entries[1]["reasoning"]["summary"] == "Lint failed"
+        assert decision_entries[1]["raw_output"] == '{"score": 42}'
+        assert decision_entries[2]["decision"] == "retry"
+        assert decision_entries[4]["prompt"] == full_prompt
+
+    def test_level_three_routes_transcript_events(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=3)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.AGENT_EVENT,
+                timestamp="2026-03-29T10:18:05+00:00",
+                task_id=1,
+                module="backend",
+                data={
+                    "payload": {
+                        "type": "function_call",
+                        "name": "shell",
+                        "arguments": {"cmd": "echo hi"},
+                    }
+                },
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.AGENT_OUTPUT,
+                timestamp="2026-03-29T10:18:06+00:00",
+                task_id=1,
+                module="backend",
+                data={"output": "full output", "truncated": False},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.GIT_DIFF_CAPTURED,
+                timestamp="2026-03-29T10:18:07+00:00",
+                task_id=1,
+                module="backend",
+                data={"diff": "diff --git a/file b/file", "source": "git log -1 -p"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_HEARTBEAT,
+                timestamp="2026-03-29T10:18:08+00:00",
+                task_id=1,
+                module="backend",
+                data={"tool": "Edit", "event_count": 3},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.CHECKPOINT_SAVED,
+                timestamp="2026-03-29T10:18:09+00:00",
+                data={"checkpoint_count": 2},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.MAILBOX_MESSAGE,
+                timestamp="2026-03-29T10:18:10+00:00",
+                task_id=2,
+                module="qa",
+                data={"direction": "incoming", "subject": "status"},
+            )
+        )
+
+        entries = _wait_for_lines(logger.transcript_path, 6)
+
+        assert [entry["event"] for entry in entries] == [
+            "agent_event",
+            "agent_output",
+            "git_diff_captured",
+            "task_heartbeat",
+            "checkpoint_saved",
+            "mailbox_message",
+        ]
+        assert all(entry["level"] == 3 for entry in entries)
+        assert entries[0]["payload"] == {
+            "type": "function_call",
+            "name": "shell",
+            "arguments": {"cmd": "echo hi"},
+        }
+        assert entries[2]["source"] == "git log -1 -p"
+        assert entries[5]["subject"] == "status"
+        hooks.shutdown()
+
+    def test_level_two_ignores_transcript_events(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=2)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(Event(type=EventType.AGENT_EVENT, task_id=1, data={"payload": {"type": "x"}}))
+        time.sleep(0.05)
+
+        assert not logger.transcript_path.exists()
+
+    def test_level_three_transcript_handler_is_async(self, tmp_path, mocker) -> None:
+        logger = SessionLogger(tmp_path, level=3)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        append_calls = []
+        write_started = threading.Event()
+        release_write = threading.Event()
+
+        def slow_append(path, data, lock=None):
+            append_calls.append((path, data))
+            if path == logger.transcript_path:
+                write_started.set()
+                assert release_write.wait(timeout=2), (
+                    "timed out waiting to release transcript write"
+                )
+            else:
+                raise AssertionError(f"unexpected path {path}")
+
+        mocker.patch("lindy_orchestrator.session_logger.append_jsonl", side_effect=slow_append)
+
+        start = time.monotonic()
+        hooks.emit(Event(type=EventType.AGENT_EVENT, task_id=1, data={"payload": {"type": "x"}}))
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 0.2
+        assert write_started.wait(timeout=2), "async transcript handler did not start"
+
+        release_write.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if append_calls:
+                break
+            time.sleep(0.01)
+
+        assert append_calls
+        hooks.shutdown()
+
+    def test_concurrent_writes_produce_valid_jsonl(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+        barrier = threading.Barrier(10)
+
+        def emit_batch(worker_id: int) -> None:
+            barrier.wait()
+            for offset in range(100):
+                hooks.emit(
+                    Event(
+                        type=EventType.TASK_STARTED,
+                        task_id=worker_id * 100 + offset,
+                        module=f"mod-{worker_id}",
+                        data={"description": "concurrent emit"},
+                    )
+                )
+
+        threads = [
+            threading.Thread(target=emit_batch, args=(worker_id,)) for worker_id in range(10)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        lines = logger.summary_path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1000
+
+        entries = [json.loads(line) for line in lines]
+        assert all(entry["event"] == "task_started" for entry in entries)
+        assert all(entry["level"] == 1 for entry in entries)
+        assert {entry["task_id"] for entry in entries} == set(range(1000))
+
+    def test_existing_session_start_is_not_duplicated(self, tmp_path) -> None:
+        summary = tmp_path / "summary.jsonl"
+        summary.write_text(
+            json.dumps(
+                {
+                    "ts": "2026-03-29T10:18:05+00:00",
+                    "level": 1,
+                    "event": "session_start",
+                    "task_id": None,
+                    "goal": "existing goal",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.SESSION_START,
+                timestamp="2026-03-29T10:18:06+00:00",
+                data={"goal": "new goal"},
+            )
+        )
+
+        entries = [
+            json.loads(line)
+            for line in logger.summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+        assert len(entries) == 1
+        assert entries[0]["goal"] == "existing goal"
+
+    def test_os_error_fallback_to_stderr(self, tmp_path, capsys, mocker) -> None:
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+        mocker.patch(
+            "lindy_orchestrator.session_logger.append_jsonl", side_effect=OSError("disk full")
+        )
+
+        hooks.emit(Event(type=EventType.TASK_STARTED, task_id=11))
+
+        captured = capsys.readouterr()
+        assert "[session log fallback]" in captured.err
+        assert "task_started" in captured.err
+        assert "task_id=11" in captured.err

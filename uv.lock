@@ -426,7 +426,7 @@ wheels = [
 
 [[package]]
 name = "lindy-orchestrator"
-version = "0.15.2"
+version = "0.15.1"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
