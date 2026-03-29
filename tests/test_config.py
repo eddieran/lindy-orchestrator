@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from lindy_orchestrator.config import OrchestratorConfig, load_config, _normalize_qa_gates
+from lindy_orchestrator.config import OrchestratorConfig, QAGatesConfig, load_config
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -87,8 +87,8 @@ def test_star_module_path():
 class TestNormalizeQaGates:
     def test_module_scoped_gates_become_custom(self):
         """qa_gates.backend: [...] is converted to custom entries."""
-        raw = {
-            "qa_gates": {
+        qa = QAGatesConfig.model_validate(
+            {
                 "backend": [
                     {"name": "pytest", "command": "cd backend && pytest"},
                 ],
@@ -96,24 +96,17 @@ class TestNormalizeQaGates:
                     {"name": "playwright", "command": "npx playwright test"},
                 ],
             }
-        }
-        _normalize_qa_gates(raw)
-        custom = raw["qa_gates"]["custom"]
-        assert len(custom) == 2
-        # Module filters are set
-        assert custom[0]["modules"] == ["backend"]
-        assert custom[1]["modules"] == ["frontend"]
-        # cwd defaults to project root for module-scoped gates
-        assert custom[0]["cwd"] == "."
-        assert custom[1]["cwd"] == "."
-        # Original module keys are removed
-        assert "backend" not in raw["qa_gates"]
-        assert "frontend" not in raw["qa_gates"]
+        )
+        assert len(qa.custom) == 2
+        assert qa.custom[0].modules == ["backend"]
+        assert qa.custom[1].modules == ["frontend"]
+        assert qa.custom[0].cwd == "."
+        assert qa.custom[1].cwd == "."
 
     def test_existing_custom_preserved(self):
         """Existing custom gates are preserved alongside module-scoped ones."""
-        raw = {
-            "qa_gates": {
+        qa = QAGatesConfig.model_validate(
+            {
                 "custom": [
                     {"name": "global-lint", "command": "ruff check ."},
                 ],
@@ -121,41 +114,36 @@ class TestNormalizeQaGates:
                     {"name": "pytest", "command": "pytest"},
                 ],
             }
-        }
-        _normalize_qa_gates(raw)
-        custom = raw["qa_gates"]["custom"]
-        assert len(custom) == 2
-        assert custom[0]["name"] == "global-lint"
-        assert custom[1]["name"] == "pytest"
+        )
+        assert len(qa.custom) == 2
+        assert qa.custom[0].name == "global-lint"
+        assert qa.custom[1].name == "pytest"
 
     def test_known_keys_not_normalized(self):
         """ci_check, structural, layer_check are not treated as modules."""
-        raw = {
-            "qa_gates": {
+        qa = QAGatesConfig.model_validate(
+            {
                 "structural": {"max_file_lines": 300},
                 "layer_check": {"enabled": True},
             }
-        }
-        _normalize_qa_gates(raw)
-        assert "custom" not in raw["qa_gates"]
-        assert raw["qa_gates"]["structural"]["max_file_lines"] == 300
+        )
+        assert len(qa.custom) == 0
+        assert qa.structural.max_file_lines == 300
 
-    def test_no_qa_gates_is_noop(self):
-        raw = {"project": {"name": "test"}}
-        _normalize_qa_gates(raw)
-        assert "qa_gates" not in raw
+    def test_no_data_produces_defaults(self):
+        qa = QAGatesConfig.model_validate({})
+        assert len(qa.custom) == 0
 
     def test_module_scoped_gate_with_explicit_cwd(self):
         """Explicit cwd in a module-scoped gate is preserved."""
-        raw = {
-            "qa_gates": {
+        qa = QAGatesConfig.model_validate(
+            {
                 "backend": [
                     {"name": "test", "command": "pytest", "cwd": "backend/"},
                 ],
             }
-        }
-        _normalize_qa_gates(raw)
-        assert raw["qa_gates"]["custom"][0]["cwd"] == "backend/"
+        )
+        assert qa.custom[0].cwd == "backend/"
 
     def test_load_module_scoped_config(self, tmp_path):
         """Full round-trip: module-scoped YAML → loaded config."""

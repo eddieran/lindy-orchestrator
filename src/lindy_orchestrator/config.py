@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -75,11 +75,54 @@ class LayerCheckConfig(BaseModel):
     unknown_file_policy: str = "skip"  # skip | warn
 
 
+_QA_GATES_KNOWN_KEYS = {"ci_check", "structural", "layer_check", "custom"}
+
+
 class QAGatesConfig(BaseModel):
     ci_check: CICheckConfig = Field(default_factory=CICheckConfig)
     structural: StructuralCheckConfig = Field(default_factory=StructuralCheckConfig)
     layer_check: LayerCheckConfig = Field(default_factory=LayerCheckConfig)
     custom: list[CustomGateConfig] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_module_scoped_gates(cls, data: Any) -> Any:
+        """Convert module-scoped qa_gates into unified ``custom`` list.
+
+        Users may write::
+
+            qa_gates:
+              backend:
+                - name: pytest
+                  command: "cd backend && pytest"
+
+        This normalizes them into::
+
+            qa_gates:
+              custom:
+                - name: pytest
+                  command: "cd backend && pytest"
+                  modules: ["backend"]
+                  cwd: "."
+        """
+        if not isinstance(data, dict):
+            return data
+        custom: list[dict[str, Any]] = list(data.get("custom", []))
+        for key in list(data.keys()):
+            if key in _QA_GATES_KNOWN_KEYS:
+                continue
+            gates = data.pop(key)
+            if not isinstance(gates, list):
+                continue
+            for gate in gates:
+                if not isinstance(gate, dict):
+                    continue
+                gate.setdefault("modules", [key])
+                gate.setdefault("cwd", ".")
+                custom.append(gate)
+        if custom:
+            data["custom"] = custom
+        return data
 
 
 class LifecycleHooksConfig(BaseModel):
@@ -111,6 +154,13 @@ class TrackerConfig(BaseModel):
     sync_on_complete: bool = True  # auto-comment + close on completion
 
 
+class OTelConfig(BaseModel):
+    enabled: bool = False
+    exporter: str = "console"  # "console" or "otlp"
+    endpoint: str = ""
+    service_name: str = "lindy-orchestrator"
+
+
 class LoggingConfig(BaseModel):
     dir: str = ".orchestrator/logs"
     session_dir: str = ".orchestrator/sessions"
@@ -138,11 +188,21 @@ class OrchestratorConfig(BaseModel):
     mailbox: MailboxConfig = Field(default_factory=MailboxConfig)
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     lifecycle_hooks: LifecycleHooksConfig = Field(default_factory=LifecycleHooksConfig)
+    otel: OTelConfig = Field(default_factory=OTelConfig)
 
     # Internal: set after loading, not from YAML
     _config_dir: Path = PrivateAttr(default_factory=lambda: Path("."))
     _config_path: Path | None = PrivateAttr(default=None)
     _config_mtime: float = PrivateAttr(default=0.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _apply_global_provider_default(cls, data: Any) -> Any:
+        """Fall back to ~/.lindy/config.yaml provider when not set in project config."""
+        if isinstance(data, dict) and "provider" not in data.get("dispatcher", {}):
+            global_cfg = load_global_config()
+            data.setdefault("dispatcher", {})["provider"] = global_cfg.provider
+        return data
 
     @property
     def root(self) -> Path:
@@ -237,7 +297,6 @@ class OrchestratorConfig(BaseModel):
             return None
         try:
             raw = _load_yaml(self._config_path)
-            _normalize_qa_gates(raw)
             fresh = OrchestratorConfig.model_validate(raw)
         except Exception:
             return None
@@ -348,13 +407,6 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
 
     path = Path(config_path).resolve()
     raw = _load_yaml(path)
-    _normalize_qa_gates(raw)
-
-    # Apply global config as defaults — only when project yaml doesn't explicitly set provider
-    if "provider" not in raw.get("dispatcher", {}):
-        global_cfg = load_global_config()
-        raw.setdefault("dispatcher", {})["provider"] = global_cfg.provider
-
     cfg = OrchestratorConfig.model_validate(raw)
     # When loaded from .orchestrator/config.yaml, _config_dir must be the
     # project root (grandparent), not the .orchestrator/ directory.
@@ -368,59 +420,6 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
     except OSError:
         pass
     return cfg
-
-
-_QA_GATES_KNOWN_KEYS = {"ci_check", "structural", "layer_check", "custom"}
-
-
-def _normalize_qa_gates(raw: dict[str, Any]) -> None:
-    """Convert module-scoped qa_gates into unified ``custom`` list.
-
-    Users may write::
-
-        qa_gates:
-          backend:
-            - name: pytest
-              command: "cd backend && pytest"
-          frontend:
-            - name: playwright
-              command: "npx playwright test"
-
-    This normalizes them into::
-
-        qa_gates:
-          custom:
-            - name: pytest
-              command: "cd backend && pytest"
-              modules: ["backend"]
-              cwd: "."
-            - name: playwright
-              command: "npx playwright test"
-              modules: ["frontend"]
-              cwd: "."
-    """
-    qa = raw.get("qa_gates")
-    if not isinstance(qa, dict):
-        return
-
-    custom: list[dict[str, Any]] = list(qa.get("custom", []))
-    for key in list(qa.keys()):
-        if key in _QA_GATES_KNOWN_KEYS:
-            continue
-        gates = qa.pop(key)
-        if not isinstance(gates, list):
-            continue
-        for gate in gates:
-            if not isinstance(gate, dict):
-                continue
-            gate.setdefault("modules", [key])
-            # Module-scoped gates without explicit cwd run from project root
-            # (commands like "cd backend && pytest" expect project root).
-            gate.setdefault("cwd", ".")
-            custom.append(gate)
-
-    if custom:
-        qa["custom"] = custom
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
