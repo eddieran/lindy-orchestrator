@@ -26,7 +26,7 @@ class TestPlanSerialization:
                     module="frontend",
                     description="Login page",
                     depends_on=[1],
-                    qa_checks=[QACheck(gate="structural_check", params={"max_file_lines": 500})],
+                    qa_checks=[QACheck(gate="structural_check", params={"enforce_module_boundary": True})],
                 ),
             ],
         )

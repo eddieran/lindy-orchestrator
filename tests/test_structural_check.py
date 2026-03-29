@@ -3,42 +3,13 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from lindy_orchestrator.config import StructuralCheckConfig
 from lindy_orchestrator.qa.structural_check import (
     Violation,
-    _check_file_size,
     _check_import_boundary,
     _check_sensitive_files,
     _format_violations,
     _get_staged_files,
-    run_structural_check,
 )
-
-
-class TestFileSize:
-    def test_under_limit(self, tmp_path: Path):
-        f = tmp_path / "small.py"
-        f.write_text("line\n" * 50)
-        violations = _check_file_size(f, "small.py", max_lines=500)
-        assert violations == []
-
-    def test_over_limit(self, tmp_path: Path):
-        f = tmp_path / "big.py"
-        f.write_text("line\n" * 600)
-        violations = _check_file_size(f, "big.py", max_lines=500)
-        assert len(violations) == 1
-        v = violations[0]
-        assert v.rule == "file_size"
-        assert "600 lines" in v.message
-        assert "500-line limit" in v.message
-        assert "Split into" in v.remediation
-        assert "big_core.py" in v.remediation
-
-    def test_exactly_at_limit(self, tmp_path: Path):
-        f = tmp_path / "exact.py"
-        f.write_text("line\n" * 500)
-        violations = _check_file_size(f, "exact.py", max_lines=500)
-        assert violations == []
 
 
 class TestSensitiveFiles:
@@ -94,27 +65,6 @@ class TestImportBoundary:
         violations = _check_import_boundary(tmp_path, "backend", ["backend/service.py"])
         assert violations == []
 
-
-class TestRunStructuralCheck:
-    @patch("lindy_orchestrator.qa.structural_check._get_staged_files")
-    def test_oversized_file_with_remediation(self, mock_staged, tmp_path: Path):
-        # Create oversized file
-        mod = tmp_path / "backend"
-        mod.mkdir()
-        big = mod / "auth.py"
-        big.write_text("line\n" * 847)
-
-        mock_staged.return_value = ["backend/auth.py"]
-
-        config = StructuralCheckConfig(max_file_lines=500)
-        passed, violations = run_structural_check(tmp_path, "backend", config)
-
-        assert not passed
-        assert len(violations) >= 1
-        file_size_v = [v for v in violations if v.rule == "file_size"]
-        assert len(file_size_v) == 1
-        assert "847 lines" in file_size_v[0].message
-        assert "Split into" in file_size_v[0].remediation
 
 
 def _fake_run(returncode=0, stdout="", stderr=""):

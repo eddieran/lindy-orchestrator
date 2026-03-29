@@ -86,7 +86,6 @@ def prepare_qa_checks(
             QACheck(
                 gate="structural_check",
                 params={
-                    "max_file_lines": sc.max_file_lines,
                     "enforce_module_boundary": sc.enforce_module_boundary,
                     "sensitive_patterns": sc.sensitive_patterns,
                 },

@@ -154,30 +154,7 @@ class TestNonRetryable:
 
 
 class TestStructuralCheckDiffAwareness:
-    @patch("lindy_orchestrator.qa.structural_check._was_over_limit_at_base")
-    def test_pre_existing_large_file_skipped(self, mock_base: MagicMock, tmp_path: Path) -> None:
-        """File that was already over limit at merge-base is NOT flagged."""
-        from lindy_orchestrator.qa.structural_check import _check_file_size
-
-        mock_base.return_value = True  # was over limit at base
-        large_file = tmp_path / "service.go"
-        large_file.write_text("line\n" * 600)
-
-        violations = _check_file_size(large_file, "service.go", 500, tmp_path)
-        assert len(violations) == 0
-
-    @patch("lindy_orchestrator.qa.structural_check._was_over_limit_at_base")
-    def test_new_large_file_flagged(self, mock_base: MagicMock, tmp_path: Path) -> None:
-        """File that was under limit at merge-base IS flagged."""
-        mock_base.return_value = False
-        from lindy_orchestrator.qa.structural_check import _check_file_size
-
-        large_file = tmp_path / "new_file.go"
-        large_file.write_text("line\n" * 600)
-
-        violations = _check_file_size(large_file, "new_file.go", 500, tmp_path)
-        assert len(violations) == 1
-        assert violations[0].rule == "file_size"
+    pass  # file_size check removed
 
 
 # ---------------------------------------------------------------------------

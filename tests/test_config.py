@@ -151,13 +151,13 @@ class TestNormalizeQaGates:
         """ci_check, structural, layer_check are not treated as modules."""
         raw = {
             "qa_gates": {
-                "structural": {"max_file_lines": 300},
+                "structural": {"enforce_module_boundary": False},
                 "layer_check": {"enabled": True},
             }
         }
         _normalize_qa_gates(raw)
         assert "custom" not in raw["qa_gates"]
-        assert raw["qa_gates"]["structural"]["max_file_lines"] == 300
+        assert raw["qa_gates"]["structural"]["enforce_module_boundary"] is False
 
     def test_no_qa_gates_is_noop(self):
         raw = {"project": {"name": "test"}}

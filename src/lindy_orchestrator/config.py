@@ -100,7 +100,6 @@ class CustomGateConfig(BaseModel):
 
 
 class StructuralCheckConfig(BaseModel):
-    max_file_lines: int = 500
     enforce_module_boundary: bool = True
     sensitive_patterns: list[str] = Field(default_factory=lambda: [".env", "*.key", "*.pem"])
 

@@ -58,12 +58,7 @@ def run_structural_check(
         if not full_path.is_file():
             continue
 
-        # Check 1: File size (diff-aware: skips pre-existing violations)
-        violations.extend(
-            _check_file_size(full_path, filepath, config.max_file_lines, project_root)
-        )
-
-        # Check 2: Sensitive file patterns
+        # Check 1: Sensitive file patterns
         violations.extend(_check_sensitive_files(full_path, filepath, config.sensitive_patterns))
 
     # Check 3: Import boundary violations (module-level)
@@ -79,77 +74,6 @@ def run_structural_check(
 # Individual checks
 # ---------------------------------------------------------------------------
 
-
-def _check_file_size(
-    full_path: Path,
-    rel_path: str,
-    max_lines: int,
-    project_root: Path | None = None,
-) -> list[Violation]:
-    """Flag files exceeding the line limit.
-
-    Diff-aware: if the file was already over the limit at merge-base,
-    the violation is marked with retryable=False (pre-existing).
-    """
-    try:
-        line_count = sum(1 for _ in full_path.open("r", encoding="utf-8", errors="replace"))
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    if line_count > max_lines:
-        # Check if this is a pre-existing violation
-        pre_existing = _was_over_limit_at_base(project_root, rel_path, max_lines)
-        if pre_existing:
-            return []  # skip entirely — not caused by the agent
-
-        stem = full_path.stem
-        suffix = full_path.suffix
-        return [
-            Violation(
-                rule="file_size",
-                file=rel_path,
-                message=f"{rel_path} ({line_count} lines) exceeds {max_lines}-line limit.",
-                remediation=(
-                    f"Split into {stem}_core{suffix} (primary logic) and "
-                    f"{stem}_helpers{suffix} (utilities/helpers). "
-                    f"Keep each file under {max_lines} lines."
-                ),
-            )
-        ]
-    return []
-
-
-def _was_over_limit_at_base(project_root: Path | None, rel_path: str, max_lines: int) -> bool:
-    """Check if a file was already over the line limit at the merge-base commit."""
-    if project_root is None:
-        return False
-    for base in ("main", "master"):
-        try:
-            merge_result = subprocess.run(
-                ["git", "merge-base", base, "HEAD"],
-                cwd=project_root,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if merge_result.returncode != 0:
-                continue
-            base_sha = merge_result.stdout.strip()
-            # Get file content at merge-base
-            show_result = subprocess.run(
-                ["git", "show", f"{base_sha}:{rel_path}"],
-                cwd=project_root,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if show_result.returncode != 0:
-                return False  # file didn't exist at base — violation is new
-            base_lines = show_result.stdout.count("\n")
-            return base_lines > max_lines
-        except (subprocess.TimeoutExpired, OSError):
-            continue
-    return False
 
 
 def _check_sensitive_files(full_path: Path, rel_path: str, patterns: list[str]) -> list[Violation]:
@@ -388,8 +312,6 @@ class StructuralCheckGate:
         # Build config from params
         config = StructuralCheckConfig()
         if params:
-            if "max_file_lines" in params:
-                config.max_file_lines = int(params["max_file_lines"])
             if "enforce_module_boundary" in params:
                 config.enforce_module_boundary = bool(params["enforce_module_boundary"])
             if "sensitive_patterns" in params:
