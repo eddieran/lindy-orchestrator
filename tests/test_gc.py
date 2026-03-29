@@ -9,6 +9,7 @@ from unittest.mock import patch
 from lindy_orchestrator.config import (
     LoggingConfig,
     ModuleConfig,
+    ObservabilityConfig,
     OrchestratorConfig,
     ProjectConfig,
 )
@@ -25,7 +26,7 @@ from lindy_orchestrator.gc import (
 from lindy_orchestrator.session import session_file_path
 
 
-def _make_config(tmp_path: Path) -> OrchestratorConfig:
+def _make_config(tmp_path: Path, retention_days: int = 30) -> OrchestratorConfig:
     cfg = OrchestratorConfig(
         project=ProjectConfig(name="test", branch_prefix="af"),
         modules=[ModuleConfig(name="backend", path="backend")],
@@ -34,6 +35,7 @@ def _make_config(tmp_path: Path) -> OrchestratorConfig:
             session_dir=".orchestrator/sessions",
             log_file="actions.jsonl",
         ),
+        observability=ObservabilityConfig(retention_days=retention_days),
     )
     cfg._config_dir = tmp_path
 
@@ -106,7 +108,7 @@ class TestOldSessions:
         actions = _find_old_sessions(sessions_dir, max_age_days=30, apply=False)
         assert len(actions) == 0
 
-    def test_archives_when_applied(self, tmp_path: Path):
+    def test_deletes_flat_files_when_applied(self, tmp_path: Path):
         sessions_dir = tmp_path / "sessions"
         sessions_dir.mkdir()
 
@@ -120,9 +122,29 @@ class TestOldSessions:
         assert len(actions) == 1
         assert actions[0].applied
         assert not session_file.exists()
-        assert (sessions_dir / "archive" / "old.json").exists()
+        assert not (sessions_dir / "archive").exists()
 
-    def test_archives_directory_sessions_with_sidecar_files(self, tmp_path: Path):
+    def test_dry_run_keeps_directory_sessions_with_sidecar_files(self, tmp_path: Path):
+        sessions_dir = tmp_path / "sessions"
+        session_path = session_file_path(sessions_dir, "old")
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+
+        old_date = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+        session_path.write_text(
+            json.dumps({"session_id": "old", "started_at": old_date, "status": "done"})
+        )
+        summary_path = session_path.parent / "summary.jsonl"
+        summary_path.write_text('{"event":"summary"}\n', encoding="utf-8")
+
+        actions = _find_old_sessions(sessions_dir, max_age_days=30, apply=False)
+
+        assert len(actions) == 1
+        assert not actions[0].applied
+        assert session_path.exists()
+        assert summary_path.exists()
+        assert not (sessions_dir / "archive").exists()
+
+    def test_deletes_directory_sessions_with_sidecar_files(self, tmp_path: Path):
         sessions_dir = tmp_path / "sessions"
         session_path = session_file_path(sessions_dir, "old")
         session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,9 +162,7 @@ class TestOldSessions:
         assert len(actions) == 1
         assert actions[0].applied
         assert not session_path.parent.exists()
-        archived_dir = sessions_dir / "archive" / "old"
-        assert (archived_dir / "session.json").exists()
-        assert (archived_dir / "summary.jsonl").exists()
+        assert not (sessions_dir / "archive").exists()
 
 
 class TestLogRotation:
@@ -284,3 +304,30 @@ class TestRunGC:
         # No actions should have been applied
         for a in report.actions:
             assert not a.applied
+
+    @patch("lindy_orchestrator.gc.subprocess.run")
+    def test_uses_observability_retention_days_by_default(self, mock_run, tmp_path: Path):
+        from unittest.mock import MagicMock
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_run.return_value = mock_result
+
+        cfg = _make_config(tmp_path, retention_days=7)
+        session_path = session_file_path(cfg.sessions_path, "old-session")
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        session_path.write_text(
+            json.dumps(
+                {
+                    "session_id": "old-session",
+                    "started_at": (datetime.now(timezone.utc) - timedelta(days=10)).isoformat(),
+                    "status": "completed",
+                }
+            )
+        )
+
+        report = run_gc(cfg, apply=False)
+
+        assert [a.category for a in report.actions] == ["old_session"]
+        assert report.actions[0].path == str(session_path.parent)

@@ -26,7 +26,11 @@ def register_ext_commands(app: typer.Typer, console: Console) -> None:
             False, "--apply", help="Actually perform cleanup (default: dry run)"
         ),
         branch_age: int = typer.Option(14, "--branch-age", help="Max age for task branches (days)"),
-        session_age: int = typer.Option(30, "--session-age", help="Max age for sessions (days)"),
+        session_age: Optional[int] = typer.Option(
+            None,
+            "--session-age",
+            help="Override session retention age (days); defaults to observability.retention_days",
+        ),
         log_size: int = typer.Option(10, "--log-size", help="Max log file size (MB)"),
         status_stale: int = typer.Option(
             7, "--status-stale", help="STATUS.md stale threshold (days)"
