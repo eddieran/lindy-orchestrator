@@ -6,10 +6,11 @@ Loads orchestrator.yaml from the target project root.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, PrivateAttr
+
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -26,12 +27,34 @@ class ModuleConfig(BaseModel):
     role: str = ""  # "qa" marks a module as QA dispatcher target
 
 
-class PlannerConfig(BaseModel):
+class RoleConfig(BaseModel):
+    """Unified configuration for planner, generator, and evaluator roles."""
+
+    role: Literal["planner", "generator", "evaluator"] = "planner"
     mode: str = "cli"  # "cli" or "api"
     model: str = "claude-sonnet-4-20250514"
     max_tokens: int = 4096
     timeout_seconds: int = 120
     prompt_template: str | None = None  # Path to custom Jinja2 template
+    # Evaluator-specific
+    pass_threshold: float | None = None
+    # Generator-specific (max_tokens above serves double duty; this is an alias)
+
+    @classmethod
+    def planner_defaults(cls) -> RoleConfig:
+        return cls(role="planner")
+
+    @classmethod
+    def generator_defaults(cls) -> RoleConfig:
+        return cls(role="generator")
+
+    @classmethod
+    def evaluator_defaults(cls) -> RoleConfig:
+        return cls(role="evaluator", pass_threshold=0.8)
+
+
+# Backward-compat alias
+PlannerConfig = RoleConfig
 
 
 class StallEscalationConfig(BaseModel):
@@ -130,7 +153,9 @@ class ProjectConfig(BaseModel):
 class OrchestratorConfig(BaseModel):
     project: ProjectConfig = Field(default_factory=ProjectConfig)
     modules: list[ModuleConfig] = Field(default_factory=list)
-    planner: PlannerConfig = Field(default_factory=PlannerConfig)
+    planner: RoleConfig = Field(default_factory=RoleConfig.planner_defaults)
+    generator: RoleConfig = Field(default_factory=RoleConfig.generator_defaults)
+    evaluator: RoleConfig = Field(default_factory=RoleConfig.evaluator_defaults)
     dispatcher: DispatcherConfig = Field(default_factory=DispatcherConfig)
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
@@ -138,6 +163,22 @@ class OrchestratorConfig(BaseModel):
     mailbox: MailboxConfig = Field(default_factory=MailboxConfig)
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     lifecycle_hooks: LifecycleHooksConfig = Field(default_factory=LifecycleHooksConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_role_discriminators(cls, data: Any) -> Any:
+        """Inject role discriminator when loading from YAML without explicit role."""
+        if not isinstance(data, dict):
+            return data
+        for key, role_name in (
+            ("planner", "planner"),
+            ("generator", "generator"),
+            ("evaluator", "evaluator"),
+        ):
+            section = data.get(key)
+            if isinstance(section, dict) and "role" not in section:
+                section["role"] = role_name
+        return data
 
     # Internal: set after loading, not from YAML
     _config_dir: Path = PrivateAttr(default_factory=lambda: Path("."))
