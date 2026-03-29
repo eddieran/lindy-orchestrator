@@ -595,6 +595,19 @@ def _task_spec_to_dict(task: TaskSpec) -> dict[str, Any]:
     }
 
 
+def _coerce_str(value: object) -> str:
+    """Coerce a value to a string, handling list/dict from JSON."""
+    if isinstance(value, list):
+        return "\n".join(str(item) for item in value if item)
+    if isinstance(value, dict):
+        import json as _json
+
+        return _json.dumps(value, indent=2)
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _task_spec_from_dict(data: dict[str, Any]) -> TaskSpec:
     qa_checks = [
         QACheck(gate=c.get("gate", ""), params=c.get("params", {}))
@@ -610,15 +623,16 @@ def _task_spec_from_dict(data: dict[str, Any]) -> TaskSpec:
         )
         for r in data.get("qa_results", [])
     ]
-    generator_prompt = data.get("generator_prompt", data.get("prompt", ""))
+    raw_gen = data.get("generator_prompt", data.get("prompt", ""))
+    generator_prompt = _coerce_str(raw_gen)
     return TaskSpec(
         id=data["id"],
         module=data["module"],
         description=data["description"],
         generator_prompt=generator_prompt,
-        acceptance_criteria=data.get("acceptance_criteria", []),
-        evaluator_prompt=data.get("evaluator_prompt", ""),
-        prompt=data.get("prompt", generator_prompt),
+        acceptance_criteria=_coerce_str(data.get("acceptance_criteria", "")),
+        evaluator_prompt=_coerce_str(data.get("evaluator_prompt", "")),
+        prompt=_coerce_str(data.get("prompt", raw_gen)),
         depends_on=data.get("depends_on", []),
         priority=data.get("priority", 0),
         qa_checks=qa_checks,

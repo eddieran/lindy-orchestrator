@@ -220,7 +220,7 @@ def _parse_task_plan(goal: str, output: str) -> TaskPlan:
                     module="unknown",
                     description=f"Failed to parse task plan JSON from output ({len(output)} chars)",
                     generator_prompt="",
-                    acceptance_criteria=[],
+                    acceptance_criteria="",
                     evaluator_prompt="",
                     prompt="",
                     status=TaskStatus.FAILED,
@@ -308,13 +308,15 @@ def _coerce_task_text(value: object) -> str:
     return str(value)
 
 
-def _coerce_acceptance_criteria(value: object) -> list[str]:
-    """Normalize acceptance_criteria from planner JSON into a list of strings."""
+def _coerce_acceptance_criteria(value: object) -> str:
+    """Normalize acceptance_criteria from planner JSON into a plain string."""
     if isinstance(value, list):
-        return [str(item) for item in value if item]
-    if isinstance(value, str) and value:
-        return [value]
-    return []
+        return "\n".join(str(item) for item in value if item)
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    return str(value)
 
 
 class PlannerRunner:

@@ -84,7 +84,7 @@ class TestPlanSerialization:
                     module="backend",
                     description="Add auth",
                     generator_prompt="Implement JWT auth",
-                    acceptance_criteria=["Login succeeds and invalid auth fails"],
+                    acceptance_criteria="Login succeeds and invalid auth fails",
                     evaluator_prompt="Verify token creation and auth failure paths",
                 )
             ],
@@ -96,7 +96,7 @@ class TestPlanSerialization:
         assert data["tasks"][0]["generator_prompt"] == "Implement JWT auth"
         assert restored.tasks[0].generator_prompt == "Implement JWT auth"
         assert restored.tasks[0].prompt == "Implement JWT auth"
-        assert restored.tasks[0].acceptance_criteria == ["Login succeeds and invalid auth fails"]
+        assert restored.tasks[0].acceptance_criteria == "Login succeeds and invalid auth fails"
         assert restored.tasks[0].evaluator_prompt == "Verify token creation and auth failure paths"
 
 

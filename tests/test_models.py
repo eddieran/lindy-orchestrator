@@ -236,9 +236,10 @@ def test_parse_task_plan_with_enriched_fields():
     assert "Implement JWT auth" in plan.tasks[0].generator_prompt
     assert "## Before committing, verify" in plan.tasks[0].generator_prompt
     assert plan.tasks[0].prompt == plan.tasks[0].generator_prompt
-    assert plan.tasks[0].acceptance_criteria == [
-        "JWT login succeeds and invalid credentials fail cleanly"
-    ]
+    assert (
+        plan.tasks[0].acceptance_criteria
+        == "JWT login succeeds and invalid credentials fail cleanly"
+    )
     assert (
         plan.tasks[0].evaluator_prompt == "Confirm token issuance and rejection behavior in auth.py"
     )

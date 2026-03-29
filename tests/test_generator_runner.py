@@ -42,7 +42,7 @@ def test_build_prompt_isolates_generator_context(tmp_path: Path) -> None:
         module="backend",
         description="desc",
         generator_prompt="IMPLEMENT FEATURE",
-        acceptance_criteria=["ACCEPTANCE TEXT"],
+        acceptance_criteria="ACCEPTANCE TEXT",
         evaluator_prompt="EVALUATOR TEXT",
     )
 
