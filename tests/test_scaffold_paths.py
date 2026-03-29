@@ -408,7 +408,7 @@ class TestInjectionPaths:
 
     def test_inject_status_content_reads_orchestrator(self, tmp_path):
         from lindy_orchestrator.models import TaskItem
-        from lindy_orchestrator.scheduler_helpers import inject_status_content
+        from lindy_orchestrator.task_preparation import inject_status_content
 
         cfg = _minimal_config(tmp_path)
         status_dir = tmp_path / ORCH_DIR / "status"
@@ -424,7 +424,7 @@ class TestInjectionPaths:
 
     def test_inject_claude_md_reads_orchestrator(self, tmp_path):
         from lindy_orchestrator.models import TaskItem
-        from lindy_orchestrator.scheduler_helpers import inject_claude_md
+        from lindy_orchestrator.task_preparation import inject_claude_md
 
         cfg = _minimal_config(tmp_path)
         claude_dir = tmp_path / ORCH_DIR / "claude"
@@ -442,7 +442,7 @@ class TestInjectionPaths:
 
     def test_inject_qa_gates_checks_orchestrator_arch(self, tmp_path):
         from lindy_orchestrator.models import TaskItem
-        from lindy_orchestrator.scheduler_helpers import inject_qa_gates
+        from lindy_orchestrator.task_preparation import inject_qa_gates
 
         cfg = _minimal_config(tmp_path)
 

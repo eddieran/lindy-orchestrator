@@ -1,4 +1,4 @@
-"""Helper utilities for the task scheduler."""
+"""Task preparation: prompt building, QA gate injection, and delivery checks."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import OrchestratorConfig
-from .dispatch_core import extract_event_info  # canonical location; re-exported here
 from .mailbox import Mailbox, format_mailbox_messages
 from .models import QACheck, TaskItem
 
@@ -18,7 +17,6 @@ __all__ = [
     "_autofill_ci_params",
     "_check_delivery",
     "build_prompt",
-    "extract_event_info",
     "gather_branch_delivery",
     "gather_claude_md",
     "gather_mailbox_messages",

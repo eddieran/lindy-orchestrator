@@ -209,7 +209,7 @@ class TestSkipGates:
         assert task.skip_gates == []
 
     def test_skip_gates_excludes_structural(self) -> None:
-        from lindy_orchestrator.scheduler_helpers import inject_qa_gates
+        from lindy_orchestrator.task_preparation import inject_qa_gates
 
         task = TaskItem(id=1, module="backend", description="test", skip_gates=["structural_check"])
         cfg = OrchestratorConfig()
@@ -222,7 +222,7 @@ class TestSkipGates:
         assert "structural_check" not in gate_names
 
     def test_skip_gates_excludes_named_command(self) -> None:
-        from lindy_orchestrator.scheduler_helpers import inject_qa_gates
+        from lindy_orchestrator.task_preparation import inject_qa_gates
 
         cfg = OrchestratorConfig()
         cfg._config_dir = Path("/tmp")

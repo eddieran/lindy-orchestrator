@@ -13,7 +13,7 @@ from lindy_orchestrator.config import (
 )
 from lindy_orchestrator.models import QACheck
 from lindy_orchestrator.prompts import render_plan_prompt
-from lindy_orchestrator.scheduler_helpers import _autofill_ci_params
+from lindy_orchestrator.task_preparation import _autofill_ci_params
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ from lindy_orchestrator.config import (
     ProjectConfig,
 )
 from lindy_orchestrator.models import TaskItem, TaskStatus
-from lindy_orchestrator.scheduler_helpers import inject_claude_md, inject_status_content
+from lindy_orchestrator.task_preparation import inject_claude_md, inject_status_content
 
 
 def _make_config(tmp_path: Path) -> OrchestratorConfig:

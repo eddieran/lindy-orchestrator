@@ -9,7 +9,7 @@ import yaml
 
 from lindy_orchestrator.config import OrchestratorConfig, load_config
 from lindy_orchestrator.models import TaskItem
-from lindy_orchestrator.scheduler_helpers import (
+from lindy_orchestrator.task_preparation import (
     build_prompt,
     gather_branch_delivery,
     gather_claude_md,

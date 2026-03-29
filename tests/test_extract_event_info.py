@@ -1,6 +1,6 @@
 """Tests for extract_event_info() — universal provider event parsing."""
 
-from lindy_orchestrator.scheduler_helpers import extract_event_info
+from lindy_orchestrator.dispatch_core import extract_event_info
 
 
 class TestClaudeEvents:

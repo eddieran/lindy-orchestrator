@@ -19,11 +19,11 @@ from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
-from .scheduler_helpers import (
+from .dispatch_core import extract_event_info
+from .task_preparation import (
     _autofill_ci_params,
     _check_delivery,
     build_prompt,
-    extract_event_info,
     inject_qa_gates,
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
