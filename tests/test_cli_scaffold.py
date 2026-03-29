@@ -8,7 +8,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from lindy_orchestrator.cli import app
-from lindy_orchestrator.cli_onboard_helpers import (
+from lindy_orchestrator.cli_onboard import (
     _build_scaffold_prompt,
     parse_scaffold_response,
     scaffold_response_to_context,
