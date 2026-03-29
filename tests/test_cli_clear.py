@@ -55,7 +55,6 @@ def _setup_orchestrated_project(tmp_path: Path) -> Path:
     # Internal dirs
     (orch / "logs").mkdir(parents=True, exist_ok=True)
     (orch / "sessions").mkdir(parents=True, exist_ok=True)
-    (orch / "mailbox").mkdir(parents=True, exist_ok=True)
 
     # Module dirs
     (tmp_path / "backend").mkdir(exist_ok=True)

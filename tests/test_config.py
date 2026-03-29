@@ -147,11 +147,10 @@ class TestNormalizeQaGates:
         assert custom[1]["name"] == "pytest"
 
     def test_known_keys_not_normalized(self):
-        """ci_check, structural, layer_check are not treated as modules."""
+        """ci_check, structural are not treated as modules."""
         raw = {
             "qa_gates": {
                 "structural": {"max_file_lines": 300},
-                "layer_check": {"enabled": True},
             }
         }
         _normalize_qa_gates(raw)

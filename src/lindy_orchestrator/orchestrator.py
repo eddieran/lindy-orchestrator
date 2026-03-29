@@ -220,8 +220,6 @@ def execute_plan(
         if on_progress and verbose:
             on_progress(msg)
 
-    otel_exporter = None
-
     hooks.emit(Event(type=EventType.SESSION_START, data={"goal": plan.goal}))
 
     # Install signal handler so worktrees are cleaned up on Ctrl-C / SIGTERM
@@ -379,13 +377,6 @@ def execute_plan(
                 },
             )
         )
-
-        # Detach OTel exporter before cleanup
-        if otel_exporter is not None:
-            try:
-                otel_exporter.detach()
-            except Exception:
-                log.warning("OTel exporter detach failed", exc_info=True)
 
         # Detach metrics collector
         metrics.detach(hooks)

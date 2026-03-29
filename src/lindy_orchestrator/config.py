@@ -213,11 +213,6 @@ class OrchestratorConfig(BaseModel):
         """Return the resolved path to ``.orchestrator/sessions/``."""
         return (self._config_dir / ORCH_DIR / "sessions").resolve()
 
-    @property
-    def orch_mailbox_path(self) -> Path:
-        """Return the resolved path to ``.orchestrator/mailbox/``."""
-        return (self._config_dir / ORCH_DIR / "mailbox").resolve()
-
     def check_reload(self) -> OrchestratorConfig | None:
         """Check if config file changed and selectively reload safe sections.
 
@@ -368,7 +363,7 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
     return cfg
 
 
-_QA_GATES_KNOWN_KEYS = {"ci_check", "structural", "layer_check", "custom"}
+_QA_GATES_KNOWN_KEYS = {"ci_check", "structural", "custom"}
 
 
 def _normalize_qa_gates(raw: dict[str, Any]) -> None:
