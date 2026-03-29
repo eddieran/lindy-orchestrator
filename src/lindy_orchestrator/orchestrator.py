@@ -601,6 +601,29 @@ def _log_dispatch(logger: ActionLogger, task: TaskSpec, result: object) -> None:
     )
 
 
+def _task_duration_seconds(task: TaskSpec) -> float | None:
+    """Compute task duration from started/completed timestamps when available."""
+    if not task.started_at or not task.completed_at:
+        return None
+    try:
+        started_at = datetime.fromisoformat(task.started_at)
+        completed_at = datetime.fromisoformat(task.completed_at)
+    except ValueError:
+        return None
+    return (completed_at - started_at).total_seconds()
+
+
+def _task_event_data(task: TaskSpec, **extra: object) -> dict[str, object]:
+    """Build a consistent hook payload for task terminal events."""
+    data: dict[str, object] = {
+        "description": task.description,
+        "cost_usd": task.cost_usd,
+        "duration_seconds": _task_duration_seconds(task),
+    }
+    data.update(extra)
+    return data
+
+
 def _handle_dispatch_failure(
     task: TaskSpec,
     result: object,
@@ -620,10 +643,7 @@ def _handle_dispatch_failure(
                 type=EventType.TASK_FAILED,
                 task_id=task.id,
                 module=task.module,
-                data={
-                    "reason": result.error or "dispatch_error",
-                    "description": task.description,
-                },
+                data=_task_event_data(task, reason=result.error or "dispatch_error"),
             )
         )
 
@@ -733,7 +753,7 @@ def _mark_completed(
                 type=EventType.TASK_COMPLETED,
                 task_id=task.id,
                 module=task.module,
-                data={"description": task.description},
+                data=_task_event_data(task),
             )
         )
 
@@ -765,10 +785,7 @@ def _handle_retry(
                     type=EventType.TASK_FAILED,
                     task_id=task.id,
                     module=task.module,
-                    data={
-                        "reason": "non_retryable_failures",
-                        "description": task.description,
-                    },
+                    data=_task_event_data(task, reason="non_retryable_failures"),
                 )
             )
         return False
@@ -808,11 +825,11 @@ def _handle_retry(
                     type=EventType.TASK_FAILED,
                     task_id=task.id,
                     module=task.module,
-                    data={
-                        "reason": "max_retries_exceeded",
-                        "retries": task.retries,
-                        "description": task.description,
-                    },
+                    data=_task_event_data(
+                        task,
+                        reason="max_retries_exceeded",
+                        retries=task.retries,
+                    ),
                 )
             )
         return False
@@ -914,7 +931,7 @@ def _dispatch_loop(
                         type=EventType.TASK_FAILED,
                         task_id=task.id,
                         module=task.module,
-                        data={"reason": "generator_failed", "description": task.description},
+                        data=_task_event_data(task, reason="generator_failed"),
                     )
                 )
             return dispatches
