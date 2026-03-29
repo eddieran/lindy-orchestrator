@@ -15,6 +15,14 @@ from .jsonl import append_jsonl
 _log = logging.getLogger(__name__)
 
 _RESERVED_FIELDS = {"ts", "level", "event", "task_id", "module"}
+_TRANSCRIPT_EVENT_TYPES = (
+    EventType.AGENT_EVENT,
+    EventType.AGENT_OUTPUT,
+    EventType.GIT_DIFF_CAPTURED,
+    EventType.TASK_HEARTBEAT,
+    EventType.CHECKPOINT_SAVED,
+    EventType.MAILBOX_MESSAGE,
+)
 
 
 class SessionLogger:
@@ -31,7 +39,7 @@ class SessionLogger:
         self._session_started_logged = self._has_existing_event(EventType.SESSION_START.value)
 
     def attach(self, hooks: HookRegistry) -> None:
-        """Subscribe summary handlers for supported L1 events."""
+        """Subscribe observability handlers for the configured levels."""
         if self.level < 1:
             return
 
@@ -45,6 +53,10 @@ class SessionLogger:
         hooks.on(EventType.SESSION_START, self._on_session_start)
         hooks.on(EventType.SESSION_RESUMED, self._on_session_resumed)
         hooks.on(EventType.SESSION_END, self._on_session_end)
+
+        if self.level >= 3:
+            for event_type in _TRANSCRIPT_EVENT_TYPES:
+                hooks.on_async(event_type, self._on_transcript_event)
 
     def _ensure_paths(self) -> None:
         for path in self._selected_paths():
@@ -98,6 +110,9 @@ class SessionLogger:
     def _on_session_end(self, event: Event) -> None:
         self._write_summary(event)
 
+    async def _on_transcript_event(self, event: Event) -> None:
+        self._write_transcript(event)
+
     def _write_summary(self, event: Event, extra: dict[str, Any] | None = None) -> None:
         task_id = event.data.get("task_id", event.task_id)
         module = event.data.get("module", event.module)
@@ -121,7 +136,29 @@ class SessionLogger:
         try:
             append_jsonl(self.summary_path, entry, lock=self._lock)
         except OSError:
-            self._fallback_write(entry)
+            self._fallback_write(entry, self.summary_path)
+
+    def _write_transcript(self, event: Event) -> None:
+        task_id = event.data.get("task_id", event.task_id)
+        module = event.data.get("module", event.module)
+        entry: dict[str, Any] = {
+            "ts": event.timestamp,
+            "level": 3,
+            "event": event.type.value,
+            "task_id": task_id,
+        }
+
+        if module:
+            entry["module"] = module
+
+        for key, value in event.data.items():
+            if key not in _RESERVED_FIELDS:
+                entry[key] = value
+
+        try:
+            append_jsonl(self.transcript_path, entry, lock=self._lock)
+        except OSError:
+            self._fallback_write(entry, self.transcript_path)
 
     def _fallback_prepare(self, path: Path) -> None:
         _log.warning("Failed to prepare session log path %s", path, exc_info=True)
@@ -146,8 +183,8 @@ class SessionLogger:
 
         return False
 
-    def _fallback_write(self, entry: dict[str, Any]) -> None:
-        _log.warning("Failed to write session summary log to %s", self.summary_path, exc_info=True)
+    def _fallback_write(self, entry: dict[str, Any], path: Path) -> None:
+        _log.warning("Failed to write session log to %s", path, exc_info=True)
         print(
             f"[session log fallback] {entry['event']}: task_id={entry.get('task_id')}",
             file=sys.stderr,
