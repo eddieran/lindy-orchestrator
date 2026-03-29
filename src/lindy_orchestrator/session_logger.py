@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import threading
@@ -27,6 +28,7 @@ class SessionLogger:
         self.decisions_path = self.session_dir / "decisions.jsonl"
         self.transcript_path = self.session_dir / "transcript.jsonl"
         self._ensure_paths()
+        self._session_started_logged = self._has_existing_event(EventType.SESSION_START.value)
 
     def attach(self, hooks: HookRegistry) -> None:
         """Subscribe summary handlers for supported L1 events."""
@@ -39,7 +41,9 @@ class SessionLogger:
         hooks.on(EventType.TASK_SKIPPED, self._on_task_skipped)
         hooks.on(EventType.QA_PASSED, self._on_qa_passed)
         hooks.on(EventType.QA_FAILED, self._on_qa_failed)
+        hooks.on(EventType.PHASE_CHANGED, self._on_phase_changed)
         hooks.on(EventType.SESSION_START, self._on_session_start)
+        hooks.on(EventType.SESSION_RESUMED, self._on_session_resumed)
         hooks.on(EventType.SESSION_END, self._on_session_end)
 
     def _ensure_paths(self) -> None:
@@ -78,7 +82,17 @@ class SessionLogger:
     def _on_qa_failed(self, event: Event) -> None:
         self._write_summary(event)
 
+    def _on_phase_changed(self, event: Event) -> None:
+        if event.data.get("phase") == "planning":
+            self._write_summary(event)
+
     def _on_session_start(self, event: Event) -> None:
+        if self._session_started_logged:
+            return
+        self._session_started_logged = True
+        self._write_summary(event)
+
+    def _on_session_resumed(self, event: Event) -> None:
         self._write_summary(event)
 
     def _on_session_end(self, event: Event) -> None:
@@ -112,6 +126,25 @@ class SessionLogger:
     def _fallback_prepare(self, path: Path) -> None:
         _log.warning("Failed to prepare session log path %s", path, exc_info=True)
         print(f"[session log fallback] failed to prepare {path}", file=sys.stderr)
+
+    def _has_existing_event(self, event_name: str) -> bool:
+        if not self.summary_path.exists():
+            return False
+
+        try:
+            for line in self.summary_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("event") == event_name:
+                    return True
+        except OSError:
+            _log.warning("Failed to inspect session summary log at %s", self.summary_path)
+
+        return False
 
     def _fallback_write(self, entry: dict[str, Any]) -> None:
         _log.warning("Failed to write session summary log to %s", self.summary_path, exc_info=True)

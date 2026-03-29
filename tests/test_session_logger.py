@@ -170,6 +170,59 @@ class TestSessionLoggerAttach:
             assert "event" in entry
             assert "task_id" in entry
 
+    def test_routes_planning_phase_and_session_resumed(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.PHASE_CHANGED,
+                timestamp="2026-03-29T10:18:05+00:00",
+                data={"phase": "planning", "status": "failed", "error": "planner blew up"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.SESSION_RESUMED,
+                timestamp="2026-03-29T10:18:06+00:00",
+                data={"goal": "Add SessionLogger", "session_id": "abc123"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.PHASE_CHANGED,
+                timestamp="2026-03-29T10:18:07+00:00",
+                data={"phase": "qa", "status": "started"},
+            )
+        )
+
+        entries = [
+            json.loads(line)
+            for line in logger.summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+        assert entries == [
+            {
+                "ts": "2026-03-29T10:18:05+00:00",
+                "level": 1,
+                "event": "phase_changed",
+                "task_id": None,
+                "phase": "planning",
+                "status": "failed",
+                "error": "planner blew up",
+            },
+            {
+                "ts": "2026-03-29T10:18:06+00:00",
+                "level": 1,
+                "event": "session_resumed",
+                "task_id": None,
+                "goal": "Add SessionLogger",
+                "session_id": "abc123",
+            },
+        ]
+
     def test_level_one_ignores_non_l1_events(self, tmp_path) -> None:
         logger = SessionLogger(tmp_path, level=1)
         hooks = HookRegistry()
@@ -217,6 +270,43 @@ class TestSessionLoggerAttach:
         assert all(entry["event"] == "task_started" for entry in entries)
         assert all(entry["level"] == 1 for entry in entries)
         assert {entry["task_id"] for entry in entries} == set(range(1000))
+
+    def test_existing_session_start_is_not_duplicated(self, tmp_path) -> None:
+        summary = tmp_path / "summary.jsonl"
+        summary.write_text(
+            json.dumps(
+                {
+                    "ts": "2026-03-29T10:18:05+00:00",
+                    "level": 1,
+                    "event": "session_start",
+                    "task_id": None,
+                    "goal": "existing goal",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        logger = SessionLogger(tmp_path, level=1)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.SESSION_START,
+                timestamp="2026-03-29T10:18:06+00:00",
+                data={"goal": "new goal"},
+            )
+        )
+
+        entries = [
+            json.loads(line)
+            for line in logger.summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+        assert len(entries) == 1
+        assert entries[0]["goal"] == "existing goal"
 
     def test_os_error_fallback_to_stderr(self, tmp_path, capsys, mocker) -> None:
         logger = SessionLogger(tmp_path, level=1)
