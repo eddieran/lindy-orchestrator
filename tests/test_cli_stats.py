@@ -9,6 +9,7 @@ import yaml
 from typer.testing import CliRunner
 
 from lindy_orchestrator.cli import app
+from lindy_orchestrator.session import session_file_path
 
 
 runner = CliRunner()
@@ -151,6 +152,21 @@ class TestStatsWithSessions:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert len(data["sessions"]) == 2
+
+    def test_directory_layout_sessions_are_loaded(self, tmp_path: Path):
+        session = _make_session()
+        cfg_path = _setup_project(tmp_path)
+        session_path = session_file_path(
+            tmp_path / ".orchestrator" / "sessions", session["session_id"]
+        )
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        session_path.write_text(json.dumps(session), encoding="utf-8")
+
+        result = runner.invoke(app, ["stats", "-c", cfg_path, "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert [item["session_id"] for item in data["sessions"]] == ["abc123"]
 
 
 class TestStatsEdgeCases:

@@ -4,7 +4,11 @@ import os
 import time
 from pathlib import Path
 
-from lindy_orchestrator.session import SessionManager
+from lindy_orchestrator.session import SessionManager, legacy_session_file_path, session_file_path
+
+
+def _session_path(sessions: SessionManager, session_id: str) -> Path:
+    return session_file_path(sessions.sessions_dir, session_id)
 
 
 def test_session_create_and_load(tmp_path: Path):
@@ -15,6 +19,14 @@ def test_session_create_and_load(tmp_path: Path):
     assert loaded is not None
     assert loaded.goal == "Test goal"
     assert loaded.status == "in_progress"
+
+
+def test_session_create_writes_per_session_directory(tmp_path: Path):
+    sessions = SessionManager(tmp_path / "sessions")
+    session = sessions.create(goal="Test goal")
+
+    assert _session_path(sessions, session.session_id).exists()
+    assert not legacy_session_file_path(sessions.sessions_dir, session.session_id).exists()
 
 
 def test_session_complete(tmp_path: Path):
@@ -89,7 +101,7 @@ def test_session_load_latest_returns_newest_by_mtime(tmp_path: Path):
     new = sessions.create(goal="New session")
 
     # Force "old" file to have a newer mtime than "new"
-    new_path = sessions.sessions_dir / f"{new.session_id}.json"
+    new_path = _session_path(sessions, new.session_id)
 
     # Set new_path to the past, old's file keeps current mtime → newest
     past = time.time() - 100
@@ -119,8 +131,8 @@ def test_session_list_ordered_by_mtime(tmp_path: Path):
     c = sessions.create(goal="C")
 
     # Make "A" the newest by touching it (it already has the latest mtime)
-    b_path = sessions.sessions_dir / f"{b.session_id}.json"
-    c_path = sessions.sessions_dir / f"{c.session_id}.json"
+    b_path = _session_path(sessions, b.session_id)
+    c_path = _session_path(sessions, c.session_id)
 
     past = time.time() - 200
     os.utime(b_path, (past, past))
@@ -130,3 +142,51 @@ def test_session_list_ordered_by_mtime(tmp_path: Path):
     listed = sessions.list_sessions()
     assert listed[0].session_id == a.session_id
     assert listed[-1].session_id == c.session_id
+
+
+def test_session_load_supports_legacy_flat_file(tmp_path: Path):
+    sessions = SessionManager(tmp_path / "sessions")
+    legacy_path = legacy_session_file_path(sessions.sessions_dir, "old123")
+    legacy_path.write_text(
+        '{"session_id":"old123","started_at":"2026-01-01T00:00:00+00:00","goal":"Old","status":"paused"}',
+        encoding="utf-8",
+    )
+
+    loaded = sessions.load("old123")
+    assert loaded is not None
+    assert loaded.goal == "Old"
+    assert loaded.status == "paused"
+
+
+def test_session_load_latest_supports_mixed_layouts(tmp_path: Path):
+    sessions = SessionManager(tmp_path / "sessions")
+    legacy_path = legacy_session_file_path(sessions.sessions_dir, "legacy")
+    legacy_path.write_text(
+        '{"session_id":"legacy","started_at":"2026-01-01T00:00:00+00:00","goal":"Legacy","status":"completed"}',
+        encoding="utf-8",
+    )
+    past = time.time() - 100
+    os.utime(legacy_path, (past, past))
+
+    current = sessions.create(goal="Current")
+
+    latest = sessions.load_latest()
+    assert latest is not None
+    assert latest.session_id == current.session_id
+    assert latest.goal == "Current"
+
+
+def test_session_list_supports_mixed_layouts(tmp_path: Path):
+    sessions = SessionManager(tmp_path / "sessions")
+    legacy_path = legacy_session_file_path(sessions.sessions_dir, "legacy")
+    legacy_path.write_text(
+        '{"session_id":"legacy","started_at":"2026-01-01T00:00:00+00:00","goal":"Legacy","status":"completed"}',
+        encoding="utf-8",
+    )
+    past = time.time() - 200
+    os.utime(legacy_path, (past, past))
+
+    current = sessions.create(goal="Current")
+
+    listed = sessions.list_sessions()
+    assert [session.session_id for session in listed] == [current.session_id, "legacy"]

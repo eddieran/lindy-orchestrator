@@ -14,11 +14,18 @@ from lindy_orchestrator.analytics import (
     load_session_summaries,
     parse_log_entries,
 )
+from lindy_orchestrator.session import legacy_session_file_path, session_file_path
 
 
-def _write_session(sessions_dir: Path, session_id: str, data: dict) -> Path:
-    """Helper: write a session JSON file."""
-    path = sessions_dir / f"{session_id}.json"
+def _write_session(
+    sessions_dir: Path, session_id: str, data: dict, *, layout: str = "flat"
+) -> Path:
+    """Helper: write a session JSON file in either storage layout."""
+    if layout == "dir":
+        path = session_file_path(sessions_dir, session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        path = legacy_session_file_path(sessions_dir, session_id)
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
 
@@ -211,6 +218,16 @@ class TestLoadSessionSummaries:
         )
         result = load_session_summaries(sessions_dir)
         assert result[0].duration_seconds == pytest.approx(600.0)
+
+    def test_mixed_storage_layouts_are_both_loaded(self, tmp_path: Path):
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir()
+        _write_session(sessions_dir, "flat1", _make_session_data(session_id="flat1"), layout="flat")
+        _write_session(sessions_dir, "dir1", _make_session_data(session_id="dir1"), layout="dir")
+
+        result = load_session_summaries(sessions_dir)
+
+        assert [summary.session_id for summary in result] == ["dir1", "flat1"]
 
 
 class TestParseLogEntries:

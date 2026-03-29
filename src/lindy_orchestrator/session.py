@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 # Session IDs must be safe path components (hex chars from uuid4[:8])
 _SAFE_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+SESSION_FILENAME = "session.json"
 
 
 @dataclass
@@ -49,11 +50,7 @@ class SessionManager:
         return state
 
     def load_latest(self) -> SessionState | None:
-        files = sorted(
-            self.sessions_dir.glob("*.json"),
-            key=lambda f: f.stat().st_mtime,
-            reverse=True,
-        )
+        files = iter_session_files(self.sessions_dir)
         if not files:
             return None
         return self._load(files[0])
@@ -63,13 +60,16 @@ class SessionManager:
         if not _SAFE_SESSION_ID_RE.match(session_id):
             log.warning("Rejected unsafe session_id: %r", session_id)
             return None
-        path = self.sessions_dir / f"{session_id}.json"
-        if not path.resolve().is_relative_to(self.sessions_dir.resolve()):
-            log.warning("Path traversal detected for session_id: %r", session_id)
-            return None
-        if not path.exists():
-            return None
-        return self._load(path)
+        for path in (
+            session_file_path(self.sessions_dir, session_id),
+            legacy_session_file_path(self.sessions_dir, session_id),
+        ):
+            if not path.resolve().is_relative_to(self.sessions_dir.resolve()):
+                log.warning("Path traversal detected for session_id: %r", session_id)
+                return None
+            if path.exists():
+                return self._load(path)
+        return None
 
     def save(self, state: SessionState) -> None:
         self._save(state)
@@ -87,11 +87,7 @@ class SessionManager:
         self._save(state)
 
     def list_sessions(self, limit: int = 10) -> list[SessionState]:
-        files = sorted(
-            self.sessions_dir.glob("*.json"),
-            key=lambda f: f.stat().st_mtime,
-            reverse=True,
-        )[:limit]
+        files = iter_session_files(self.sessions_dir)[:limit]
         sessions = []
         for f in files:
             try:
@@ -101,14 +97,13 @@ class SessionManager:
         return sessions
 
     def _save(self, state: SessionState) -> None:
-        path = self.sessions_dir / f"{state.session_id}.json"
+        path = session_file_path(self.sessions_dir, state.session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
             # Write to temp file then atomically rename to prevent corruption
-            fd, tmp_path = tempfile.mkstemp(
-                dir=self.sessions_dir, suffix=".tmp", prefix=f"{state.session_id}_"
-            )
+            fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix="session_")
             try:
-                with os.fdopen(fd, "w") as f:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
                     json.dump(asdict(state), f, indent=2, default=str)
                 os.replace(tmp_path, path)
             except BaseException:
@@ -129,3 +124,57 @@ class SessionManager:
             log.exception("Failed to load session from %s", path)
             raise
         return SessionState(**data)
+
+
+def session_file_path(sessions_dir: Path, session_id: str) -> Path:
+    """Return the canonical per-session path for a session."""
+    return sessions_dir / session_id / SESSION_FILENAME
+
+
+def legacy_session_file_path(sessions_dir: Path, session_id: str) -> Path:
+    """Return the legacy flat-file path for a session."""
+    return sessions_dir / f"{session_id}.json"
+
+
+def session_id_from_path(path: Path) -> str:
+    """Extract a session ID from either the new or legacy storage layout."""
+    if path.name == SESSION_FILENAME:
+        return path.parent.name
+    return path.stem
+
+
+def iter_session_files(sessions_dir: Path) -> list[Path]:
+    """Return canonical session file paths across mixed storage layouts.
+
+    Results are sorted newest-first by file mtime and deduplicated by session ID
+    so mixed-format transitions do not surface duplicate sessions.
+    """
+    if not sessions_dir.exists():
+        return []
+
+    candidates = [
+        *[path for path in sessions_dir.glob("*.json") if path.is_file()],
+        *[
+            path
+            for path in sessions_dir.glob(f"*/{SESSION_FILENAME}")
+            if path.is_file() and path.parent.name != "archive"
+        ],
+    ]
+    candidates.sort(key=_session_file_mtime, reverse=True)
+
+    seen: set[str] = set()
+    files: list[Path] = []
+    for path in candidates:
+        session_id = session_id_from_path(path)
+        if session_id in seen:
+            continue
+        seen.add(session_id)
+        files.append(path)
+    return files
+
+
+def _session_file_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
