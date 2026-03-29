@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 from datetime import datetime, timezone
@@ -14,12 +15,14 @@ from lindy_orchestrator.models import (
     EvalFeedback,
     EvalResult,
     GeneratorOutput,
+    QACheck,
     QAResult,
     TaskPlan,
     TaskSpec,
     TaskStatus,
 )
 from lindy_orchestrator.orchestrator import CommandQueue, execute_plan
+from lindy_orchestrator.session_logger import SessionLogger
 
 
 class _ValidateOnlyProvider:
@@ -355,3 +358,105 @@ def test_execute_plan_generator_failure_event_includes_enriched_payload(
     assert failed_event.data["description"] == "desc"
     assert failed_event.data["cost_usd"] == 0.42
     assert "duration_seconds" in failed_event.data
+
+
+def test_execute_plan_writes_l2_decision_context(tmp_path: Path, monkeypatch) -> None:
+    _prepare_runtime(monkeypatch, tmp_path)
+    cfg = _config(tmp_path)
+    logger = ActionLogger(tmp_path / "actions.jsonl")
+    session_dir = tmp_path / "session"
+    session_logger = SessionLogger(session_dir, level=2)
+    hooks = HookRegistry()
+    session_logger.attach(hooks)
+    plan = TaskPlan(
+        goal="g",
+        tasks=[
+            TaskSpec(
+                id=1,
+                module="root",
+                description="desc",
+                generator_prompt="short prompt",
+                acceptance_criteria="- lint passes\n- tests pass",
+                qa_checks=[QACheck(gate="pytest")],
+            )
+        ],
+    )
+
+    full_prompt = "prompt line\n" * 50
+    eval_results = [
+        EvalResult(
+            score=40,
+            passed=False,
+            retryable=True,
+            criteria_results=[
+                {"criterion": "lint passes", "passed": False},
+                {"criterion": "tests pass", "passed": True},
+            ],
+            raw_output='{"score": 40}',
+            feedback=EvalFeedback(
+                summary="Fix failing pytest gate",
+                failed_criteria=["lint passes"],
+                evidence="full evaluator reasoning",
+            ),
+        ),
+        EvalResult(
+            score=95,
+            passed=True,
+            retryable=True,
+            criteria_results=[
+                {"criterion": "lint passes", "passed": True},
+                {"criterion": "tests pass", "passed": True},
+            ],
+            raw_output='{"score": 95}',
+            feedback=EvalFeedback(summary="Looks good"),
+        ),
+    ]
+    qa_results = [
+        QAResult(gate="pytest", passed=False, output="FAIL " * 100),
+        QAResult(gate="pytest", passed=True, output="PASS " * 80),
+    ]
+    gen_calls = {"count": 0}
+
+    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None):
+        gen_calls["count"] += 1
+        return GeneratorOutput(success=True, output="out", prompt=full_prompt, diff="diff")
+
+    def _run(check, project_root, module_name="", task_output="", **kwargs):
+        del check, project_root, module_name, task_output, kwargs
+        if qa_results:
+            return qa_results.pop(0)
+        return QAResult(gate="pytest", passed=True, output="PASS " * 80)
+
+    def _run_eval_agent(self, task, gen_output, qa_results, worktree=None):
+        del self, task, gen_output, qa_results, worktree
+        if eval_results:
+            return eval_results.pop(0)
+        return EvalResult(score=95, passed=True, retryable=True, feedback=EvalFeedback())
+
+    monkeypatch.setattr("lindy_orchestrator.orchestrator.GeneratorRunner.execute", _gen)
+    monkeypatch.setattr("lindy_orchestrator.evaluator_runner.run_qa_gate", _run)
+    monkeypatch.setattr(
+        "lindy_orchestrator.evaluator_runner.EvaluatorRunner._run_eval_agent", _run_eval_agent
+    )
+
+    execute_plan(plan, cfg, logger, hooks=hooks)
+
+    entries = [
+        json.loads(line)
+        for line in (session_dir / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    prompt_events = [entry for entry in entries if entry["event"] == "prompt_sent"]
+    qa_failures = [entry for entry in entries if entry["event"] == "qa_failed"]
+    retry_events = [entry for entry in entries if entry["event"] == "task_retrying"]
+    eval_events = [entry for entry in entries if entry["event"] == "eval_scored"]
+
+    assert plan.tasks[0].status == TaskStatus.COMPLETED
+    assert gen_calls["count"] >= 2
+    assert len(prompt_events) == 1
+    assert prompt_events[0]["prompt"] == full_prompt
+    assert qa_failures[0]["output"] == "FAIL " * 100
+    assert retry_events[0]["feedback_summary"] == "Fix failing pytest gate"
+    assert retry_events[0]["decision"] == "retry"
+    assert eval_events[0]["criteria_results"][0]["passed"] is False
+    assert eval_events[0]["raw_output"] == '{"score": 40}'

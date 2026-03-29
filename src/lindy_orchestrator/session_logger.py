@@ -15,10 +15,11 @@ from .jsonl import append_jsonl
 _log = logging.getLogger(__name__)
 
 _RESERVED_FIELDS = {"ts", "level", "event", "task_id", "module"}
+_SUMMARY_OMIT_FIELDS = {"full_output", "raw_output"}
 
 
 class SessionLogger:
-    """Write L1 observability events for a session to JSONL streams."""
+    """Write layered observability events for a session to JSONL streams."""
 
     def __init__(self, session_dir: Path | str, level: int) -> None:
         self.session_dir = Path(session_dir)
@@ -31,7 +32,7 @@ class SessionLogger:
         self._session_started_logged = self._has_existing_event(EventType.SESSION_START.value)
 
     def attach(self, hooks: HookRegistry) -> None:
-        """Subscribe summary handlers for supported L1 events."""
+        """Subscribe handlers for the configured observability levels."""
         if self.level < 1:
             return
 
@@ -45,6 +46,16 @@ class SessionLogger:
         hooks.on(EventType.SESSION_START, self._on_session_start)
         hooks.on(EventType.SESSION_RESUMED, self._on_session_resumed)
         hooks.on(EventType.SESSION_END, self._on_session_end)
+
+        if self.level >= 2:
+            hooks.on(EventType.QA_PASSED, self._on_decision_event)
+            hooks.on(EventType.QA_FAILED, self._on_decision_event)
+            hooks.on(EventType.PHASE_CHANGED, self._on_decision_event)
+            hooks.on(EventType.EVAL_SCORED, self._on_decision_event)
+            hooks.on(EventType.TASK_RETRYING, self._on_decision_event)
+            hooks.on(EventType.STALL_WARNING, self._on_decision_event)
+            hooks.on(EventType.STALL_KILLED, self._on_decision_event)
+            hooks.on(EventType.PROMPT_SENT, self._on_decision_event)
 
     def _ensure_paths(self) -> None:
         for path in self._selected_paths():
@@ -98,12 +109,36 @@ class SessionLogger:
     def _on_session_end(self, event: Event) -> None:
         self._write_summary(event)
 
+    def _on_decision_event(self, event: Event) -> None:
+        self._write_decision(event)
+
     def _write_summary(self, event: Event, extra: dict[str, Any] | None = None) -> None:
+        entry = self._build_entry(
+            event,
+            level=1,
+            extra=extra,
+            omit_fields=_SUMMARY_OMIT_FIELDS,
+        )
+        self._append_entry(self.summary_path, entry)
+
+    def _write_decision(self, event: Event, extra: dict[str, Any] | None = None) -> None:
+        entry = self._build_entry(event, level=2, extra=extra, use_full_output=True)
+        self._append_entry(self.decisions_path, entry)
+
+    def _build_entry(
+        self,
+        event: Event,
+        *,
+        level: int,
+        extra: dict[str, Any] | None = None,
+        omit_fields: set[str] | None = None,
+        use_full_output: bool = False,
+    ) -> dict[str, Any]:
         task_id = event.data.get("task_id", event.task_id)
         module = event.data.get("module", event.module)
         entry: dict[str, Any] = {
             "ts": event.timestamp,
-            "level": 1,
+            "level": level,
             "event": event.type.value,
             "task_id": task_id,
         }
@@ -112,16 +147,24 @@ class SessionLogger:
             entry["module"] = module
 
         for key, value in event.data.items():
-            if key not in _RESERVED_FIELDS:
-                entry[key] = value
+            if key in _RESERVED_FIELDS or (omit_fields and key in omit_fields):
+                continue
+            if key == "full_output":
+                if use_full_output:
+                    entry["output"] = value
+                continue
+            entry[key] = value
 
         if extra:
             entry.update(extra)
 
+        return entry
+
+    def _append_entry(self, path: Path, entry: dict[str, Any]) -> None:
         try:
-            append_jsonl(self.summary_path, entry, lock=self._lock)
+            append_jsonl(path, entry, lock=self._lock)
         except OSError:
-            self._fallback_write(entry)
+            self._fallback_write(path, entry)
 
     def _fallback_prepare(self, path: Path) -> None:
         _log.warning("Failed to prepare session log path %s", path, exc_info=True)
@@ -146,8 +189,8 @@ class SessionLogger:
 
         return False
 
-    def _fallback_write(self, entry: dict[str, Any]) -> None:
-        _log.warning("Failed to write session summary log to %s", self.summary_path, exc_info=True)
+    def _fallback_write(self, path: Path, entry: dict[str, Any]) -> None:
+        _log.warning("Failed to write session log to %s", path, exc_info=True)
         print(
             f"[session log fallback] {entry['event']}: task_id={entry.get('task_id')}",
             file=sys.stderr,

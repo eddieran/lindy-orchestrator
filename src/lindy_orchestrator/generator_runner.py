@@ -124,6 +124,7 @@ class GeneratorRunner:
         return GeneratorOutput(
             success=result.success,
             output=result.output,
+            prompt=prompt,
             diff=diff,
             cost_usd=result.cost_usd,
             duration_seconds=result.duration_seconds,

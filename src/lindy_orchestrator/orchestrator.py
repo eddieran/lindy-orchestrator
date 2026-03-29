@@ -182,6 +182,7 @@ class _HeartbeatTracker:
         self.count += 1
 
         tool_name, reasoning_text = extract_event_info(event)
+        event_type = event.get("type")
 
         if tool_name:
             self.last_tool = tool_name
@@ -190,6 +191,23 @@ class _HeartbeatTracker:
 
         if reasoning_text:
             self.last_reasoning = reasoning_text
+
+        if self._hooks and event_type in {"stall_warning", "stall_killed"}:
+            hook_type = (
+                EventType.STALL_WARNING if event_type == "stall_warning" else EventType.STALL_KILLED
+            )
+            self._hooks.emit(
+                Event(
+                    type=hook_type,
+                    task_id=self.task_id,
+                    module=self.module,
+                    data={
+                        "stall_seconds": event.get("stall_seconds", 0),
+                        "last_tool": event.get("last_tool", ""),
+                        "event_count": self.count,
+                    },
+                )
+            )
 
         if self._hooks and (tool_name or reasoning_text):
             self._hooks.emit(
@@ -723,7 +741,12 @@ def _run_qa_gates(
                         type=evt_type,
                         task_id=task.id,
                         module=task.module,
-                        data={"gate": qa.gate, "output": qa_result.output[:200]},
+                        data={
+                            "gate": qa.gate,
+                            "output": qa_result.output[:200],
+                            "full_output": qa_result.output,
+                            "retryable": qa_result.retryable,
+                        },
                     )
                 )
     return all_passed
@@ -841,9 +864,17 @@ def _handle_retry(
                 task_id=task.id,
                 module=task.module,
                 data={
+                    "decision": "retry",
                     "retry": task.retries,
                     "max_retries": max_retries,
                     "description": task.description,
+                    "feedback_summary": feedback.summary,
+                    "specific_errors": list(feedback.specific_errors),
+                    "files_to_check": list(feedback.files_to_check),
+                    "remediation_steps": list(feedback.remediation_steps),
+                    "failed_criteria": list(feedback.failed_criteria),
+                    "evidence": feedback.evidence,
+                    "missing_behaviors": list(feedback.missing_behaviors),
                 },
             )
         )
@@ -905,6 +936,15 @@ def _dispatch_loop(
         dispatches += 1
         task.result = gen_output.output
         task.cost_usd += gen_output.cost_usd
+        if hooks and dispatches == 1:
+            hooks.emit(
+                Event(
+                    type=EventType.PROMPT_SENT,
+                    task_id=task.id,
+                    module=task.module,
+                    data={"attempt": task.retries + 1, "prompt": gen_output.prompt},
+                )
+            )
         logger.log_dispatch(
             task.module,
             (task.generator_prompt or task.prompt or task.description)[:200],
@@ -960,7 +1000,26 @@ def _dispatch_loop(
                 )
             )
 
-        eval_result = evaluator.evaluate(task, gen_output, working_dir)
+        if hooks:
+            evaluator.set_qa_event_sink(
+                lambda qa_result: hooks.emit(
+                    Event(
+                        type=EventType.QA_PASSED if qa_result.passed else EventType.QA_FAILED,
+                        task_id=task.id,
+                        module=task.module,
+                        data={
+                            "gate": qa_result.gate,
+                            "output": qa_result.output[:200],
+                            "full_output": qa_result.output,
+                            "retryable": qa_result.retryable,
+                        },
+                    )
+                )
+            )
+        try:
+            eval_result = evaluator.evaluate(task, gen_output, working_dir)
+        finally:
+            evaluator.set_qa_event_sink(None)
         task.qa_results = list(eval_result.qa_results)
         task.cost_usd += eval_result.cost_usd
         progress(
@@ -977,6 +1036,17 @@ def _dispatch_loop(
                         "score": eval_result.score,
                         "passed": eval_result.passed,
                         "attempt": task.retries + 1,
+                        "criteria_results": list(eval_result.criteria_results),
+                        "reasoning": {
+                            "summary": eval_result.feedback.summary,
+                            "specific_errors": list(eval_result.feedback.specific_errors),
+                            "files_to_check": list(eval_result.feedback.files_to_check),
+                            "remediation_steps": list(eval_result.feedback.remediation_steps),
+                            "failed_criteria": list(eval_result.feedback.failed_criteria),
+                            "evidence": eval_result.feedback.evidence,
+                            "missing_behaviors": list(eval_result.feedback.missing_behaviors),
+                        },
+                        "raw_output": eval_result.raw_output,
                     },
                 )
             )

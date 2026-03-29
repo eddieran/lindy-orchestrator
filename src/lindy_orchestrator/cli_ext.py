@@ -71,7 +71,7 @@ def _is_failure_entry(entry: dict[str, Any]) -> bool:
     event = str(entry.get("event", ""))
     return (
         entry.get("status") == "failed"
-        or event in {"retry_decision", "qa_failed", "task_failed"}
+        or event in {"retry_decision", "task_retrying", "qa_failed", "task_failed", "stall_killed"}
         or (event == "qa_detail" and entry.get("passed") is False)
     )
 
