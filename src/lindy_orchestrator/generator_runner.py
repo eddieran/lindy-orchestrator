@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import GeneratorConfig, OrchestratorConfig
+from .hooks import Event, EventType, HookRegistry
 from .models import EvalFeedback, GeneratorOutput, TaskSpec
 from .providers import create_provider
 
@@ -97,29 +98,61 @@ class GeneratorRunner:
         branch_name: str,
         feedback: EvalFeedback | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        hooks: HookRegistry | None = None,
     ) -> GeneratorOutput:
         prompt = self._build_prompt(task, worktree, branch_name, feedback)
         provider = create_provider(self.config)
+        dispatch_on_event = on_event
+        if hooks is not None:
+
+            def _dispatch_on_event(event: dict[str, Any]) -> None:
+                hooks.emit(
+                    Event(
+                        type=EventType.AGENT_EVENT,
+                        task_id=task.id,
+                        module=task.module,
+                        data={"payload": event},
+                    )
+                )
+                if on_event is not None:
+                    on_event(event)
+
+            dispatch_on_event = _dispatch_on_event
+
         result = provider.dispatch(
             module=task.module,
             working_dir=worktree,
             prompt=prompt,
-            on_event=on_event,
+            on_event=dispatch_on_event,
             stall_seconds=task.stall_seconds or self.config.stall_timeout,
         )
 
-        diff = ""
-        try:
-            proc = subprocess.run(
-                ["git", "diff", "HEAD"],
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-                timeout=30,
+        if hooks is not None:
+            hooks.emit(
+                Event(
+                    type=EventType.AGENT_OUTPUT,
+                    task_id=task.id,
+                    module=task.module,
+                    data={
+                        "output": result.output,
+                        "success": result.success,
+                        "truncated": result.truncated,
+                        "event_count": result.event_count,
+                        "last_tool": result.last_tool_use,
+                    },
+                )
             )
-            diff = proc.stdout
-        except Exception:
-            diff = ""
+
+        diff, diff_source = _capture_git_diff(worktree)
+        if hooks is not None:
+            hooks.emit(
+                Event(
+                    type=EventType.GIT_DIFF_CAPTURED,
+                    task_id=task.id,
+                    module=task.module,
+                    data={"diff": diff, "source": diff_source},
+                )
+            )
 
         return GeneratorOutput(
             success=result.success,
@@ -130,3 +163,25 @@ class GeneratorRunner:
             event_count=result.event_count,
             last_tool=result.last_tool_use,
         )
+
+
+def _capture_git_diff(worktree: Path) -> tuple[str, str]:
+    for command, source in (
+        (["git", "log", "-1", "-p"], "git log -1 -p"),
+        (["git", "diff", "HEAD"], "git diff HEAD"),
+    ):
+        try:
+            proc = subprocess.run(
+                command,
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except Exception:
+            continue
+
+        if proc.stdout.strip():
+            return proc.stdout, source
+
+    return "", "git diff HEAD"

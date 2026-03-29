@@ -89,7 +89,7 @@ def test_execute_plan_retries_with_evaluator_feedback(tmp_path: Path, monkeypatc
 
     feedback_seen: list[str | None] = []
 
-    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None):
+    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None, hooks=None):
         feedback_seen.append(feedback.summary if feedback else None)
         return GeneratorOutput(success=True, output="out", diff="diff")
 
@@ -152,7 +152,7 @@ def test_execute_plan_force_pass_completes_after_failed_eval(tmp_path: Path, mon
     queue.force_pass(1)
     calls = {"gen": 0}
 
-    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None):
+    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None, hooks=None):
         calls["gen"] += 1
         return GeneratorOutput(success=True, output="out", diff="diff")
 
@@ -179,7 +179,7 @@ def test_execute_plan_waits_while_paused(tmp_path: Path, monkeypatch) -> None:
     queue.pause()
     started = threading.Event()
 
-    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None):
+    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None, hooks=None):
         started.set()
         return GeneratorOutput(success=True, output="out", diff="diff")
 
@@ -333,7 +333,7 @@ def test_execute_plan_generator_failure_event_includes_enriched_payload(
     logger = ActionLogger(tmp_path / "actions.jsonl")
     plan = TaskPlan(goal="g", tasks=[TaskSpec(id=1, module="root", description="desc")])
 
-    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None):
+    def _gen(self, task, worktree, branch_name, feedback=None, on_event=None, hooks=None):
         return GeneratorOutput(
             success=False,
             output="boom",

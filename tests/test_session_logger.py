@@ -4,10 +4,21 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from unittest.mock import ANY
 
 from lindy_orchestrator.hooks import Event, EventType, HookRegistry
 from lindy_orchestrator.session_logger import SessionLogger
+
+
+def _wait_for_lines(path, count: int, timeout: float = 2.0) -> list[dict]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+        if len(lines) >= count:
+            return [json.loads(line) for line in lines]
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {count} lines in {path}")
 
 
 class TestSessionLoggerInit:
@@ -236,6 +247,138 @@ class TestSessionLoggerAttach:
         hooks.emit(Event(type=EventType.EVAL_SCORED, task_id=1, data={"score": 0.8}))
 
         assert logger.summary_path.read_text(encoding="utf-8") == ""
+
+    def test_level_three_routes_transcript_events(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=3)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(
+            Event(
+                type=EventType.AGENT_EVENT,
+                timestamp="2026-03-29T10:18:05+00:00",
+                task_id=1,
+                module="backend",
+                data={
+                    "payload": {
+                        "type": "function_call",
+                        "name": "shell",
+                        "arguments": {"cmd": "echo hi"},
+                    }
+                },
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.AGENT_OUTPUT,
+                timestamp="2026-03-29T10:18:06+00:00",
+                task_id=1,
+                module="backend",
+                data={"output": "full output", "truncated": False},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.GIT_DIFF_CAPTURED,
+                timestamp="2026-03-29T10:18:07+00:00",
+                task_id=1,
+                module="backend",
+                data={"diff": "diff --git a/file b/file", "source": "git log -1 -p"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_HEARTBEAT,
+                timestamp="2026-03-29T10:18:08+00:00",
+                task_id=1,
+                module="backend",
+                data={"tool": "Edit", "event_count": 3},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.CHECKPOINT_SAVED,
+                timestamp="2026-03-29T10:18:09+00:00",
+                data={"checkpoint_count": 2},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.MAILBOX_MESSAGE,
+                timestamp="2026-03-29T10:18:10+00:00",
+                task_id=2,
+                module="qa",
+                data={"direction": "incoming", "subject": "status"},
+            )
+        )
+
+        entries = _wait_for_lines(logger.transcript_path, 6)
+
+        assert [entry["event"] for entry in entries] == [
+            "agent_event",
+            "agent_output",
+            "git_diff_captured",
+            "task_heartbeat",
+            "checkpoint_saved",
+            "mailbox_message",
+        ]
+        assert all(entry["level"] == 3 for entry in entries)
+        assert entries[0]["payload"] == {
+            "type": "function_call",
+            "name": "shell",
+            "arguments": {"cmd": "echo hi"},
+        }
+        assert entries[2]["source"] == "git log -1 -p"
+        assert entries[5]["subject"] == "status"
+        hooks.shutdown()
+
+    def test_level_two_ignores_transcript_events(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=2)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        hooks.emit(Event(type=EventType.AGENT_EVENT, task_id=1, data={"payload": {"type": "x"}}))
+        time.sleep(0.05)
+
+        assert not logger.transcript_path.exists()
+
+    def test_level_three_transcript_handler_is_async(self, tmp_path, mocker) -> None:
+        logger = SessionLogger(tmp_path, level=3)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+
+        append_calls = []
+        write_started = threading.Event()
+        release_write = threading.Event()
+
+        def slow_append(path, data, lock=None):
+            append_calls.append((path, data))
+            if path == logger.transcript_path:
+                write_started.set()
+                assert release_write.wait(timeout=2), (
+                    "timed out waiting to release transcript write"
+                )
+            else:
+                raise AssertionError(f"unexpected path {path}")
+
+        mocker.patch("lindy_orchestrator.session_logger.append_jsonl", side_effect=slow_append)
+
+        start = time.monotonic()
+        hooks.emit(Event(type=EventType.AGENT_EVENT, task_id=1, data={"payload": {"type": "x"}}))
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 0.2
+        assert write_started.wait(timeout=2), "async transcript handler did not start"
+
+        release_write.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if append_calls:
+                break
+            time.sleep(0.01)
+
+        assert append_calls
+        hooks.shutdown()
 
     def test_concurrent_writes_produce_valid_jsonl(self, tmp_path) -> None:
         logger = SessionLogger(tmp_path, level=1)
