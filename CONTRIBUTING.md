@@ -70,7 +70,6 @@ src/lindy_orchestrator/
     cli_helpers.py                  # Shared CLI utilities
     cli_config.py                   # config command (global/local provider settings)
     cli_onboard.py                  # onboard command (guided project setup)
-    cli_onboard_helpers.py          # Onboard helper functions (constants, detection, scaffold)
     cli_status.py                   # status command (module health overview)
     cli_stats.py                    # stats command (execution metrics)
     cli_clear.py                    # clear command (remove generated files)
