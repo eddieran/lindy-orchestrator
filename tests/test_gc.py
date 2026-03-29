@@ -22,6 +22,7 @@ from lindy_orchestrator.gc import (
     format_gc_report,
     run_gc,
 )
+from lindy_orchestrator.session import session_file_path
 
 
 def _make_config(tmp_path: Path) -> OrchestratorConfig:
@@ -120,6 +121,28 @@ class TestOldSessions:
         assert actions[0].applied
         assert not session_file.exists()
         assert (sessions_dir / "archive" / "old.json").exists()
+
+    def test_archives_directory_sessions_with_sidecar_files(self, tmp_path: Path):
+        sessions_dir = tmp_path / "sessions"
+        session_path = session_file_path(sessions_dir, "old")
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+
+        old_date = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+        session_path.write_text(
+            json.dumps({"session_id": "old", "started_at": old_date, "status": "done"})
+        )
+        (session_path.parent / "summary.jsonl").write_text(
+            '{"event":"summary"}\n', encoding="utf-8"
+        )
+
+        actions = _find_old_sessions(sessions_dir, max_age_days=30, apply=True)
+
+        assert len(actions) == 1
+        assert actions[0].applied
+        assert not session_path.parent.exists()
+        archived_dir = sessions_dir / "archive" / "old"
+        assert (archived_dir / "session.json").exists()
+        assert (archived_dir / "summary.jsonl").exists()
 
 
 class TestLogRotation:

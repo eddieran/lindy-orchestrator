@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .session import iter_session_files, session_id_from_path
+
 log = logging.getLogger(__name__)
 
 
@@ -75,18 +77,15 @@ def load_session_summaries(
 ) -> list[SessionSummary]:
     """Load session JSON files and extract summaries.
 
-    Reads ``sessions_dir/*.json``, extracts task costs from ``plan_json``,
-    and uses defensive ``.get()`` for old/incomplete formats.
+    Reads both legacy ``sessions_dir/*.json`` files and canonical
+    ``sessions_dir/<id>/session.json`` files, extracts task costs from
+    ``plan_json``, and uses defensive ``.get()`` for old/incomplete formats.
     Skips malformed files silently.
     """
     if not sessions_dir.exists():
         return []
 
-    files = sorted(
-        sessions_dir.glob("*.json"),
-        key=lambda f: f.stat().st_mtime,
-        reverse=True,
-    )
+    files = iter_session_files(sessions_dir)
 
     summaries: list[SessionSummary] = []
     for path in files:
@@ -128,7 +127,7 @@ def load_session_summaries(
 
         summaries.append(
             SessionSummary(
-                session_id=data.get("session_id", path.stem),
+                session_id=data.get("session_id", session_id_from_path(path)),
                 goal=data.get("goal", ""),
                 status=data.get("status", "unknown"),
                 task_count=task_count,

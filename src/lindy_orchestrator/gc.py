@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from .config import OrchestratorConfig
+from .session import SESSION_FILENAME, iter_session_files, session_id_from_path
 from .worktree import WORKTREES_DIR
 
 
@@ -195,7 +196,7 @@ def _find_old_sessions(
     max_age_days: int,
     apply: bool,
 ) -> list[GCAction]:
-    """Find session files older than max_age_days."""
+    """Find session records older than max_age_days across both layouts."""
     actions: list[GCAction] = []
 
     if not sessions_path.exists():
@@ -204,7 +205,7 @@ def _find_old_sessions(
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
     archive_dir = sessions_path / "archive"
 
-    for session_file in sessions_path.glob("*.json"):
+    for session_file in iter_session_files(sessions_path):
         try:
             data = json.loads(session_file.read_text(encoding="utf-8"))
             started = data.get("started_at", "")
@@ -217,17 +218,26 @@ def _find_old_sessions(
 
             if start_date < cutoff:
                 age_days = (datetime.now(timezone.utc) - start_date).days
+                session_id = data.get("session_id", session_id_from_path(session_file))
+                archive_source = (
+                    session_file.parent if session_file.name == SESSION_FILENAME else session_file
+                )
+                archive_target = (
+                    archive_dir / session_id
+                    if session_file.name == SESSION_FILENAME
+                    else archive_dir
+                )
                 action = GCAction(
                     category="old_session",
                     description=(
-                        f"Session `{session_file.stem}` is {age_days} days old "
+                        f"Session `{session_id}` is {age_days} days old "
                         f"(status: {data.get('status', '?')})"
                     ),
-                    path=str(session_file),
+                    path=str(archive_source),
                 )
                 if apply:
                     archive_dir.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(session_file), str(archive_dir / session_file.name))
+                    shutil.move(str(archive_source), str(archive_target))
                     action.applied = True
                 actions.append(action)
         except (json.JSONDecodeError, OSError, ValueError):
