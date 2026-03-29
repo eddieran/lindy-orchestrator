@@ -549,19 +549,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        result: ExecutionResult = self.server.execution  # type: ignore[attr-defined]
-        self._write_sse(
-            "init",
-            {
-                "goal": result.resolved_goal,
-                "tasks": [_state_payload(state) for state in result.states],
-            },
-        )
-
         client_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         with self.server.queues_lock:  # type: ignore[attr-defined]
             self.server.event_queues.append(client_queue)  # type: ignore[attr-defined]
         try:
+            result: ExecutionResult = self.server.execution  # type: ignore[attr-defined]
+            self._write_sse(
+                "init",
+                {
+                    "goal": result.resolved_goal,
+                    "tasks": [_state_payload(state) for state in result.states],
+                },
+            )
+
             while True:
                 msg = client_queue.get()
                 if msg is None:
