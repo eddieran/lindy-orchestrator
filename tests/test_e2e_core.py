@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from lindy_orchestrator import __version__
 from lindy_orchestrator.cli import app
 from lindy_orchestrator.models import TaskStatus
+from lindy_orchestrator.session import SessionManager, iter_session_files
 
 from .conftest import make_plan, mock_execute_plan, mock_generate_plan
 
@@ -126,6 +127,16 @@ class TestE2EStatus:
 
 
 class TestE2ERun:
+    def _latest_summary_entries(self, project_dir):
+        sessions = SessionManager(project_dir / ".orchestrator" / "sessions")
+        latest = iter_session_files(sessions.sessions_dir)[0]
+        summary_path = latest.parent / "summary.jsonl"
+        return [
+            json.loads(line)
+            for line in summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
     @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
     @patch("lindy_orchestrator.planner_runner.generate_plan", side_effect=mock_generate_plan)
@@ -143,6 +154,32 @@ class TestE2ERun:
         result = runner.invoke(app, ["run", "Implement auth", "-c", cfg_path])
         assert result.exit_code == 0
         assert "GOAL COMPLETED" in result.output
+
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    @patch("lindy_orchestrator.planner_runner._plan_via_cli")
+    def test_run_writes_session_summary_with_config(
+        self, mock_plan_cli, mock_exec, mock_cli, project_dir, cfg_path
+    ):
+        from lindy_orchestrator.models import plan_to_dict
+
+        mock_plan_cli.return_value = json.dumps(plan_to_dict(make_plan("Implement auth")))
+        result = runner.invoke(app, ["run", "Implement auth", "-c", cfg_path])
+
+        assert result.exit_code == 0
+        entries = self._latest_summary_entries(project_dir)
+        session_starts = [entry for entry in entries if entry["event"] == "session_start"]
+        planning_entries = [
+            entry
+            for entry in entries
+            if entry["event"] == "phase_changed" and entry.get("phase") == "planning"
+        ]
+
+        assert len(session_starts) == 1
+        assert session_starts[0]["goal"] == "Implement auth"
+        assert session_starts[0]["config"]["project"]["name"] == "e2e-project"
+        assert session_starts[0]["config"]["observability"]["level"] == 1
+        assert [entry["status"] for entry in planning_entries] == ["started", "completed"]
 
     @patch("shutil.which", return_value=None)
     def test_run_no_claude_cli(self, mock_cli, cfg_path):
@@ -182,6 +219,29 @@ class TestE2ERun:
         result = runner.invoke(app, ["run", "test", "-c", cfg_path])
         assert result.exit_code != 0
         assert "failed" in result.output.lower()
+
+    @patch("shutil.which", return_value="/usr/bin/claude")
+    @patch("lindy_orchestrator.planner_runner._plan_via_cli", side_effect=RuntimeError("LLM down"))
+    def test_run_planner_failure_writes_summary(
+        self, mock_plan_cli, mock_cli, project_dir, cfg_path
+    ):
+        result = runner.invoke(app, ["run", "test", "-c", cfg_path])
+
+        assert result.exit_code != 0
+        entries = self._latest_summary_entries(project_dir)
+
+        assert entries[0]["event"] == "session_start"
+        assert entries[0]["goal"] == "test"
+        assert entries[1]["event"] == "phase_changed"
+        assert entries[1]["phase"] == "planning"
+        assert entries[1]["status"] == "started"
+        assert entries[2]["event"] == "phase_changed"
+        assert entries[2]["phase"] == "planning"
+        assert entries[2]["status"] == "failed"
+        assert entries[2]["error"] == "LLM down"
+        assert entries[3]["event"] == "session_end"
+        assert entries[3]["phase"] == "planning"
+        assert entries[3]["has_failures"] is True
 
     @patch("shutil.which", return_value="/usr/bin/claude")
     @patch("lindy_orchestrator.orchestrator.execute_plan")

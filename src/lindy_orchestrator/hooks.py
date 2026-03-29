@@ -38,6 +38,7 @@ class EventType(str, Enum):
     CHECKPOINT_SAVED = "checkpoint_saved"
     MAILBOX_MESSAGE = "mailbox_message"
     SESSION_START = "session_start"
+    SESSION_RESUMED = "session_resumed"
     SESSION_END = "session_end"
 
 

@@ -95,7 +95,8 @@ class TestPipelineRunE2E:
         mock_validate_provider,
         cfg_path: str,
     ) -> None:
-        def generate_with_provider(goal, cfg, on_progress=None, progress=None):
+        def generate_with_provider(goal, cfg, on_progress=None, progress=None, hooks=None):
+            del hooks
             assert cfg.dispatcher.provider == "codex_cli"
             return TaskPlan(
                 goal=goal,

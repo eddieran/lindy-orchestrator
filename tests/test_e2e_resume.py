@@ -6,12 +6,14 @@ Uses Typer CliRunner, mocking only external dependencies (Claude CLI, git, LLM).
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 from typer.testing import CliRunner
 
 from lindy_orchestrator.cli import app
 from lindy_orchestrator.models import TaskStatus
+from lindy_orchestrator.session import SessionManager, session_file_path
 
 from .conftest import make_plan, mock_execute_plan
 
@@ -80,6 +82,48 @@ class TestE2EResume:
         result = runner.invoke(app, ["resume", session.session_id, "-c", cfg_path])
         assert result.exit_code == 0
         assert session.session_id in result.output
+
+    @patch("lindy_orchestrator.orchestrator.execute_plan", side_effect=mock_execute_plan)
+    def test_resume_appends_session_resumed_event(self, mock_exec, project_dir, cfg_path):
+        from lindy_orchestrator.models import plan_to_dict
+
+        sessions = SessionManager(project_dir / ".orchestrator" / "sessions")
+        session = sessions.create(goal="Specific session")
+        plan = make_plan("Specific session")
+        plan.tasks[0].status = TaskStatus.COMPLETED
+        plan.tasks[1].status = TaskStatus.PENDING
+        session.plan_json = plan_to_dict(plan)
+        session.status = "paused"
+        sessions.save(session)
+
+        summary_path = (
+            session_file_path(sessions.sessions_dir, session.session_id).parent / "summary.jsonl"
+        )
+        summary_path.write_text(
+            json.dumps(
+                {
+                    "ts": "2026-03-29T10:18:05+00:00",
+                    "level": 1,
+                    "event": "session_start",
+                    "task_id": None,
+                    "goal": "Specific session",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["resume", session.session_id, "-c", cfg_path])
+
+        assert result.exit_code == 0
+        entries = [
+            json.loads(line)
+            for line in summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        assert [entry["event"] for entry in entries] == ["session_start", "session_resumed"]
+        assert entries[1]["goal"] == "Specific session"
+        assert entries[1]["session_id"] == session.session_id
 
     # --- Execution summary report E2E tests for resume ---
 

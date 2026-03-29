@@ -18,6 +18,7 @@ class TestHookRegistry:
         assert EventType.AGENT_EVENT.value == "agent_event"
         assert EventType.AGENT_OUTPUT.value == "agent_output"
         assert EventType.GIT_DIFF_CAPTURED.value == "git_diff_captured"
+        assert EventType.SESSION_RESUMED.value == "session_resumed"
 
     def test_on_and_emit(self):
         reg = HookRegistry()

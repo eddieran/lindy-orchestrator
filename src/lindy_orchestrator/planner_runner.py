@@ -13,6 +13,7 @@ import time
 from typing import Callable
 
 from .config import OrchestratorConfig
+from .hooks import Event, EventType, HookRegistry
 from .models import PlannerMode, QACheck, TaskSpec, TaskPlan, TaskStatus
 from .providers import create_provider
 from .prompts import render_plan_prompt
@@ -25,6 +26,7 @@ def generate_plan(
     config: OrchestratorConfig,
     on_progress: Callable[[str], None] | None = None,
     progress: PlanProgress | None = None,
+    hooks: HookRegistry | None = None,
 ) -> TaskPlan:
     """Generate a task plan from a natural-language goal.
 
@@ -35,69 +37,97 @@ def generate_plan(
                   phase transitions are shown in the live display.
                   The on_progress callback is still called for backward compat.
     """
-    if progress:
-        progress.set_phase("Reading statuses...")
-
-    # Step 1: Read all module statuses
-    statuses = _read_all_statuses(config)
-    if on_progress:
-        for name, summary in statuses.items():
-            on_progress(
-                f"  [dim]{name}:[/] {summary.splitlines()[0] if summary.splitlines() else 'empty'}"
-            )
-
-    # Step 2: Build prompt
-    modules_info = [{"name": m.name, "path": m.path} for m in config.modules]
-
-    # Read ARCHITECTURE.md if it exists
-    arch_path = config.root / ".orchestrator" / "architecture.md"
-    architecture = arch_path.read_text(encoding="utf-8") if arch_path.exists() else None
-
-    # Collect available gates
-    gate_names = ["ci_check", "command_check", "agent_check"]
-    for cg in config.qa_gates.custom:
-        gate_names.append(cg.name)
-
-    prompt = render_plan_prompt(
-        goal=goal,
-        module_summaries=statuses,
-        project_name=config.project.name,
-        branch_prefix=config.project.branch_prefix,
-        modules=modules_info,
-        available_gates=gate_names,
-        architecture=architecture,
-    )
-
-    # Step 3: Call LLM
-    if config.safety.dry_run:
+    _emit_planning_phase(hooks, status="started", goal=goal)
+    try:
         if progress:
-            progress.set_phase("Dry run — skipping LLM")
-        return TaskPlan(
-            goal=goal,
-            tasks=[
-                TaskSpec(
-                    id=1,
-                    module=config.modules[0].name if config.modules else "default",
-                    description="[DRY RUN] Would decompose goal into tasks",
-                    generator_prompt="[DRY RUN]",
-                    prompt="[DRY RUN]",
+            progress.set_phase("Reading statuses...")
+
+        # Step 1: Read all module statuses
+        statuses = _read_all_statuses(config)
+        if on_progress:
+            for name, summary in statuses.items():
+                on_progress(
+                    f"  [dim]{name}:[/] {summary.splitlines()[0] if summary.splitlines() else 'empty'}"
                 )
-            ],
+
+        # Step 2: Build prompt
+        modules_info = [{"name": m.name, "path": m.path} for m in config.modules]
+
+        # Read ARCHITECTURE.md if it exists
+        arch_path = config.root / ".orchestrator" / "architecture.md"
+        architecture = arch_path.read_text(encoding="utf-8") if arch_path.exists() else None
+
+        # Collect available gates
+        gate_names = ["ci_check", "command_check", "agent_check"]
+        for cg in config.qa_gates.custom:
+            gate_names.append(cg.name)
+
+        prompt = render_plan_prompt(
+            goal=goal,
+            module_summaries=statuses,
+            project_name=config.project.name,
+            branch_prefix=config.project.branch_prefix,
+            modules=modules_info,
+            available_gates=gate_names,
+            architecture=architecture,
         )
 
-    if progress:
-        progress.set_phase("Calling LLM...")
+        # Step 3: Call LLM
+        if config.safety.dry_run:
+            if progress:
+                progress.set_phase("Dry run — skipping LLM")
+            plan = TaskPlan(
+                goal=goal,
+                tasks=[
+                    TaskSpec(
+                        id=1,
+                        module=config.modules[0].name if config.modules else "default",
+                        description="[DRY RUN] Would decompose goal into tasks",
+                        generator_prompt="[DRY RUN]",
+                        prompt="[DRY RUN]",
+                    )
+                ],
+            )
+            _emit_planning_phase(hooks, status="completed", goal=goal, task_count=len(plan.tasks))
+            return plan
 
-    mode = PlannerMode(config.planner.mode)
-    if mode == PlannerMode.API:
-        output = _plan_via_api(prompt, config)
-    else:
-        output = _plan_via_cli(prompt, config, on_progress=on_progress, progress=progress)
+        if progress:
+            progress.set_phase("Calling LLM...")
 
-    # Step 4: Parse JSON output into TaskPlan
-    if progress:
-        progress.set_phase("Parsing plan...")
-    return _parse_task_plan(goal, output)
+        mode = PlannerMode(config.planner.mode)
+        if mode == PlannerMode.API:
+            output = _plan_via_api(prompt, config)
+        else:
+            output = _plan_via_cli(prompt, config, on_progress=on_progress, progress=progress)
+
+        # Step 4: Parse JSON output into TaskPlan
+        if progress:
+            progress.set_phase("Parsing plan...")
+        plan = _parse_task_plan(goal, output)
+    except Exception as exc:
+        _emit_planning_phase(hooks, status="failed", goal=goal, error=str(exc))
+        raise
+
+    _emit_planning_phase(hooks, status="completed", goal=goal, task_count=len(plan.tasks))
+    return plan
+
+
+def _emit_planning_phase(
+    hooks: HookRegistry | None,
+    *,
+    status: str,
+    goal: str,
+    **extra: object,
+) -> None:
+    if hooks is None:
+        return
+
+    hooks.emit(
+        Event(
+            type=EventType.PHASE_CHANGED,
+            data={"phase": "planning", "status": status, "goal": goal, **extra},
+        )
+    )
 
 
 def _read_all_statuses(config: OrchestratorConfig) -> dict[str, str]:

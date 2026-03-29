@@ -22,9 +22,10 @@ from .cli_helpers import (
     resolve_goal,
     validate_provider,
 )
+from .config import OrchestratorConfig
 from .dag import truncate_goal
 from .dashboard import Dashboard
-from .hooks import HookRegistry
+from .hooks import Event, EventType, HookRegistry
 from .logger import ActionLogger
 from .models import TaskStatus
 from .reporter import (
@@ -32,7 +33,8 @@ from .reporter import (
     generate_execution_summary,
     save_summary_report,
 )
-from .session import SessionManager
+from .session import SessionManager, session_file_path
+from .session_logger import SessionLogger
 
 
 def _version_callback(value: bool) -> None:
@@ -83,6 +85,30 @@ def _start_web_dashboard(
         logging.getLogger(__name__).warning("Web dashboard failed to start: %s", exc)
         console.print(f"[yellow]Web dashboard failed to start: {exc}[/]")
         return None
+
+
+def _session_hooks(cfg: OrchestratorConfig, session_id: str) -> HookRegistry:
+    hooks = HookRegistry()
+    session_dir = session_file_path(cfg.sessions_path, session_id).parent
+    SessionLogger(session_dir, level=cfg.observability.level).attach(hooks)
+    return hooks
+
+
+def _session_event_data(
+    goal: str,
+    cfg: OrchestratorConfig,
+    session_id: str,
+    *,
+    dry_run: bool | None = None,
+) -> dict[str, object]:
+    data: dict[str, object] = {
+        "goal": goal,
+        "session_id": session_id,
+        "config": cfg.model_dump(mode="json"),
+    }
+    if dry_run is not None:
+        data["dry_run"] = dry_run
+    return data
 
 
 @app.command()
@@ -144,11 +170,23 @@ def run(
     logger = ActionLogger(cfg.log_path)
     sessions = SessionManager(cfg.sessions_path)
     session = sessions.create(goal=goal)
+    hooks = _session_hooks(cfg, session.session_id)
     console.print(f"Session: {session.session_id}\n")
 
     start = time.time()  # wall-clock time (monotonic skips macOS sleep)
     on_progress = make_on_progress(console)
 
+    hooks.emit(
+        Event(
+            type=EventType.SESSION_START,
+            data=_session_event_data(
+                goal,
+                cfg,
+                session.session_id,
+                dry_run=cfg.safety.dry_run,
+            ),
+        )
+    )
     logger.log_action("session_start", details={"goal": goal, "dry_run": cfg.safety.dry_run})
 
     if not plan_file:
@@ -158,12 +196,24 @@ def run(
         progress.start()
 
         try:
-            plan = generate_plan(goal, cfg, on_progress=on_progress, progress=progress)
+            plan = generate_plan(goal, cfg, on_progress=on_progress, progress=progress, hooks=hooks)
         except Exception as e:
             progress.stop(f"Planning failed: {e}")
             console.print(f"[red]Planning failed: {e}[/]")
             session.status = "failed"
             sessions.save(session)
+            hooks.emit(
+                Event(
+                    type=EventType.SESSION_END,
+                    data={
+                        "goal": goal,
+                        "session_id": session.session_id,
+                        "has_failures": True,
+                        "phase": "planning",
+                        "error": str(e),
+                    },
+                )
+            )
             raise typer.Exit(1)
         finally:
             if progress._live is not None:
@@ -180,7 +230,6 @@ def run(
 
     # Step 3: Execute
     console.print("\n[bold cyan][2/3][/] Executing tasks...")
-    hooks = HookRegistry()
     dashboard: Dashboard | None = None
     web_dashboard = None
 
@@ -373,11 +422,17 @@ def resume(
 
     # Execute remaining
     logger = ActionLogger(cfg.log_path)
+    hooks = _session_hooks(cfg, session.session_id)
     start = time.time()  # wall-clock time (monotonic skips macOS sleep)
     on_progress = make_on_progress(console)
 
+    hooks.emit(
+        Event(
+            type=EventType.SESSION_RESUMED,
+            data=_session_event_data(session.goal, cfg, session.session_id),
+        )
+    )
     console.print("\n[bold cyan]Resuming execution...[/]")
-    hooks = HookRegistry()
     dashboard: Dashboard | None = None
     web_dashboard = None
 

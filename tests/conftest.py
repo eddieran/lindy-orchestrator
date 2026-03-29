@@ -105,8 +105,9 @@ def make_plan(goal: str = "Test goal") -> TaskPlan:
     )
 
 
-def mock_generate_plan(goal, cfg, on_progress=None, progress=None):
+def mock_generate_plan(goal, cfg, on_progress=None, progress=None, hooks=None):
     """Mock planner.generate_plan to return a simple plan."""
+    del hooks
     plan = make_plan(goal)
     for t in plan.tasks:
         t.status = TaskStatus.PENDING
