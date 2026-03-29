@@ -158,6 +158,10 @@ class EvaluatorRunner:
             )
 
         raw_output = dispatch_result.raw_output or dispatch_result.output
+        # Use the parsed output (result text extracted from CLI wrapper) for
+        # JSON extraction. raw_output may contain the full CLI wrapper JSON
+        # which has no "score" key at the top level.
+        parseable_output = dispatch_result.output or raw_output
 
         if not dispatch_result.success:
             return EvalResult(
@@ -174,7 +178,7 @@ class EvaluatorRunner:
             )
 
         try:
-            payload = self._parse_json_payload(raw_output)
+            payload = self._parse_json_payload(parseable_output)
         except ValueError:
             return EvalResult(
                 score=0,
