@@ -245,8 +245,117 @@ class TestSessionLoggerAttach:
         hooks.emit(Event(type=EventType.TASK_HEARTBEAT, task_id=1, data={"tool": "Edit"}))
         hooks.emit(Event(type=EventType.PHASE_CHANGED, task_id=1, data={"phase": "qa"}))
         hooks.emit(Event(type=EventType.EVAL_SCORED, task_id=1, data={"score": 0.8}))
+        hooks.emit(Event(type=EventType.TASK_RETRYING, task_id=1, data={"retry": 1}))
+        hooks.emit(Event(type=EventType.STALL_WARNING, task_id=1, data={"stall_seconds": 45}))
+        hooks.emit(Event(type=EventType.PROMPT_SENT, task_id=1, data={"prompt": "full prompt"}))
 
         assert logger.summary_path.read_text(encoding="utf-8") == ""
+        assert not logger.decisions_path.exists()
+
+    def test_level_two_routes_decision_events_to_decisions_jsonl(self, tmp_path) -> None:
+        logger = SessionLogger(tmp_path, level=2)
+        hooks = HookRegistry()
+        logger.attach(hooks)
+        full_output = "F401 " * 80
+        full_prompt = "prompt line\n" * 40
+
+        hooks.emit(
+            Event(
+                type=EventType.QA_FAILED,
+                timestamp="2026-03-29T10:18:05+00:00",
+                task_id=2,
+                module="frontend",
+                data={
+                    "gate": "ruff",
+                    "output": full_output[:200],
+                    "full_output": full_output,
+                    "retryable": True,
+                },
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.EVAL_SCORED,
+                timestamp="2026-03-29T10:18:06+00:00",
+                task_id=2,
+                module="frontend",
+                data={
+                    "score": 42,
+                    "passed": False,
+                    "criteria_results": [
+                        {"criterion": "Lint passes", "passed": False},
+                        {"criterion": "Tests pass", "passed": True},
+                    ],
+                    "reasoning": {"summary": "Lint failed", "failed_criteria": ["Lint passes"]},
+                    "raw_output": '{"score": 42}',
+                },
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.TASK_RETRYING,
+                timestamp="2026-03-29T10:18:07+00:00",
+                task_id=2,
+                module="frontend",
+                data={"decision": "retry", "feedback_summary": "Fix lint"},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.STALL_KILLED,
+                timestamp="2026-03-29T10:18:08+00:00",
+                task_id=2,
+                module="frontend",
+                data={"stall_seconds": 300},
+            )
+        )
+        hooks.emit(
+            Event(
+                type=EventType.PROMPT_SENT,
+                timestamp="2026-03-29T10:18:09+00:00",
+                task_id=2,
+                module="frontend",
+                data={"prompt": full_prompt},
+            )
+        )
+
+        summary_entries = [
+            json.loads(line)
+            for line in logger.summary_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+        decision_entries = [
+            json.loads(line)
+            for line in logger.decisions_path.read_text(encoding="utf-8").splitlines()
+            if line
+        ]
+
+        assert summary_entries == [
+            {
+                "ts": "2026-03-29T10:18:05+00:00",
+                "level": 1,
+                "event": "qa_failed",
+                "task_id": 2,
+                "module": "frontend",
+                "gate": "ruff",
+                "output": full_output[:200],
+                "retryable": True,
+            }
+        ]
+        assert [entry["event"] for entry in decision_entries] == [
+            "qa_failed",
+            "eval_scored",
+            "task_retrying",
+            "stall_killed",
+            "prompt_sent",
+        ]
+        assert decision_entries[0]["output"] == full_output
+        assert "full_output" not in decision_entries[0]
+        assert decision_entries[1]["criteria_results"][0]["passed"] is False
+        assert decision_entries[1]["reasoning"]["summary"] == "Lint failed"
+        assert decision_entries[1]["raw_output"] == '{"score": 42}'
+        assert decision_entries[2]["decision"] == "retry"
+        assert decision_entries[4]["prompt"] == full_prompt
 
     def test_level_three_routes_transcript_events(self, tmp_path) -> None:
         logger = SessionLogger(tmp_path, level=3)

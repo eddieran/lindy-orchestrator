@@ -421,12 +421,14 @@ def streaming_dispatch(
             state.result_text = f"[stderr] {stderr[:5000]}"
 
     # Truncate if needed
+    raw_output = state.result_text
     result_text, truncated = truncate_output(state.result_text, config.max_output_chars)
 
     return DispatchResult(
         module=module,
         success=retcode == 0,
         output=result_text,
+        raw_output=raw_output,
         exit_code=retcode,
         duration_seconds=round(duration, 1),
         truncated=truncated,
@@ -475,19 +477,22 @@ def simple_dispatch(
         )
         duration = time.monotonic() - start
 
+        raw_output = proc.stdout
         output, truncated = truncate_output(proc.stdout, config.max_output_chars)
 
-        agent_output = parse_result(output)
+        agent_output = parse_result(raw_output)
         if not agent_output:
             agent_output = output
 
         if not agent_output.strip() and proc.stderr:
             agent_output = f"[stderr] {proc.stderr[:5000]}"
+            raw_output = raw_output or proc.stderr
 
         return DispatchResult(
             module=module,
             success=proc.returncode == 0,
             output=agent_output,
+            raw_output=raw_output,
             exit_code=proc.returncode,
             duration_seconds=round(duration, 1),
             truncated=truncated,
