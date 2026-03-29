@@ -36,7 +36,7 @@ class PlannerConfig(BaseModel):
     mode: str = "cli"  # "cli" or "api"
     model: str = "claude-sonnet-4-20250514"
     max_tokens: int = 4096
-    timeout_seconds: int = 120
+    timeout_seconds: int = 300  # planning complex goals can take 2-5 min
     prompt: str = ""
     prompt_template: str | None = None  # Path to custom Jinja2 template
 

@@ -175,7 +175,7 @@ def _plan_via_cli(
         working_dir=config.root,
         prompt=prompt,
         on_event=_on_event,
-        stall_seconds=config.planner.timeout_seconds,  # planning has few events; disable stall
+        stall_seconds=max(config.planner.timeout_seconds * 5, 600),  # generous stall for planning
     )
     if not result.success:
         raise RuntimeError(f"Planning failed: {result.output[:500]}")
