@@ -12,6 +12,8 @@ from rich.console import Console
 
 from typing import Callable
 
+from .console import console
+
 from .config import (
     CONFIG_FILENAME,
     DispatcherConfig,
@@ -29,7 +31,16 @@ MAX_DISPLAY_TASKS = 8
 _COLLAPSE_HEAD = 3
 _COLLAPSE_TAIL = 2
 
-console = Console()
+def require_path(path: str | Path, label: str = "File") -> Path:
+    """Validate that *path* exists, or print a red error and exit.
+
+    Returns the resolved ``Path`` on success.
+    """
+    p = Path(path)
+    if not p.exists():
+        console.print(f"[red]{label} not found: {path}[/]")
+        raise typer.Exit(1)
+    return p
 
 
 def make_on_progress(con: Console) -> Callable[[str], None]:
@@ -52,10 +63,7 @@ def resolve_goal(goal: str | None, file: str | None) -> str:
                 console.print("[red]No input received from stdin.[/]")
                 raise typer.Exit(1)
             return text
-        p = Path(file)
-        if not p.exists():
-            console.print(f"[red]File not found: {file}[/]")
-            raise typer.Exit(1)
+        p = require_path(file)
         return p.read_text(encoding="utf-8").strip()
     if goal:
         return goal

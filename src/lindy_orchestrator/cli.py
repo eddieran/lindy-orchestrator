@@ -11,6 +11,7 @@ import typer
 from rich.console import Console
 
 from . import __version__
+from .console import console
 from .cli_helpers import (
     finalise_session,
     load_cfg,
@@ -19,6 +20,7 @@ from .cli_helpers import (
     plan_from_dict,
     plan_to_dict,
     print_task_list,
+    require_path,
     resolve_goal,
     validate_provider,
 )
@@ -46,7 +48,6 @@ app = typer.Typer(
     help="Lightweight, git-native multi-agent orchestration framework.",
     no_args_is_help=True,
 )
-console = Console()
 
 
 @app.callback(invoke_without_command=True)
@@ -123,10 +124,7 @@ def run(
 
     # Load plan from file or generate from goal
     if plan_file:
-        plan_path = Path(plan_file)
-        if not plan_path.exists():
-            console.print(f"[red]Plan file not found: {plan_file}[/]")
-            raise typer.Exit(1)
+        plan_path = require_path(plan_file, label="Plan file")
         plan_data = json.loads(plan_path.read_text(encoding="utf-8"))
         plan = plan_from_dict(plan_data)
         goal = plan.goal
