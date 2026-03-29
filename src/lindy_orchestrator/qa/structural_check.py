@@ -9,23 +9,12 @@ from __future__ import annotations
 import fnmatch
 import re
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..config import StructuralCheckConfig
 from ..models import QAResult
-from . import register
-
-
-@dataclass
-class Violation:
-    """A single structural violation with remediation."""
-
-    rule: str
-    file: str
-    message: str
-    remediation: str
+from . import Violation, format_violations, register
 
 
 def run_structural_check(
@@ -348,19 +337,6 @@ def _module_file_prefix(
     return ""
 
 
-def _format_violations(violations: list[Violation], label: str = "structural") -> str:
-    """Format violations into a human/agent-readable report."""
-    if not violations:
-        return f"All {label} checks passed."
-
-    parts = [f"**{len(violations)} {label} violation(s):**\n"]
-    for v in violations:
-        parts.append(f"VIOLATION [{v.rule}]: {v.message}")
-        parts.append(f"FIX: {v.remediation}\n")
-
-    return "\n".join(parts)
-
-
 # ---------------------------------------------------------------------------
 # Gate registration
 # ---------------------------------------------------------------------------
@@ -403,7 +379,7 @@ class StructuralCheckGate:
         return QAResult(
             gate="structural_check",
             passed=passed,
-            output=_format_violations(violations),
+            output=format_violations(violations),
             details={
                 "violation_count": len(violations),
                 "violations": [

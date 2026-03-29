@@ -5,11 +5,35 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 from ..config import CustomGateConfig, DispatcherConfig, ModuleConfig
 from ..models import QACheck, QAResult
+
+
+@dataclass
+class Violation:
+    """A single structural violation with remediation."""
+
+    rule: str
+    file: str
+    message: str
+    remediation: str
+
+
+def format_violations(violations: list[Violation], label: str = "structural") -> str:
+    """Format violations into a human/agent-readable report."""
+    if not violations:
+        return f"All {label} checks passed."
+
+    parts = [f"**{len(violations)} {label} violation(s):**\n"]
+    for v in violations:
+        parts.append(f"VIOLATION [{v.rule}]: {v.message}")
+        parts.append(f"FIX: {v.remediation}\n")
+
+    return "\n".join(parts)
 
 # Only allow safe characters in paths used for command substitution.
 _SAFE_PATH_RE = re.compile(r"^[\w./\-]+$")
