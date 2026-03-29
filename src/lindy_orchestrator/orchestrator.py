@@ -932,6 +932,7 @@ def _dispatch_loop(
             branch_name=branch_name,
             feedback=feedback,
             on_event=hb.on_event,
+            hooks=hooks,
         )
         dispatches += 1
         task.result = gen_output.output

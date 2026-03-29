@@ -16,6 +16,14 @@ _log = logging.getLogger(__name__)
 
 _RESERVED_FIELDS = {"ts", "level", "event", "task_id", "module"}
 _SUMMARY_OMIT_FIELDS = {"full_output", "raw_output"}
+_TRANSCRIPT_EVENT_TYPES = (
+    EventType.AGENT_EVENT,
+    EventType.AGENT_OUTPUT,
+    EventType.GIT_DIFF_CAPTURED,
+    EventType.TASK_HEARTBEAT,
+    EventType.CHECKPOINT_SAVED,
+    EventType.MAILBOX_MESSAGE,
+)
 
 
 class SessionLogger:
@@ -32,7 +40,7 @@ class SessionLogger:
         self._session_started_logged = self._has_existing_event(EventType.SESSION_START.value)
 
     def attach(self, hooks: HookRegistry) -> None:
-        """Subscribe handlers for the configured observability levels."""
+        """Subscribe observability handlers for the configured levels."""
         if self.level < 1:
             return
 
@@ -56,6 +64,10 @@ class SessionLogger:
             hooks.on(EventType.STALL_WARNING, self._on_decision_event)
             hooks.on(EventType.STALL_KILLED, self._on_decision_event)
             hooks.on(EventType.PROMPT_SENT, self._on_decision_event)
+
+        if self.level >= 3:
+            for event_type in _TRANSCRIPT_EVENT_TYPES:
+                hooks.on_async(event_type, self._on_transcript_event)
 
     def _ensure_paths(self) -> None:
         for path in self._selected_paths():
@@ -112,6 +124,9 @@ class SessionLogger:
     def _on_decision_event(self, event: Event) -> None:
         self._write_decision(event)
 
+    async def _on_transcript_event(self, event: Event) -> None:
+        self._write_transcript(event)
+
     def _write_summary(self, event: Event, extra: dict[str, Any] | None = None) -> None:
         entry = self._build_entry(
             event,
@@ -124,6 +139,10 @@ class SessionLogger:
     def _write_decision(self, event: Event, extra: dict[str, Any] | None = None) -> None:
         entry = self._build_entry(event, level=2, extra=extra, use_full_output=True)
         self._append_entry(self.decisions_path, entry)
+
+    def _write_transcript(self, event: Event) -> None:
+        entry = self._build_entry(event, level=3)
+        self._append_entry(self.transcript_path, entry)
 
     def _build_entry(
         self,
