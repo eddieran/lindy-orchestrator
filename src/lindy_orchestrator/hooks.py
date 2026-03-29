@@ -20,6 +20,9 @@ log = logging.getLogger(__name__)
 
 
 class EventType(str, Enum):
+    AGENT_EVENT = "agent_event"
+    AGENT_OUTPUT = "agent_output"
+    GIT_DIFF_CAPTURED = "git_diff_captured"
     TASK_STARTED = "task_started"
     TASK_COMPLETED = "task_completed"
     TASK_FAILED = "task_failed"

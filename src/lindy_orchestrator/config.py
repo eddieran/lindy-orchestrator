@@ -162,6 +162,11 @@ class LoggingConfig(BaseModel):
     log_file: str = "actions.jsonl"
 
 
+class ObservabilityConfig(BaseModel):
+    level: int = 1
+    retention_days: int = 30
+
+
 class ProjectConfig(BaseModel):
     name: str = "project"
     branch_prefix: str = "af"
@@ -179,11 +184,10 @@ class OrchestratorConfig(BaseModel):
     generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
     evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     dispatcher: DispatcherConfig = Field(default_factory=DispatcherConfig)
-    generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
-    evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     mailbox: MailboxConfig = Field(default_factory=MailboxConfig)
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     lifecycle_hooks: LifecycleHooksConfig = Field(default_factory=LifecycleHooksConfig)
