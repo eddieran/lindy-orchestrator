@@ -180,8 +180,6 @@ class OrchestratorConfig(BaseModel):
     generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
     evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     dispatcher: DispatcherConfig = Field(default_factory=DispatcherConfig)
-    generator: GeneratorConfig = Field(default_factory=GeneratorConfig)
-    evaluator: EvaluatorConfig = Field(default_factory=EvaluatorConfig)
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
