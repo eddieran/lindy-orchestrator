@@ -42,7 +42,6 @@ class StallEscalationConfig(BaseModel):
 class DispatcherConfig(BaseModel):
     provider: str = "claude_cli"
     timeout_seconds: int = 1800
-    stall_timeout_seconds: int = 600  # kept for backward compat
     stall_escalation: StallEscalationConfig = Field(default_factory=StallEscalationConfig)
     permission_mode: str = "bypassPermissions"
     max_output_chars: int = 50_000
@@ -89,15 +88,9 @@ class StructuralCheckConfig(BaseModel):
     sensitive_patterns: list[str] = Field(default_factory=lambda: [".env", "*.key", "*.pem"])
 
 
-class LayerCheckConfig(BaseModel):
-    enabled: bool = True
-    unknown_file_policy: str = "skip"  # skip | warn
-
-
 class QAGatesConfig(BaseModel):
     ci_check: CICheckConfig = Field(default_factory=CICheckConfig)
     structural: StructuralCheckConfig = Field(default_factory=StructuralCheckConfig)
-    layer_check: LayerCheckConfig = Field(default_factory=LayerCheckConfig)
     custom: list[CustomGateConfig] = Field(default_factory=list)
 
 
@@ -114,27 +107,6 @@ class SafetyConfig(BaseModel):
     max_retries_per_task: int = 2
     max_parallel: int = 10
     module_concurrency: dict[str, int] = Field(default_factory=dict)
-
-
-class MailboxConfig(BaseModel):
-    enabled: bool = True  # enabled by default
-    dir: str = ".orchestrator/mailbox"
-    inject_on_dispatch: bool = True  # auto-inject pending messages into prompts
-
-
-class TrackerConfig(BaseModel):
-    enabled: bool = False
-    provider: str = "github"  # github | linear
-    repo: str = ""
-    labels: list[str] = Field(default_factory=lambda: ["orchestrator"])
-    sync_on_complete: bool = True  # auto-comment + close on completion
-
-
-class OTelConfig(BaseModel):
-    enabled: bool = False
-    exporter: str = "console"  # "console" or "otlp"
-    endpoint: str = ""
-    service_name: str = "lindy-orchestrator"
 
 
 class LoggingConfig(BaseModel):
@@ -163,10 +135,7 @@ class OrchestratorConfig(BaseModel):
     qa_gates: QAGatesConfig = Field(default_factory=QAGatesConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
-    mailbox: MailboxConfig = Field(default_factory=MailboxConfig)
-    tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     lifecycle_hooks: LifecycleHooksConfig = Field(default_factory=LifecycleHooksConfig)
-    otel: OTelConfig = Field(default_factory=OTelConfig)
 
     # Internal: set after loading, not from YAML
     _config_dir: Path = PrivateAttr(default_factory=lambda: Path("."))

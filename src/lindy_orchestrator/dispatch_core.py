@@ -148,13 +148,8 @@ def compute_stall_thresholds(
         warn_threshold = stall_seconds // 2
         kill_threshold = stall_seconds
     else:
-        escalation = getattr(config, "stall_escalation", None)
-        if escalation:
-            warn_threshold = escalation.warn_after_seconds
-            kill_threshold = escalation.kill_after_seconds
-        else:
-            warn_threshold = config.stall_timeout_seconds // 2
-            kill_threshold = config.stall_timeout_seconds
+        warn_threshold = config.stall_escalation.warn_after_seconds
+        kill_threshold = config.stall_escalation.kill_after_seconds
 
     if apply_long_running_multiplier and last_tool_use in _LONG_RUNNING_TOOLS:
         warn_threshold = int(warn_threshold * 1.5)

@@ -47,7 +47,6 @@ def test_default_config():
     assert cfg.generator.provider == ""
     assert cfg.evaluator.pass_threshold == 80
     assert cfg.safety.max_parallel == 10
-    assert cfg.mailbox.enabled is True
 
 
 def test_config_not_found():

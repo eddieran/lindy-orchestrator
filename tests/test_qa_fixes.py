@@ -209,20 +209,20 @@ class TestSkipGates:
         assert task.skip_gates == []
 
     def test_skip_gates_excludes_structural(self) -> None:
-        from lindy_orchestrator.orchestrator_helpers import inject_qa_gates
+        from lindy_orchestrator.scheduler_helpers import prepare_qa_checks
 
         task = TaskSpec(id=1, module="backend", description="test", skip_gates=["structural_check"])
         cfg = OrchestratorConfig()
         cfg._config_dir = Path("/tmp")
         progress = MagicMock()
 
-        inject_qa_gates(task, cfg, progress)
+        prepare_qa_checks(task, cfg, progress)
 
         gate_names = [q.gate for q in task.qa_checks]
         assert "structural_check" not in gate_names
 
     def test_skip_gates_excludes_named_command(self) -> None:
-        from lindy_orchestrator.orchestrator_helpers import inject_qa_gates
+        from lindy_orchestrator.scheduler_helpers import prepare_qa_checks
 
         cfg = OrchestratorConfig()
         cfg._config_dir = Path("/tmp")
@@ -233,7 +233,7 @@ class TestSkipGates:
         task = TaskSpec(id=1, module="backend", description="test", skip_gates=["slow-integration"])
         progress = MagicMock()
 
-        inject_qa_gates(task, cfg, progress)
+        prepare_qa_checks(task, cfg, progress)
 
         commands = [q.params.get("command") for q in task.qa_checks if q.gate == "command_check"]
         assert "npm run test:e2e" not in commands

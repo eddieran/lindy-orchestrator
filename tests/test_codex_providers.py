@@ -103,12 +103,10 @@ class TestCodexCLIProviderInit:
     def test_init_stores_config(self):
         config = DispatcherConfig(
             timeout_seconds=100,
-            stall_timeout_seconds=50,
             permission_mode="plan",
         )
         provider = CodexCLIProvider(config)
         assert provider.config.timeout_seconds == 100
-        assert provider.config.stall_timeout_seconds == 50
         assert provider.config.permission_mode == "plan"
 
     def test_init_with_codex_provider_name(self):
@@ -221,7 +219,6 @@ class TestDispatcherConfigCodexProvider:
         config = DispatcherConfig(
             provider="codex_cli",
             timeout_seconds=900,
-            stall_timeout_seconds=300,
             permission_mode="bypassPermissions",
             max_output_chars=100_000,
         )
