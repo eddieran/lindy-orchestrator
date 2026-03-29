@@ -19,7 +19,7 @@ from .config import (
     load_config,
     load_global_config,
 )
-from .models import TaskItem, TaskPlan
+from .models import TaskItem, TaskPlan, plan_to_dict
 from .providers import create_provider
 from .session import SessionManager, SessionState
 
@@ -75,19 +75,6 @@ def load_cfg(config_path: str | None) -> OrchestratorConfig:
         console.print(f"[red]Config error: {e}[/]")
         raise typer.Exit(1)
 
-
-def plan_to_dict(plan: TaskPlan) -> dict:
-    """Serialize a TaskPlan to a JSON-safe dict."""
-    from .models import plan_to_dict as _plan_to_dict
-
-    return _plan_to_dict(plan)
-
-
-def plan_from_dict(data: dict) -> TaskPlan:
-    """Deserialize a TaskPlan from a dict."""
-    from .models import plan_from_dict as _plan_from_dict
-
-    return _plan_from_dict(data)
 
 
 def print_task_list(

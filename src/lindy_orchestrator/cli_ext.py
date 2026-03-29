@@ -14,10 +14,10 @@ from .cli_helpers import (
     load_cfg as _load_cfg,
     make_on_progress,
     persist_plan as _persist_plan,
-    plan_to_dict as _plan_to_dict,
     print_task_list,
     validate_provider,
 )
+from .models import plan_to_dict as _plan_to_dict
 from .dispatcher import find_claude_cli
 from .logger import ActionLogger
 from .reporter import PlanProgress, print_goal_report

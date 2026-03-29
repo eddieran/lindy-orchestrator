@@ -13,11 +13,9 @@ from lindy_orchestrator.cli_helpers import (
     load_cfg,
     make_on_progress,
     persist_plan,
-    plan_from_dict,
-    plan_to_dict,
     resolve_goal,
 )
-from lindy_orchestrator.models import QACheck, TaskItem, TaskPlan, TaskStatus
+from lindy_orchestrator.models import QACheck, TaskItem, TaskPlan, TaskStatus, plan_from_dict, plan_to_dict
 from lindy_orchestrator.session import SessionManager
 
 

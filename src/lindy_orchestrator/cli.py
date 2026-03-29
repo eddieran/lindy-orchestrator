@@ -16,8 +16,6 @@ from .cli_helpers import (
     load_cfg,
     make_on_progress,
     persist_plan,
-    plan_from_dict,
-    plan_to_dict,
     print_task_list,
     resolve_goal,
     validate_provider,
@@ -26,7 +24,7 @@ from .dag import truncate_goal
 from .dashboard import Dashboard
 from .hooks import HookRegistry
 from .logger import ActionLogger
-from .models import TaskStatus
+from .models import TaskStatus, plan_from_dict, plan_to_dict
 from .reporter import (
     PlanProgress,
     generate_execution_summary,

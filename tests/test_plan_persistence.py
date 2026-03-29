@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from lindy_orchestrator.cli_helpers import persist_plan, plan_from_dict, plan_to_dict
+from lindy_orchestrator.cli_helpers import persist_plan
+from lindy_orchestrator.models import plan_from_dict, plan_to_dict
 from lindy_orchestrator.models import QACheck, TaskItem, TaskPlan, TaskStatus
 
 
