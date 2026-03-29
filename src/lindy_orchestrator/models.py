@@ -212,7 +212,6 @@ def plan_from_dict(data: dict) -> TaskPlan:
     """Deserialize a TaskPlan from a dict."""
     tasks = []
     for t in data.get("tasks", []):
-        generator_prompt = t.get("generator_prompt", t.get("prompt", ""))
         qa_checks = [
             QACheck(gate=c["gate"], params=c.get("params", {})) for c in t.get("qa_checks", [])
         ]

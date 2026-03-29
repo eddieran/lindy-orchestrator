@@ -104,44 +104,6 @@ Today's date: {date}
 """
 
 
-REPORT_PROMPT_TEMPLATE = """\
-You are the Project Orchestrator. Generate a concise completion report.
-
-## Goal
-{goal}
-
-## Execution Results
-{results}
-
-Generate a structured report. If all tasks passed, use this format:
-
-GOAL COMPLETED: <goal>
-
-## Summary
-- <module>: <what was accomplished>
-
-## Quality Gates
-- <check>: PASS/FAIL (details)
-
-## Next Steps
-1. <suggested follow-up>
-
-If any task failed, use:
-
-GOAL PAUSED: <goal>
-
-## Completed Tasks
-- Task N: <description> (PASS)
-
-## Failed Task
-- Task N: <description>
-- Failure: <what went wrong>
-
-## Recommended Action
-<what to do next>
-"""
-
-
 def render_plan_prompt(
     goal: str,
     module_summaries: dict[str, str],
@@ -206,22 +168,4 @@ def render_plan_prompt(
         goal=goal,
         available_gates=gates_text,
         date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-    )
-
-
-def render_report_prompt(goal: str, task_results: list[dict[str, Any]]) -> str:
-    """Render the report generation prompt."""
-    result_lines = []
-    for t in task_results:
-        qa_summary = t.get("qa_summary", "none")
-        result_lines.append(
-            f"Task {t['id']} [{t['module']}]: {t['description']}\n"
-            f"  Status: {t['status']}\n"
-            f"  QA: {qa_summary}\n"
-            f"  Output preview: {t.get('result_preview', 'N/A')}"
-        )
-
-    return REPORT_PROMPT_TEMPLATE.format(
-        goal=goal,
-        results="\n\n".join(result_lines),
     )

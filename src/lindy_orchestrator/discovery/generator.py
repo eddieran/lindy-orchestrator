@@ -179,7 +179,7 @@ def _extract_repo_slug(remote_url: str) -> str:
     return ""
 
 
-def _detect_module_ci(mod) -> str:
+def _detect_module_ci(_mod: object) -> str:
     """Detect CI workflow file for a module."""
     # The CI is usually at root level, not per-module
     # Return a reasonable default
