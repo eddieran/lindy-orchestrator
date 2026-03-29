@@ -3,7 +3,7 @@
 
 import json
 import os
-import re
+
 import sys
 import urllib.request
 from pathlib import Path
@@ -135,7 +135,7 @@ def main():
             print(f"  {dep_id} blocks {task['id']}")
 
     print(f"\nDone! Created {len(TASKS)} issues with {sum(len(t['depends']) for t in TASKS)} dependency relations.")
-    print(f"Project: https://linear.app/lindymoneyera/project/lindy-orchestrator-e01c9328908a/overview")
+    print("Project: https://linear.app/lindymoneyera/project/lindy-orchestrator-e01c9328908a/overview")
 
 
 if __name__ == "__main__":
