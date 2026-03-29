@@ -50,7 +50,7 @@ def run_gc(
     config: OrchestratorConfig,
     apply: bool = False,
     max_branch_age_days: int = 14,
-    max_session_age_days: int = 30,
+    max_session_age_days: int | None = None,
     max_log_size_mb: int = 10,
     status_stale_days: int = 7,
 ) -> GCReport:
@@ -70,7 +70,12 @@ def run_gc(
     )
 
     # 2. Old sessions
-    report.actions.extend(_find_old_sessions(config.sessions_path, max_session_age_days, apply))
+    session_retention_days = (
+        config.observability.retention_days
+        if max_session_age_days is None
+        else max_session_age_days
+    )
+    report.actions.extend(_find_old_sessions(config.sessions_path, session_retention_days, apply))
 
     # 3. Log rotation
     report.actions.extend(_check_log_rotation(config.log_path, max_log_size_mb, apply))
@@ -203,7 +208,6 @@ def _find_old_sessions(
         return []
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
-    archive_dir = sessions_path / "archive"
 
     for session_file in iter_session_files(sessions_path):
         try:
@@ -219,13 +223,8 @@ def _find_old_sessions(
             if start_date < cutoff:
                 age_days = (datetime.now(timezone.utc) - start_date).days
                 session_id = data.get("session_id", session_id_from_path(session_file))
-                archive_source = (
+                session_target = (
                     session_file.parent if session_file.name == SESSION_FILENAME else session_file
-                )
-                archive_target = (
-                    archive_dir / session_id
-                    if session_file.name == SESSION_FILENAME
-                    else archive_dir
                 )
                 action = GCAction(
                     category="old_session",
@@ -233,17 +232,27 @@ def _find_old_sessions(
                         f"Session `{session_id}` is {age_days} days old "
                         f"(status: {data.get('status', '?')})"
                     ),
-                    path=str(archive_source),
+                    path=str(session_target),
                 )
                 if apply:
-                    archive_dir.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(archive_source), str(archive_target))
-                    action.applied = True
+                    action.applied = _delete_session_artifact(session_target)
                 actions.append(action)
         except (json.JSONDecodeError, OSError, ValueError):
             continue
 
     return actions
+
+
+def _delete_session_artifact(path: Path) -> bool:
+    """Delete a session artifact from either the legacy or directory layout."""
+    try:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def _check_log_rotation(
