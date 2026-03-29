@@ -421,20 +421,16 @@ def load_config(config_path: Path | str | None = None) -> OrchestratorConfig:
     raw = _load_yaml(path)
     _normalize_qa_gates(raw)
 
-    # Apply global config as defaults — only when project yaml doesn't explicitly set provider
-    if "provider" not in raw.get("dispatcher", {}):
-        global_cfg = load_global_config()
-        raw.setdefault("dispatcher", {})["provider"] = global_cfg.provider
-    if "provider" not in raw.get("generator", {}):
-        raw.setdefault("generator", {})["provider"] = raw.get("dispatcher", {}).get(
-            "provider",
-            load_global_config().provider,
-        )
-    if "provider" not in raw.get("evaluator", {}):
-        raw.setdefault("evaluator", {})["provider"] = raw.get("planner", {}).get(
-            "provider",
-            "claude_cli",
-        )
+    # Apply global config as default provider where not explicitly set
+    global_provider = load_global_config().provider
+    dispatcher_provider = raw.get("dispatcher", {}).get("provider", global_provider)
+    for role, fallback in [
+        ("dispatcher", global_provider),
+        ("generator", dispatcher_provider),
+        ("evaluator", raw.get("planner", {}).get("provider", "claude_cli")),
+    ]:
+        if "provider" not in raw.get(role, {}):
+            raw.setdefault(role, {})["provider"] = fallback
 
     cfg = OrchestratorConfig.model_validate(raw)
     # When loaded from .orchestrator/config.yaml, _config_dir must be the

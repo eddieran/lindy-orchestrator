@@ -91,7 +91,25 @@ class MetricsCollector:
         with self._lock:
             self._dispatch(event)
 
-    def _dispatch(self, event: Event) -> None:  # noqa: C901
+    def _ensure_task(self, event: Event) -> TaskMetrics | None:
+        """Get or create TaskMetrics for the event. Returns None if no task_id."""
+        if event.task_id is None:
+            return None
+        tm = self._tasks.get(event.task_id)
+        if tm is None:
+            tm = TaskMetrics(task_id=event.task_id, module=event.module)
+            self._tasks[event.task_id] = tm
+        return tm
+
+    def _finish_task(self, tm: TaskMetrics, event: Event, status: str) -> None:
+        """Mark a task as completed/failed with cost and duration."""
+        tm.status = status
+        tm.completed_at = event.timestamp
+        tm.cost_usd += event.data.get("cost_usd", 0.0)
+        if tm.started_at and tm.completed_at:
+            tm.duration_seconds = _parse_duration(tm.started_at, tm.completed_at)
+
+    def _dispatch(self, event: Event) -> None:
         """Route event to the appropriate handler. Must be called under lock."""
         match event.type:
             case EventType.SESSION_START:
@@ -109,49 +127,23 @@ class MetricsCollector:
                         started_at=event.timestamp,
                     )
             case EventType.TASK_COMPLETED:
-                if event.task_id is not None:
-                    tm = self._tasks.get(event.task_id)
-                    if tm is None:
-                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
-                        self._tasks[event.task_id] = tm
-                    tm.status = "completed"
-                    tm.completed_at = event.timestamp
-                    tm.cost_usd += event.data.get("cost_usd", 0.0)
-                    if tm.started_at and tm.completed_at:
-                        tm.duration_seconds = _parse_duration(tm.started_at, tm.completed_at)
+                if (tm := self._ensure_task(event)) is not None:
+                    self._finish_task(tm, event, "completed")
             case EventType.TASK_FAILED:
-                if event.task_id is not None:
-                    tm = self._tasks.get(event.task_id)
-                    if tm is None:
-                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
-                        self._tasks[event.task_id] = tm
-                    tm.status = "failed"
-                    tm.completed_at = event.timestamp
-                    tm.cost_usd += event.data.get("cost_usd", 0.0)
-                    if tm.started_at and tm.completed_at:
-                        tm.duration_seconds = _parse_duration(tm.started_at, tm.completed_at)
+                if (tm := self._ensure_task(event)) is not None:
+                    self._finish_task(tm, event, "failed")
             case EventType.TASK_SKIPPED:
-                if event.task_id is not None:
-                    tm = self._tasks.get(event.task_id)
-                    if tm is None:
-                        tm = TaskMetrics(task_id=event.task_id, module=event.module)
-                        self._tasks[event.task_id] = tm
+                if (tm := self._ensure_task(event)) is not None:
                     tm.status = "skipped"
             case EventType.TASK_RETRYING:
-                if event.task_id is not None:
-                    tm = self._tasks.get(event.task_id)
-                    if tm:
-                        tm.retry_count += 1
+                if (tm := self._ensure_task(event)) is not None:
+                    tm.retry_count += 1
             case EventType.QA_PASSED:
-                if event.task_id is not None:
-                    tm = self._tasks.get(event.task_id)
-                    if tm:
-                        tm.qa_pass_count += 1
+                if (tm := self._ensure_task(event)) is not None:
+                    tm.qa_pass_count += 1
             case EventType.QA_FAILED:
-                if event.task_id is not None:
-                    tm = self._tasks.get(event.task_id)
-                    if tm:
-                        tm.qa_fail_count += 1
+                if (tm := self._ensure_task(event)) is not None:
+                    tm.qa_fail_count += 1
 
     def snapshot(self) -> SessionMetricsSnapshot:
         """Return a frozen copy of current metrics, safe for cross-thread use."""
