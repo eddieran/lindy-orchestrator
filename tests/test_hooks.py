@@ -14,6 +14,11 @@ from lindy_orchestrator.hooks import (
 
 
 class TestHookRegistry:
+    def test_observability_event_types_exist(self):
+        assert EventType.AGENT_EVENT.value == "agent_event"
+        assert EventType.AGENT_OUTPUT.value == "agent_output"
+        assert EventType.GIT_DIFF_CAPTURED.value == "git_diff_captured"
+
     def test_on_and_emit(self):
         reg = HookRegistry()
         received = []
