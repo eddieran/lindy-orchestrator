@@ -1,10 +1,9 @@
 """Compatibility re-exports for orchestrator helper functions."""
 
-from .scheduler_helpers import (
+from .dispatch_core import extract_event_info
+from .task_preparation import (
     _autofill_ci_params,
     _check_delivery,
-    build_prompt,
-    extract_event_info,
     prepare_qa_checks,
 )
 
@@ -17,7 +16,6 @@ def inject_qa_gates(*args, **kwargs):
 __all__ = [
     "_autofill_ci_params",
     "_check_delivery",
-    "build_prompt",
     "extract_event_info",
     "inject_qa_gates",
     "prepare_qa_checks",

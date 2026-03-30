@@ -91,7 +91,7 @@ src/lindy_orchestrator/
     planner_runner.py               # Planner role: goal decomposition via LLM
     prompts.py                      # Prompt template rendering
     reporter.py                     # Rich terminal output and summary reports
-    scheduler_helpers.py            # Legacy scheduler helper functions
+    task_preparation.py             # QA gate injection and delivery checks
     session.py                      # Session state persistence
     worktree.py                     # Git worktree utilities for parallel isolation
     discovery/

@@ -1,4 +1,4 @@
-"""Shared orchestrator helpers."""
+"""QA gate injection, delivery checks, and CI param auto-fill."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Callable
 
 from .config import OrchestratorConfig
-from .dispatch_core import extract_event_info
 from .models import QACheck, TaskSpec
 
 log = logging.getLogger(__name__)
@@ -16,8 +15,6 @@ log = logging.getLogger(__name__)
 __all__ = [
     "_autofill_ci_params",
     "_check_delivery",
-    "build_prompt",
-    "extract_event_info",
     "prepare_qa_checks",
 ]
 
@@ -115,91 +112,6 @@ def prepare_qa_checks(
         if progress:
             progress(f"    [dim]Auto-injected QA: command_check ({gate.command})[/]")
 
-
-def _status_section(task: TaskSpec, config: OrchestratorConfig) -> str:
-    path = config._config_dir / ".orchestrator" / "status" / f"{task.module}.md"
-    if not path.exists():
-        return ""
-    try:
-        return f"## Current STATUS.md\n\n{path.read_text()}"
-    except Exception:
-        log.warning("Failed to read %s", path, exc_info=True)
-        return ""
-
-
-def _instructions_section(task: TaskSpec, config: OrchestratorConfig) -> str:
-    provider_dir = "codex" if config.dispatcher.provider == "codex_cli" else "claude"
-    header = "CODEX.md" if provider_dir == "codex" else "CLAUDE.md"
-    orch_base = config._config_dir / ".orchestrator"
-    primary = orch_base / provider_dir
-    fallback = orch_base / "claude" if provider_dir != "claude" else None
-
-    sections: list[str] = []
-    for name in ("root.md", f"{task.module}.md"):
-        path = primary / name
-        if not path.exists() and fallback:
-            path = fallback / name
-        if path.exists():
-            try:
-                sections.append(path.read_text())
-            except Exception:
-                log.warning("Failed to read %s", path, exc_info=True)
-    if not sections:
-        return ""
-    return f"## {header} Instructions\n\n" + "\n\n".join(sections)
-
-
-def _branch_section(
-    branch_name: str,
-    worktree_path: Path | None,
-    dispatches: int,
-) -> str:
-    if dispatches != 0:
-        return ""
-    if worktree_path:
-        return (
-            "## IMPORTANT: Branch delivery requirements\n\n"
-            f"You are already on branch `{branch_name}` (worktree isolation).\n"
-            "Do NOT switch branches or run `git checkout`.\n"
-            "When done:\n"
-            "1. `git add` and `git commit` your changes\n"
-            f"2. `git push -u origin {branch_name}` (push to remote)\n"
-            "Do NOT skip the push step."
-        )
-    return (
-        "## IMPORTANT: Branch delivery requirements\n\n"
-        f"You MUST deliver your work on branch `{branch_name}`.\n"
-        "Before starting work:\n"
-        f"1. `git checkout -b {branch_name}` (create the branch)\n"
-        "When done:\n"
-        "2. `git add` and `git commit` your changes\n"
-        f"3. `git push -u origin {branch_name}` (push to remote)\n"
-        "Do NOT skip the push step."
-    )
-
-
-def build_prompt(
-    task: TaskSpec,
-    config: OrchestratorConfig,
-    branch_name: str,
-    worktree_path: Path | None,
-    dispatches: int,
-    progress,
-) -> str:
-    """Build the task prompt for generator execution."""
-    status_content = _status_section(task, config) if dispatches == 0 else ""
-    instructions = _instructions_section(task, config) if dispatches == 0 else ""
-    branch_instructions = _branch_section(branch_name, worktree_path, dispatches)
-
-    if status_content:
-        progress(f"    [dim]Injected STATUS.md for {task.module}[/]")
-    if instructions:
-        progress("    [dim]Injected agent instructions[/]")
-
-    parts = [
-        part for part in [status_content, instructions, task.prompt, branch_instructions] if part
-    ]
-    return "\n\n".join(parts)
 
 
 def _autofill_ci_params(

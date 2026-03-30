@@ -22,10 +22,10 @@ from typing import Callable
 from .config import OrchestratorConfig
 from .evaluator_runner import EvaluatorRunner
 from .generator_runner import GeneratorRunner
-from .scheduler_helpers import (
+from .dispatch_core import extract_event_info
+from .task_preparation import (
     _autofill_ci_params,
     _check_delivery,
-    extract_event_info,
     prepare_qa_checks,
 )
 from .hooks import Event, EventType, HookRegistry, make_progress_adapter
