@@ -8,6 +8,7 @@ not just WHAT failed.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -157,7 +158,7 @@ def _truncate_with_guidance(raw: str, tool_name: str) -> str:
 
 
 # Parser registry: (gate_name_pattern, parser_function)
-_PARSERS: list[tuple[str, callable]] = [
+_PARSERS: list[tuple[str, Callable[[str, str], str | None]]] = [
     (r"pytest|py\.test|python.*test", _parse_pytest),
     (r"ruff|eslint|flake8|pylint", _parse_ruff),
     (r"tsc|typescript|tsc-check", _parse_tsc),
